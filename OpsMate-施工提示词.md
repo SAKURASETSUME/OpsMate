@@ -27,15 +27,16 @@
 
 ## 1. 项目背景与目标
 
-用户是一名运维工程师（Windows 工作机，中文环境，有 Java/Linux 背景）。日常痛点：查 Linux 命令用法要开网页翻文档；nginx/zabbix 的命令与配置参数记不牢、查起来散；手写 shell 脚本费时且怕写错；排障时日志又长又乱，肉眼 grep 效率低。OpsMate 把这五件事装进一个本地桌面应用：
+用户是一名运维工程师（Windows 工作机，中文环境，有 Java/Linux 背景）。日常痛点：查 Linux 命令用法要开网页翻文档；nginx/zabbix 的命令与配置参数记不牢、查起来散；手写 shell 脚本费时且怕写错；排障时日志又长又乱，肉眼 grep 效率低。OpsMate 把这六件事装进一个本地桌面应用：
 
 | # | 模块 | 一句话验收 |
 |---|------|-----------|
 | 1 | **指令速查** | 本地离线检索 600+ 条中文 Linux 命令文档（数据源 = github.com/jaywcjlove/linux-command） |
 | 2 | **配置速查** | nginx / zabbix 的"启停命令"与"配置参数"严格分 Tab 展示，支持搜索 |
-| 3 | **脚本工坊** | 自然语言 → 带完整中文注释的 bash 脚本 + 右侧逐段解读（解读绝不混入脚本本体） |
+| 3 | **脚本工坊** | 智能体循环（ReAct）：模型自主检索命令库/配置库/脚本历史后生成带完整中文注释的 bash 脚本 + 右侧逐段解读与工具轨迹卡片（解读绝不混入脚本本体） |
 | 4 | **日志中心** | 上传/粘贴日志 → level 着色、关键词/正则/level 过滤、统计、导出（对标 mclo.gs 的核心体验，本地化） |
-| 5 | **日志 AI 分析** | 规则引擎免费提炼"问题日志"并聚类；再可选调用大模型生成根因分析报告 |
+| 5 | **日志 AI 分析** | L1 规则引擎免费提炼"问题日志"并聚类；L2 诊断智能体调用过滤/统计/上下文工具下钻日志，产出"假设-证据-建议"根因报告 |
+| 6 | **运维助手** | 对话式问答智能体：检索本地知识（命令/配置/脚本历史）回答运维问题，答案带可跳转的来源引用，会话持久化 |
 
 **最终交付形态（硬性要求）**：免安装的 `OpsMate.exe`——双击即弹出应用窗口使用全部功能。目标机器**无需安装 Python、无需启动或连接任何外部中间件、无需手动打开浏览器**：uvicorn/FastAPI 以库的形式嵌在同一进程内，监听随机分配的 127.0.0.1 端口（进程内通信，用户无感知）；SQLite 为单文件库；知识数据随 exe 一起打包。除调用 LLM 的在线 API 外全部离线可用。
 
@@ -51,13 +52,16 @@
 ┌─ pywebview 原生窗口（失败则降级为默认浏览器打开）
 │    └─ 加载 http://127.0.0.1:<port>/ —— Vue3 前端（无构建，静态文件）
 │         ┌─ 指令速查 / 配置速查：纯本地检索，0 token
-│         ├─ 脚本工坊：POST → FastAPI → 智谱/自配 LLM（非流式，结构化 JSON）
-│         └─ 日志分析：上传→SQLite；筛选=本地；AI 报告=SSE 流式
+│         ├─ 脚本工坊：POST → FastAPI → ReAct 智能体循环（结构化 JSON，含工具轨迹 steps）
+│         ├─ 日志分析：上传→SQLite；筛选=本地；L2 诊断智能体=SSE 流式
+│         └─ 运维助手：SSE 流式对话 + 工具调用过程事件
 └─ FastAPI + uvicorn（单进程，127.0.0.1，随机空闲端口）
       ├─ app/commands —— command/*.md 内存索引 + 搜索
       ├─ app/kb       —— knowledge YAML 加载
-      ├─ app/codegen  —— LLM 脚本生成
-      ├─ app/logs     —— SQLite 存取 + L1 规则引擎 + L2 LLM 分析
+      ├─ app/agent    —— 共用 ReAct 引擎：文本协议循环/工具注册表/降级（零新依赖）
+      ├─ app/codegen  —— 智能体脚本生成（agent 引擎驱动 + 历史记忆 FTS5）
+      ├─ app/logs     —— SQLite 存取 + L1 规则引擎 + L2 诊断智能体
+      ├─ app/assistant— 运维问答智能体（会话持久化）
       └─ app/llm      —— 统一 OpenAI 兼容客户端（httpx）
 数据：data/ 目录（opsmate.db + config.json + commands/ + kb/*.yaml），全部可读可备份
 ```
@@ -110,6 +114,14 @@ OpsMate/                    # 本文档所在目录即项目根
 │   │   ├── __init__.py
 │   │   ├── provider.py      # LLMClient：OpenAI 兼容 chat/completions；chat() 非流式、chat_stream() SSE
 │   │   └── routes.py        # /api/settings、/api/llm/test
+│   ├── agent/
+│   │   ├── __init__.py
+│   │   ├── engine.py        # ReAct 引擎：文本协议循环、步数上限 6、解析容错、单轮降级（§9.3）
+│   │   └── tools.py         # 只读工具注册表：search_commands/search_kb/search_history/filter_log/get_stats/get_context
+│   ├── assistant/
+│   │   ├── __init__.py
+│   │   ├── service.py       # 会话与消息持久化（SQLite）
+│   │   └── routes.py        # /api/assistant/*
 │   ├── codegen/
 │   │   ├── __init__.py
 │   │   ├── prompts.py       # CODEGEN_SYSTEM_PROMPT 常量（§9.1 全文）
@@ -122,7 +134,7 @@ OpsMate/                    # 本文档所在目录即项目根
 │       └── routes.py        # /api/logs*
 ├── app/web/
 │   ├── index.html
-│   ├── app.js               # Vue 应用：路由、5 个页面视图、SSE 消费
+│   ├── app.js               # Vue 应用：路由、6 个页面视图、SSE 消费
 │   ├── style.css
 │   └── vendor/
 │       ├── vue.global.prod.js
@@ -138,7 +150,7 @@ OpsMate/                    # 本文档所在目录即项目根
 ├── tools/
 │   └── import_commands.py   # 数据导入（三级降级，见 §4.2）
 ├── PHASE_LOG.md
-└── README.md                # Phase 7 产出
+└── README.md                # Phase 8 产出
 ```
 
 `main.py` 关键行为：`socket` 绑定 `127.0.0.1:0` 取空闲端口 → 线程里 `uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")` → `webview.create_window("OpsMate", url, width=1280, height=860)` → `webview.start()`；`webview.start` 抛异常（无 WebView2）则 `webbrowser.open(url)` 并保持进程。注意：**打包(frozen)后** data 目录以 `sys.executable` 的父目录为基准（`getattr(sys, "frozen", False)` 判断），开发态以项目根为基准——此逻辑放 `app/config.py`。两个补充硬性点：① `webview.start()` 返回（用户关窗）后必须显式结束进程（uvicorn 线程不会随窗口自动终止，进程会挂死）；② `--noconsole` 打包态 `sys.stdout` 为 `None`，所有 `print` 与 `sys.stdout.reconfigure` 前必须判空，否则 exe 内直接崩溃。
@@ -246,11 +258,29 @@ CREATE TABLE IF NOT EXISTS codegen_history (
   script TEXT NOT NULL,
   explanation TEXT,          -- JSON 数组序列化
   warnings TEXT, usage TEXT, model TEXT,
+  steps TEXT,                -- JSON 数组序列化：智能体工具轨迹 [{tool,args,result_summary}]
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+CREATE VIRTUAL TABLE IF NOT EXISTS codegen_history_fts USING fts5(
+  requirement, script, content='codegen_history', content_rowid='id', tokenize='unicode61'
+);
+CREATE TABLE IF NOT EXISTS assistant_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,                -- 首条用户消息截断 50 字
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS assistant_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL,
+  role TEXT NOT NULL,                 -- user/assistant/tool
+  content TEXT NOT NULL,              -- 正文（tool 行存 JSON 轨迹字符串）
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_asst_msg_session ON assistant_messages(session_id, id);
 ```
 
-约束：单文件 ≤ 50MB（超出拒绝并提示"请先 split/grep 裁剪"）；导入用单事务 + 每 5000 行 `executemany`；`PRAGMA journal_mode=WAL`。格式猜测规则（导入时逐行采样前 200 行）：nginx 访问日志（`^\S+ \S+ \S+ \[.*\] "\w+ .*" \d{3} `）→ nginx_access；含 ` \[error\] | \[warn\] ` → nginx_error；`^\w{3} +\d+ \d{2}:\d{2}:\d{2} \S+ ` → syslog；含 ` \[main\]|java\.|Exception|ERROR` → java_app；`zabbix_server|zabbix_agent` 字样 → known_service；否则 unknown。
+约束：单文件 ≤ 50MB（超出拒绝并提示"请先 split/grep 裁剪"）；导入用单事务 + 每 5000 行 `executemany`；`PRAGMA journal_mode=WAL`；`codegen_history` 写入后同步 INSERT 对应 fts 行（DELETE 同步清理），供智能体 `search_history` 检索；`assistant_messages` 每轮对话追加 user/assistant（及可选 tool 轨迹）行并刷新会话 `updated_at`。格式猜测规则（导入时逐行采样前 200 行）：nginx 访问日志（`^\S+ \S+ \S+ \[.*\] "\w+ .*" \d{3} `）→ nginx_access；含 ` \[error\] | \[warn\] ` → nginx_error；`^\w{3} +\d+ \d{2}:\d{2}:\d{2} \S+ ` → syslog；含 ` \[main\]|java\.|Exception|ERROR` → java_app；`zabbix_server|zabbix_agent` 字样 → known_service；否则 unknown。
 
 ### 4.5 设置存储与 vendored 前端库
 
@@ -295,7 +325,7 @@ CREATE TABLE IF NOT EXISTS codegen_history (
 | GET | `/api/settings` | - | `{"provider","base_url","model","api_key_set"}` |
 | PUT | `/api/settings` | body 同上 + `api_key`(可空，空=不改) | `{"ok": true}` |
 | POST | `/api/llm/test` | - | `{"ok","latency_ms","model","error"?}` |
-| POST | `/api/codegen/generate` | `{"requirement", "distro"?, "notes"?}` | 二选一：`{"need_clarification":true,"questions":[...]}` 或 `{"need_clarification":false,"script","explanation":[{lines,title,detail}],"warnings":[],"usage"}`；同时写 codegen_history |
+| POST | `/api/codegen/generate` | `{"requirement", "distro"?, "notes"?}` | 二选一：`{"need_clarification":true,"questions":[...]}` 或 `{"need_clarification":false,"script","explanation":[{lines,title,detail}],"warnings":[],"usage","steps":[{tool,args,result_summary}]}`（steps=智能体工具轨迹，单轮降级时为空数组）；同时写 codegen_history 与 FTS |
 | GET | `/api/codegen/history` | `limit=50` | `{"items":[{id,requirement,created_at,model}]}` |
 | GET | `/api/codegen/history/{id}` | - | 完整记录 |
 | POST | `/api/logs` | multipart `file` **或** json `{"title","content"}` | `{"id","title","line_count","size_bytes","format_guess","level_stats":{"ERROR":n,...}}` |
@@ -305,9 +335,13 @@ CREATE TABLE IF NOT EXISTS codegen_history (
 | GET | `/api/logs/{id}/lines` | `level,q,regex,offset,limit=500,order=asc\|desc` | `{"total","lines":[{line_no,level,text}]}`；regex 与 q 并用取交集 |
 | GET | `/api/logs/{id}/stats` | - | `{"level_counts":{...},"format_guess":...,"time_range":[first_ts,last_ts]?,"top_clusters":[{pattern,count,first_no,last_no,sample}]}`（top_clusters 见 §8 Phase 6 L1） |
 | GET | `/api/logs/{id}/export` | `level,q,regex` | `text/plain` 附件下载（过滤后全文，带原始行号前缀） |
-| POST | `/api/logs/{id}/llm-analyze` | `{"focus"?}` | **SSE 流**：`data: {"delta":"..."}` 逐段；结束发 `data: {"done":true,"report_id":N}`；错误发 `data: {"error":"..."}`；完成后报告落 reports 表 |
+| POST | `/api/logs/{id}/llm-analyze` | `{"focus"?}` | **SSE 流**：先发过程事件 `data: {"tool":"filter_log","args":{...},"result":"..."}`（可多条，诊断智能体下钻轨迹）→ `data: {"delta":"..."}` 逐段 → 结束 `data: {"done":true,"report_id":N}`；错误发 `data: {"error":"..."}`；完成后报告落 reports 表 |
 | GET | `/api/logs/{id}/reports` | - | `{"items":[{id,model,created_at}]}` |
 | GET | `/api/logs/{id}/reports/{rid}` | - | `{"content":"markdown"}` |
+| POST | `/api/assistant/chat` | `{"message","session_id"?}` | **SSE 流**：过程事件 `data: {"tool","args","result"}`（可多条）→ `data: {"delta":"..."}` → 结束 `data: {"done":true,"session_id":N}`；错误 `data: {"error":"..."}`；消息落 assistant_messages |
+| GET | `/api/assistant/sessions` | - | `{"items":[{id,title,updated_at}]}`（倒序） |
+| GET | `/api/assistant/sessions/{id}` | - | `{"messages":[{id,role,content}]}`（tool 行 content 为 JSON 轨迹字符串） |
+| DELETE | `/api/assistant/sessions/{id}` | - | `{"ok":true}`（连带删消息） |
 
 规则：分页 limit 上限 2000；`q` 大小写不敏感子串；`regex` 无效时返回 400 `{"detail":"正则表达式无效"}`；SSE 的响应头 `Content-Type: text/event-stream`（用 fetch+ReadableStream 消费，**不是 EventSource**，因为需要 POST）。路由注册顺序硬性要求：`/api/kb/search` 必须先于 `/api/kb/{software}` 注册——FastAPI 按注册顺序匹配，否则 `search` 会被当作 `{software}` 参数吞掉。
 
@@ -315,26 +349,27 @@ CREATE TABLE IF NOT EXISTS codegen_history (
 
 ## 7. 前端规范（app/web/）
 
-**布局**：左侧固定 200px 边栏（Logo "OpsMate" + 5 个导航：指令速查/配置速查/脚本工坊/日志中心/设置），右侧内容区。暗色主题（背景 #1e1f24，卡片 #26272e，主色 #4f8cff，文字 #d5d7de）。所有交互反馈走右上角 toast（成功绿/失败红，3s 消失）。
+**布局**：左侧固定 200px 边栏（Logo "OpsMate" + 6 个导航：指令速查/配置速查/脚本工坊/日志中心/运维助手/设置；Phase 7 施工前为 5 项，运维助手在 Phase 7 插入到日志中心与设置之间），右侧内容区。暗色主题（背景 #1e1f24，卡片 #26272e，主色 #4f8cff，文字 #d5d7de）。所有交互反馈走右上角 toast（成功绿/失败红，3s 消失）。
 
 **hash 路由与视图**：
 
 - `#/commands`：顶部搜索框（防抖 300ms）→ 左列结果列表（name 加粗 + title 灰字）→ 点击右栏 marked 渲染 md；右上"复制 md"按钮；空关键词显示全部字母序。
 - `#/kb`：软件卡片（nginx/zabbix）→ 进入后 **Tab：`启停与运行命令` | `配置参数`**（用户核心诉求，永不合并）；列表项显示 name/syntax/desc/danger 标记（medium+ 红字 ⚠）；点击展开详情（example/notes）；顶部跨软件搜索框。
-- `#/codegen`：表单（需求 textarea 必填、发行版下拉 [不指定/CentOS/Ubuntu/Debian/其他]、补充说明 textarea）→ 生成按钮（loading 态，可 60–120s，按钮显示"生成中…"并禁用）→ 结果区左右布局：左=脚本（`<pre>` 等宽显示 + 复制 + 下载 .sh 按钮），右=逐段解读卡片（lines 徽标 + title + detail）+ warnings 红块 + usage 灰块；底部历史记录列表（点击回看）。若返回 `need_clarification`：把 questions 以对话形式展示，用户回答后自动拼进 requirement 重新生成。
+- `#/codegen`：表单（需求 textarea 必填、发行版下拉 [不指定/CentOS/Ubuntu/Debian/其他]、补充说明 textarea）→ 生成按钮（loading 态，可 60–120s，按钮显示"生成中…"并禁用）→ **智能体轨迹卡片**（可折叠：每步"工具名 + 参数 + 结果摘要"，默认展开，可整体收起；单轮降级时显示"直接生成"提示）→ 结果区左右布局：左=脚本（`<pre>` 等宽显示 + 复制 + 下载 .sh 按钮），右=逐段解读卡片（lines 徽标 + title + detail）+ warnings 红块 + usage 灰块；底部历史记录列表（点击回看）。若返回 `need_clarification`：把 questions 以对话形式展示，用户回答后自动拼进 requirement 重新生成。
 - `#/logs`：上部"新建"区（拖拽/点击上传 + 或粘贴文本框，粘贴时 title 必填）→ 下部日志列表（title/行数/大小/格式/level 统计小徽章/时间），行内"分析"和"删除"按钮。
-- `#/logs/:id`：顶部元信息条（标题、行数、格式、level 徽章）；工具栏（level 多选过滤、关键词、正则开关、排序、导出按钮、**AI 分析**按钮、历史报告下拉）；主体行列表（行号灰、level 着色：ERROR 红/WARN 橙/INFO 蓝/DEBUG 灰/未知默认色，长行截断+hover 展开）；分页"加载更多"（每次 +500）；点击 AI 分析 → 右侧抽屉流式渲染 markdown 报告，完成后提示"已存历史"。
+- `#/logs/:id`：顶部元信息条（标题、行数、格式、level 徽章）；工具栏（level 多选过滤、关键词、正则开关、排序、导出按钮、**AI 分析**按钮、历史报告下拉）；主体行列表（行号灰、level 着色：ERROR 红/WARN 橙/INFO 蓝/DEBUG 灰/未知默认色，长行截断+hover 展开）；分页"加载更多"（每次 +500）；点击 AI 分析 → 右侧抽屉先流式显示诊断下钻步骤（工具调用小卡片：工具名+参数+结果摘要），再流式渲染 markdown 报告，完成后提示"已存历史"。
+- `#/assistant`：左侧会话列表（标题+更新时间，可删除）+ 右侧消息流；用户消息右对齐气泡、助手消息左侧 markdown 渲染（marked）；智能体工具调用渲染为灰色小卡片（工具名+参数+结果摘要，SSE 过程事件实时插入）；输入框 + 发送按钮（SSE 流式追加回复）；回答中的来源引用（命中的命令名/配置参数名）渲染为可点击链接，跳转到 `#/commands` 或 `#/kb` 对应详情。
 - `#/settings`：预设下拉（§5 表）→ base_url/model/api_key（password 型输入，已保存显示 `••••已保存`，留空=不修改）→ 保存 + "测试连通"按钮（显示延迟 ms 或错误）→ 底部灰字说明：key 仅存本机 `data/config.json`；免费推荐：智谱 GLM-4-Flash（open.bigmodel.cn 注册领取）。
 
 **通用**：所有 fetch 统一封装（超时、错误 toast、JSON 解析）；SSE 消费用 `fetch POST` + `ReadableStream` 逐 chunk 按 `data: ` 行切分解析 JSON。
 
 ---
 
-## 8. 施工计划（Phase 0–7）
+## 8. 施工计划（Phase 0–8）
 
 ### Phase 0 · 环境与骨架
 **做**：检查 Python ≥3.10；`git init` 与根目录 `.gitignore`（规范见 §0 第 9 条）；`python -m venv .venv`；`python -m pip` 配华为云镜像装 requirements；建目录树（§3 全部空文件）；`main.py`+`server.py`+`config.py` 跑通（health 接口 + 静态托管 + 窗口）；`index.html` 空壳（边栏 5 导航 + "OpsMate 已就绪"）；下载 vendor 两文件（§4.5）；建 `PHASE_LOG.md`；下载 `data/kb` 与 `data/commands` 留到 Phase 1/2。
-**打包冒烟（风险前置）**：骨架跑通后立即安装 pyinstaller 并按 §8 Phase 7 的命令试打包一次，确认 dist 下 exe 能双击弹窗——尽早暴露 pywebview/WebView2 打包链路问题；此后每个 Phase 完成后都复打一次冒烟。
+**打包冒烟（风险前置）**：骨架跑通后立即安装 pyinstaller 并按 §8 Phase 8 的命令试打包一次，确认 dist 下 exe 能双击弹窗——尽早暴露 pywebview/WebView2 打包链路问题；此后每个 Phase 完成后都复打一次冒烟。
 **验收**：`python main.py` 弹出 1280×860 窗口，左侧 5 个导航可切换空页面；浏览器访问窗口同源地址 `/api/health` 返回 `{"ok":true}`（窗口内 F12 或外部 curl 均可验证）；试打包出的 exe 双击能弹出与开发态一致的窗口。
 
 ### Phase 1 · 指令速查
@@ -349,28 +384,32 @@ CREATE TABLE IF NOT EXISTS codegen_history (
 **做**：`llm/provider.py`（chat/chat_stream/错误结构化）；`llm/routes.py`（settings 读写、test）；前端 `#/settings`（预设联动、密钥留空不改、测试按钮显示延迟）。**需要用户提供真实 key**——向用户说明注册 open.bigmodel.cn 领取免费 key（此步可先以假 key 完成错误路径验收，真 key 到位后复验）。
 **验收**：保存设置后重启应用，设置仍读取正确（`api_key` 永不出现在任何 GET 响应，抓包/日志验证）；假 key 点"测试连通"→ 明确错误 toast（401/403 字样）；真 key → 显示延迟 ms。无网环境点测试 60s 内返回错误（不挂死）。
 
-### Phase 4 · 脚本工坊
-**做**：`codegen/prompts.py`（§9.1 全文照抄）；`codegen/routes.py`（调 LLM→解析 JSON→容错→入库）；前端 `#/codegen`（表单/左右结果布局/解读卡片/warnings/usage/历史）。**JSON 解析容错**：LLM 输出可能被 ```json 包裹或前后有杂文字——先剥 ``` 围栏，再取首个 `{` 到末个 `}` 子串 `json.loads`；仍失败则重试请求 1 次；再失败返回 502 与原始输出摘要。
-**验收**：输入"每天凌晨 2 点打包 /var/log/nginx 目录为 tgz，保留最近 7 天"→ 得到带 `#!/usr/bin/env bash` 与 `set -euo pipefail` 的脚本，含中文注释；**script 字段内搜索不到"解读""分析"字样**（解读只在 explanation）；右侧至少 3 张解读卡片；warnings 提及 cron/root/路径等注意事项；生成记录出现在历史列表可回看。再输入一个故意含糊需求（如"清理一下日志"）→ 追问 questions 而非瞎编脚本。
+### Phase 4 · 脚本工坊（智能体化）
+**做**：`agent/engine.py` + `agent/tools.py`（ReAct 文本协议引擎与只读工具注册表，规范见 §9.3）；`codegen/prompts.py`（§9.1 全文照抄）；`codegen/routes.py`（ReAct 循环 → 工具检索 → 生成 → 解析 JSON → 容错 → 入库含 FTS）；前端 `#/codegen`（表单/轨迹卡片/左右结果布局/解读卡片/warnings/usage/历史）。**JSON 解析容错**：LLM 输出可能被 ```json 包裹或前后有杂文字——先剥 ``` 围栏，再取首个 `{` 到末个 `}` 子串 `json.loads`；仍失败则重试请求 1 次；再失败返回 502 与原始输出摘要。**降级**：ReAct 循环累计 3 次解析失败 → 自动退回单轮直接生成（steps=[]，UI 显示"直接生成"），保证可用性。
+**验收**：输入"每天凌晨 2 点打包 /var/log/nginx 目录为 tgz，保留最近 7 天"→ 轨迹卡片出现至少 1 次工具调用（如 `search_commands("tar")` 或 `search_kb("nginx 日志")`）；得到带 `#!/usr/bin/env bash` 与 `set -euo pipefail` 的脚本，含中文注释；**script 字段内搜索不到"解读""分析"字样**（解读只在 explanation）；右侧至少 3 张解读卡片；warnings 提及 cron/root/路径等注意事项；生成记录出现在历史列表可回看；再生成一个相似需求时轨迹中出现 `search_history` 命中先前记录。再输入一个故意含糊需求（如"清理一下日志"）→ 追问 questions 而非瞎编脚本。无 key/断网时明确报错不挂死。
 
 ### Phase 5 · 日志中心·基础层
 **做**：`logs/store.py`（建表/导入/分页/统计/导出/删除）；`logs/rules.py` 的 `classify_level`（导入时预计算 level 入库）；前端 `#/logs` 与 `#/logs/:id` 的全部非 AI 功能（上传、拖拽、粘贴、过滤、着色、分页、导出）。文件方式导入另存一份原始文件 `data/logs/{id}.txt` 供导出兜底。
 **验收**：上传一份含 ERROR/WARN/Java 堆栈的样例日志（自造 200 行）→ 行数/大小/格式猜测正确；level 过滤"仅 ERROR"后 total 与实际 ERROR 行数一致；正则 `Exception` 过滤正常；关键词+level 组合过滤取交集；导出文件每行带原行号；删除后列表消失且 DB 行数下降；50MB 限制生效（造一个超限文件被拒并提示）。
 
-### Phase 6 · 日志 AI 分析
-**做**：`logs/rules.py` 补全 L1（多行堆栈合并、变量归一化聚类——规格见下）；`/api/logs/{id}/stats` 输出 top_clusters；`logs/analyze.py`（L2 材料组装→SSE→落库）；前端 AI 分析按钮+右侧抽屉流式渲染+历史报告。
+### Phase 6 · 日志 AI 分析（L2 诊断智能体）
+**做**：`logs/rules.py` 补全 L1（多行堆栈合并、变量归一化聚类——规格见下）；`/api/logs/{id}/stats` 输出 top_clusters；`logs/analyze.py`（L2 诊断智能体：复用 §9.3 引擎，SSE 先推工具事件再流式报告→落库）；前端 AI 分析按钮+右侧抽屉（下钻轨迹+流式渲染）+历史报告。
 - **多行堆栈归属**：行首为空白、或以 `at `、`Caused by:`、`...\s*\d+ more` 开头的行，聚类时归入其上方最近的非堆栈行（查看器仍显示原始行，不受影响）。
 - **归一化聚类**：每行依次替换——IPv4→`<ip>`；连续数字（含小数）→`<num>`；连续十六进制 ≥6 位→`<hex>`；UUID→`<id>`；`'...'`/`"..."` 内容→`<str>`；`/[\w./-]+` 路径（含 ≥1 个 `/`）→`<path>`；然后压缩连续空白。归一化串 sha1 为组键；组输出 `{pattern(截断80), count, first_no, last_no, sample(首条原始行截断300)}`；只保留 count≥1 的 ERROR 组与 count≥2 的 WARN 组，按 count 降序取前 20。
-- **L2 材料组装**（喂给 LLM 的唯一输入，总长截断 ~6000 字符）：日志元信息 + level 统计 + 时间范围 + top_clusters 全量 +（可选）用户 focus。**不喂原始日志全文**——省 token 且防超窗。
-**验收**：对 Phase 5 样例日志点"AI 分析"→ 右侧抽屉流式出报告（逐字出现）；报告含"结论速览/问题清单/下一步排查"结构；问题条目引用了行号或"聚类×次数"证据；报告出现在历史报告下拉并可重新打开；无 key 时点击给出明确引导去设置页；断网时 SSE 报错且界面不卡死。
+- **L2 诊断智能体**：首轮注入 L1 材料（日志元信息 + level 统计 + 时间范围 + top_clusters 全量 + 可选 focus，总长截断 ~6000 字符）；随后模型按需调用 `filter_log`/`get_stats`/`get_context`（§9.3 工具注册表，上限 6 步）下钻；SSE 先逐条推送工具事件，再流式生成"结论速览/问题清单/下一步排查"报告。**不喂原始日志全文**——省 token 且防超窗。
+**验收**：对 Phase 5 样例日志点"AI 分析"→ 抽屉先出现下钻步骤卡片再流式出报告（逐字出现）；报告含"结论速览/问题清单/下一步排查"结构；问题条目引用了行号或"聚类×次数"证据；报告出现在历史报告下拉并可重新打开；无 key 时点击给出明确引导去设置页；断网时 SSE 报错且界面不卡死。
 
-### Phase 7 · 打磨与打包
+### Phase 7 · 运维助手（对话智能体）
+**做**：`assistant/service.py`（assistant_sessions/assistant_messages 持久化）；`assistant/routes.py`（`/api/assistant/chat` SSE 等 §6 契约）；前端 `#/assistant`（会话列表+消息流+工具轨迹卡片+来源跳转）；侧边栏从 5 项扩为 6 项（"运维助手"插入日志中心与设置之间，hash 路由 `#/assistant`）。复用 `agent/engine.py`，工具集 = `search_commands` + `search_kb` + `search_history`；系统提示词要求：只依据工具检索结果回答、来源以"【命令：tar】【配置：nginx/worker_processes】"式标记嵌入正文（前端渲染为跳转链接）、检索不到就明说。
+**验收**：问"nginx 怎么平滑重载"→ 回答包含 `nginx -s reload` 且带可跳转来源（跳到配置速查 nginx 分组）；问"磁盘占用排查用什么命令"→ 引用 df/du 文档来源；连续追问能理解上下文（"那它和 du 的区别呢"无需重复背景）；会话列表可回看历史、可删除；无 key 时明确引导去设置页；SSE 流式渲染 markdown 正常。
+
+### Phase 8 · 打磨与打包
 **做**：全局 UI 走查（空态/loading/错误态文案中文）；`pyinstaller --noconsole --name OpsMate --add-data "app;app" --add-data "data/commands;data/commands" --add-data "data/kb;data/kb" main.py`（Windows 下 `--add-data` 分隔符为分号 `;`，以附录 A 第 6 条为准——本文档及 AGENTS.md 早期写法中的冒号一律以分号为准）（**全量知识数据必须打进包**：`data/commands/` 与 `data/kb/` 随 exe 发布，保证双击即有全量数据，不要求用户跑任何导入脚本；`data/config.json`（含用户 API key）与 `opsmate.db` **不打包**，由 `app/config.py` 在 frozen 态首启动时于 exe 旁 `data/` 自动创建，并把包内 commands/kb 拷贝落地一次，运行期始终读写 exe 旁副本）；README.md（功能简介、首次配置模型 key 指引、数据目录说明、常见问题：WebView2 缺失/端口占用/编码）；图标（可选，无素材则跳过并记录）。
-**验收**：`dist/OpsMate/OpsMate.exe` 双击启动，功能抽测（搜索一个命令、看一个配置 Tab、生成一个脚本需真 key、上传一份日志并过滤）；exe 旁生成 data/ 且重启数据仍在；首次启动自动落地全量知识数据（commands ≥600、kb 齐全），无需任何手动导入；README 存在且含模型配置章节；PHASE_LOG.md 覆盖全部 Phase。
+**验收**：`dist/OpsMate/OpsMate.exe` 双击启动，功能抽测（搜索一个命令、看一个配置 Tab、生成一个脚本需真 key、上传一份日志并过滤、问运维助手一个问题需真 key）；exe 旁生成 data/ 且重启数据仍在；首次启动自动落地全量知识数据（commands ≥600、kb 齐全），无需任何手动导入；README 存在且含模型配置章节；PHASE_LOG.md 覆盖全部 Phase。
 
 ---
 
-## 9. LLM 提示词全文（一字不改写进 prompts.py）
+## 9. LLM 提示词与智能体引擎规范（提示词一字不改写进 prompts.py）
 
 ### 9.1 脚本工坊 CODEGEN_SYSTEM_PROMPT
 
@@ -446,6 +485,26 @@ user 模板：`需求：{requirement}\n发行版：{distro 或 未指定}\n补�
 
 user 模板：日志材料组装（§8 Phase 6）+ 可选 `重点关注：{focus}`，temperature=0.3。
 
+### 9.3 ReAct 智能体引擎协议（app/agent/engine.py；Phase 4 首次落地，Phase 6/7 复用）
+
+**为什么用文本协议而不是原生 function calling**：glm-4-flash 等免费/小模型对 `tools` 字段支持不稳；文本协议（模型输出 JSON 动作）在任何 OpenAI 兼容端点都可运行，且零新依赖（httpx 手写循环）。
+
+**循环格式**——system 提示词声明工具清单与格式后，assistant 每轮输出只允许三种 JSON 之一：
+
+```json
+{"action": "tool", "tool": "search_commands", "args": {"q": "tar", "limit": 5}}
+{"action": "final", "answer": "..."}
+{"action": "final", "payload": { "need_clarification": false, "script": "...", "explanation": [], "warnings": [], "usage": "..." } }
+```
+
+- 工具执行结果以 `{"ok": true, "result": ...}` 或 `{"ok": false, "error": "..."}` 作为 user 消息回填，进入下一轮。
+- **步数上限 6**：达到上限后追加 user 消息"工具调用次数已用完，请基于已有信息直接给出最终结果"，不再接受 tool 动作。
+- **解析容错**：复用统一顺序——剥 ``` 围栏 → 取首个 `{` 到末个 `}` 子串 → `json.loads`；失败重试请求 1 次；**累计 3 轮失败 → 整体退回单轮直接生成模式**（`steps=[]`，UI 显示"直接生成"）。
+- **工具注册表（全部只读，永不执行任何 shell）**：`search_commands(q, limit=5)`、`search_kb(q, software?, limit=5)`、`search_history(q, limit=5)`（FTS5）、`filter_log(log_id, q?, level?, regex?, limit=50)`、`get_stats(log_id)`、`get_context(log_id, line_no, around=10)`。工具实现直接复用各模块 service 层函数，注册表集中放在 `app/agent/tools.py`。
+- **安全边界（硬性）**：智能体只生成、只解释、只检索；任何工具不得写数据库、不得执行命令、不得访问网络；产出物的执行权永远在用户手中。
+- **温度**：工具循环轮 temperature=0.1；最终生成轮按场景取值（codegen 0.3 / 日志分析 0.3 / 运维问答 0.5）。
+- **轨迹落盘**：每步 `{tool, args, result_summary}`（result 截断 300 字符）随场景入库（codegen_history.steps / SSE 过程事件），前端渲染为轨迹卡片。
+
 ---
 
 ## 10. 附录 A · Windows 环境坑清单（施工时逐条对照）
@@ -475,11 +534,12 @@ user 模板：日志材料组装（§8 Phase 6）+ 可选 `重点关注：{focus
 
 ## 尾注：验收总表（全部完成后逐项复验）
 
-- [ ] 桌面窗口打开，五模块导航可用，暗色主题
+- [ ] 桌面窗口打开，六模块导航可用，暗色主题
 - [ ] 指令速查：600+ 命令离线可搜可看
 - [ ] 配置速查：nginx/zabbix 启停与配置严格分 Tab，可搜索，危险项有标记
-- [ ] 脚本工坊：含糊需求会追问；成稿脚本注释全、无解读混入；右侧解读/风险/用法齐全；历史可回看
+- [ ] 脚本工坊：含糊需求会追问；工具轨迹卡片可见（或降级提示"直接生成"）；成稿脚本注释全、无解读混入；右侧解读/风险/用法齐全；历史可回看且可被检索复用
 - [ ] 日志中心：上传/粘贴、level 着色、组合过滤、导出带行号
-- [ ] AI 分析：L1 聚类免费可用；L2 报告流式生成、证据带行号、可回看
+- [ ] AI 分析：L1 聚类免费可用；L2 抽屉先展示下钻步骤再流式报告、证据带行号、可回看
+- [ ] 运维助手：本地知识问答带可跳转来源；连续追问有上下文；会话可回看可删除
 - [ ] 设置：key 不回传；测试连通有延迟/错误反馈；免费模型预设就绪
 - [ ] 打包 exe 可独立运行：双击即用、无需 Python/中间件，首启动自动落地全量知识数据，README 完整

@@ -1,10 +1,10 @@
 # AGENTS.md
 
-OpsMate（运维提效智能体）的仓库级协作文档。**母文档为同目录《OpsMate-施工提示词.md》（下称"施工文档"）**：两者冲突时以施工文档为准；施工文档未覆盖的日常约定以本文件为准。施工必须按施工文档 §8 的 Phase 0→7 顺序推进，每个 Phase 结束跑完验收标准再进入下一个。
+OpsMate（运维提效智能体）的仓库级协作文档。**母文档为同目录《OpsMate-施工提示词.md》（下称"施工文档"）**：两者冲突时以施工文档为准；施工文档未覆盖的日常约定以本文件为准。施工必须按施工文档 §8 的 Phase 0→8 顺序推进，每个 Phase 结束跑完验收标准再进入下一个。
 
 ## 项目定位与技术栈
 
-- Windows 单机桌面应用，中文界面，五大模块：指令速查 / 配置速查 / 脚本工坊 / 日志中心 / 日志 AI 分析。
+- Windows 单机桌面应用，中文界面，六大模块：指令速查 / 配置速查 / 脚本工坊（智能体）/ 日志中心 / 日志 AI 分析（L2 诊断智能体）/ 运维助手（对话智能体）；LLM 侧统一走 `app/agent` 的 ReAct 文本协议引擎（施工文档 §9.3，零新依赖）。
 - 形态：pywebview 原生窗口（Edge WebView2，缺失时降级默认浏览器）+ FastAPI/uvicorn **内嵌同进程**（127.0.0.1 随机空闲端口），无任何外部中间件；最终交付为 PyInstaller 打包的免安装 exe（双击即用，知识数据打进包）。
 - 后端：Python ≥ 3.10（推荐 3.11/3.12）。依赖唯一允许集合（版本为下限）：`fastapi`、`uvicorn[standard]`、`pywebview`、`httpx`、`PyYAML`、`python-multipart`、`pyinstaller`。
 - 前端：**零构建**——Vue 3 与 marked 均为 vendored 单文件（`app/web/vendor/`），无 package.json、无 Node。
@@ -22,6 +22,8 @@ OpsMate/                    # 本目录即项目根（含中文路径，注意 s
 │   ├── commands/           # 指令速查：service.py(内存索引+搜索) + routes.py
 │   ├── kb/                 # 配置速查：service.py(YAML 加载) + routes.py
 │   ├── llm/                # provider.py(OpenAI 兼容客户端 chat/chat_stream) + routes.py
+│   ├── agent/              # ReAct 引擎 engine.py + 只读工具注册表 tools.py（Phase 4 落地）
+│   ├── assistant/          # 运维问答智能体：service.py(会话持久化) + routes.py（Phase 7 落地）
 │   ├── codegen/            # prompts.py(CODEGEN_SYSTEM_PROMPT 全文) + routes.py
 │   └── logs/               # store.py(SQLite) + rules.py(L1 规则引擎) + analyze.py(L2 SSE) + routes.py
 ├── app/web/                # index.html + app.js + style.css + vendor/(vue/marked)
@@ -32,7 +34,7 @@ OpsMate/                    # 本目录即项目根（含中文路径，注意 s
 │   └── config.json         # {provider, base_url, model, api_key}
 ├── tools/import_commands.py  # 数据导入（三级降级）
 ├── PHASE_LOG.md            # 施工进度与决策记录（每 Phase 追加一节）
-└── README.md               # Phase 7 产出
+└── README.md               # Phase 8 产出
 ```
 
 ## Coding Style
@@ -48,7 +50,7 @@ OpsMate/                    # 本目录即项目根（含中文路径，注意 s
 
 **前端（app/web/，原生 ES module + Vue3 全局构建）**
 
-- hash 路由：`#/commands`、`#/kb`、`#/codegen`、`#/logs`、`#/logs/:id`、`#/settings`；单 `app.js` 内组织，组件用模板字符串/`template` 选项。
+- hash 路由：`#/commands`、`#/kb`、`#/codegen`、`#/logs`、`#/logs/:id`、`#/assistant`（Phase 7 起生效）、`#/settings`；单 `app.js` 内组织，组件用模板字符串/`template` 选项。
 - 暗色主题 CSS 变量：背景 `#1e1f24`、卡片 `#26272e`、主色 `#4f8cff`、文字 `#d5d7de`；手写 CSS，交互反馈统一右上角 toast（成功绿/失败红，3s 消失）。
 - 所有 fetch 走统一封装（超时、错误 toast、JSON 解析）。
 - SSE 一律 `fetch POST` + `ReadableStream` 逐 chunk 按 `data: ` 行解析（**EventSource 不支持 POST，禁用**）。
