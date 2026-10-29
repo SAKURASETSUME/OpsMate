@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller 构建产物
+build/
+dist/
+*.spec
+
+# 运行时数据（密钥与本地数据，严禁入库）
+data/opsmate.db
+data/opsmate.db-shm
+data/opsmate.db-wal
+data/config.json
+data/logs/
+
+# 外部仓库导入产物（约 10MB，可由 tools/import_commands.py 随时再生）
+data/commands/
+
+# 杂项
+*.log
+.DS_Store
+Thumbs.db

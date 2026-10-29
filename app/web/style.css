@@ -1,0 +1,101 @@
+/* OpsMate 全局样式：暗色主题（契约 §7 色板）+ 左侧 200px 边栏布局 */
+
+:root {
+  --bg: #1e1f24;        /* 背景 */
+  --card: #26272e;      /* 卡片 */
+  --primary: #4f8cff;   /* 主色 */
+  --text: #d5d7de;      /* 文字 */
+  --text-dim: #8b8e99;  /* 次要文字 */
+  --border: #33353e;    /* 分隔线 */
+  --ok: #3ecf8e;        /* 成功 */
+  --err: #ff5c5c;       /* 失败/危险 */
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ============ 整体布局：左 200px 边栏 + 右内容区 ============ */
+
+.layout { display: flex; height: 100vh; }
+
+.sidebar {
+  width: 200px;
+  flex: none;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 0;
+}
+
+.logo {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--primary);
+  padding: 4px 20px 18px;
+  letter-spacing: 1px;
+}
+
+.sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+
+.sidebar nav a {
+  color: var(--text);
+  text-decoration: none;
+  padding: 10px 20px;
+  border-left: 3px solid transparent;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sidebar nav a:hover { color: var(--primary); }
+
+.sidebar nav a.active {
+  color: var(--primary);
+  border-left-color: var(--primary);
+  background: rgba(79, 140, 255, 0.08);
+}
+
+.content { flex: 1; padding: 32px 40px; overflow: auto; }
+
+/* ============ Phase 0 空壳占位 ============ */
+
+.ready-title { font-size: 26px; font-weight: 600; margin: 0 0 10px; }
+.placeholder { margin: 4px 0; }
+.placeholder.dim { color: var(--text-dim); }
+
+/* ============ 右上角 toast（成功绿 / 失败红，3s 消失） ============ */
+
+.toast-wrap {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  padding: 10px 16px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+  max-width: 360px;
+  animation: toast-in 0.2s ease;
+}
+
+.toast.ok { background: var(--ok); }
+.toast.err { background: var(--err); }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
