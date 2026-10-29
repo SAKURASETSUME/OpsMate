@@ -23,3 +23,5 @@ data/commands/
 *.log
 .DS_Store
 Thumbs.db
+.trae-html-share-packages/
+.screenshots/
