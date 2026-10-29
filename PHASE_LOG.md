@@ -286,7 +286,7 @@
 - `compileall main.py app tools` 通过。
 - 开发态浏览器验收 7/7：卡片计数精确、双 Tab 存在且默认命令 Tab、命令 Tab 无 worker_processes / 配置 Tab 有且无 nginx -t、红色 ⚠ 4 条与展开详情、搜索 worker 6 条带"软件 · 命令/配置"标签、结果点击跳转、`/api/kb` JSON 正确。
 - 打包冒烟：pyinstaller（hidden-import winforms + app/commands/kb 数据）→ 预置 ASCII 缓存子进程启动 → health `{"ok":true}`、`/api/kb` nginx=16/69 zabbix=16/88、search worker 6 条、`/api/commands` total=621（Phase 1 回归通过）；WM_CLOSE 干净退出无残留进程。
-- 冒烟后清理：Temp 缓存与构建目录、一次性验收脚本、`__pycache__`；删除 0 字节 README.md 占位（README 属 Phase 8 产出）。
+- 冒烟后清理：Temp 缓存与构建目录、一次性验收脚本、`__pycache__`。注：根目录 README.md 为用户在 `backup` 分支提交的 0 字节占位（commit `create`），保留待 Phase 8 填充正式内容（曾误判为残留删除，已恢复）。
 
 ### Phase 状态
 
