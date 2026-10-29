@@ -316,3 +316,39 @@
 ### Phase 状态
 
 **设计变更已落契约（本次未施工）；Phase 3 及后续施工顺序不变，等待用户指令。**
+
+## 2026-10-29 · 交接状态（Handoff，供后续 Agent 直接上手）
+
+### 当前进度基线
+
+- 分支 `backup`，HEAD = `e947ffe`（工作区干净，无未提交改动）。远端 `origin/backup` 存在，本地领先 4 个提交**未推送**，是否推送由用户决定。
+- 已验收封账：**Phase 0**（环境与骨架，`24a574e`）、**Phase 1**（指令速查 621 条，`2c83141`）、**Phase 2**（配置速查 nginx 16+69 / zabbix 16+55+33，`e944934`）。
+- 已落契约的设计变更：①智能体化方案 A+B（`290704f`，Phase 0–8 → 现为 0–9）；②知识库扩充 + 配置工坊（`e947ffe`，新增 Phase 7，运维助手→Phase 8、打包→Phase 9）。
+- 用户已目视测试开发态窗口（指令/配置速查），未提新问题。
+
+### 下一步：Phase 3 · LLM 接入与设置
+
+- 契约依据：施工文档 §8 Phase 3、§5（provider 层）、§6（/api/settings、/api/llm/test）、§7（#/settings 视图）、§4.5（config.json 与密钥规则）。
+- 关键点：假 key 先验收错误路径（401/403 明确报错、60s 内返回不挂死）；api_key 永不回传（只回 api_key_set）；真 key 由用户提供（智谱 glm-4-flash 免费）。
+- 完成后按惯例：浏览器验收 → 打包冒烟 → 更新本文件 → `feat(llm)`/`feat(web)` 提交 → 停工汇报。
+
+### 环境与命令要点（本机实测）
+
+- **venv**：项目内 `.venv` 是目录联接 → `C:\Users\Dell\.virtualenvs\OpsMate`（纯 ASCII，Python 3.12.0，36 依赖装齐，`pip check` 通过）。**Never 直接改 .venv 内容**。
+- 裸 `pip` 不在 PATH——一律 `python -m pip`；镜像固定华为云 `https://repo.huaweicloud.com/repository/pypi/simple`。
+- 开发运行：`& "E:\Asia\开发\项目\练习工程\OpsMate\.venv\Scripts\python.exe" main.py`（弹出 1280×860 原生窗口，日志看 stdout）。
+- 打包：`--add-data` 分隔符是**分号**；需 `--hidden-import=webview.platforms.winforms`；`--workpath/--specpath` 建议指到 ASCII 临时目录（如 `%TEMP%\OpsMateDev`）保持项目根干净，`--distpath` 用项目内 `dist`。
+- **打包冒烟沙箱对策（重要）**：Agent 执行沙箱内从中文路径启动冻结 exe 时，中继必失败（子进程临时目录被重定向到中文工作区 + LOCALAPPDATA/Public 拒写，覆盖 TMPDIR/TEMP/TMP 无效）→ 会降级浏览器，这是**沙箱限制，普通用户双击不受影响**。冒烟方法：把 dist 的 `OpsMate.exe + _internal` 复制到 `Temp\OpsMate\runtime\<exe的SHA256>\` 并写 `.ready`（内容=完整哈希），设 `OPSMATE_DATA_DIR` 指回 `dist\OpsMate\data` 后直接启动该子进程验证（Phase 1/2 均用此法）。
+- dist 内测试数据：`dist\OpsMate\data\` 下需手动放 621 md + kb yaml（重建 dist 后会丢失，重新复制即可）；首启动自动落地属 Phase 9 任务。
+- `data/commands/`（621 md）不入库可由 `tools/import_commands.py --force` 再生；`data/kb/*.yaml` 已入库。
+- 测试窗口已关闭，当前无 OpsMate/python 残留进程。
+
+### 协作铁律（摘自 AGENTS.md，冲突以施工文档为准）
+
+- 每个 Phase 结束跑完验收再进下一个；**每完成一个阶段立即更新本文件**（用户明确要求）。
+- Never：引入清单外依赖、擅改契约（API/字段/表结构/验收标准）、泄露 api_key 明文、把解读写进 script 字段、写死端口、无 encoding 读写文本、修改 .venv/vendor/dist/opsmate.db。
+- commit 规范：`type(scope): description`，scope 取 commands/kb/codegen/logs/llm/web/build/data/docs。
+
+### Phase 状态
+
+**交接完成；Phase 3 待用户指令开工。**
