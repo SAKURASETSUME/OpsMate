@@ -93,9 +93,28 @@ const App = {
       commandSearchTimer: null,
       commandRequestId: 0,
       commandDetailRequestId: 0,
+      kbSoftwares: [],
+      kbLoading: false,
+      kbSelected: null,
+      kbDetailLoading: false,
+      kbTab: "cli",
+      kbExpanded: {},
+      kbQuery: "",
+      kbSearchItems: null,
+      kbSearchLoading: false,
+      kbSearchTimer: null,
     };
   },
   computed: {
+    kbSearchActive() {
+      return this.kbSearchItems !== null;
+    },
+    kbTabCategories() {
+      if (!this.kbSelected || !Array.isArray(this.kbSelected.categories)) return [];
+      return this.kbSelected.categories.filter(
+        (cat) => (this.kbTab === "cli") === (cat.id === "cli")
+      );
+    },
     placeholder() {
       return PLACEHOLDER[this.page] || "";
     },
@@ -114,9 +133,85 @@ const App = {
       if (nextPage === "commands" && this.commandItems.length === 0) {
         this.loadCommands();
       }
+      if (nextPage === "kb" && this.kbSoftwares.length === 0) {
+        this.loadKbList();
+      }
     },
   },
   methods: {
+    queueKbSearch() {
+      clearTimeout(this.kbSearchTimer);
+      this.kbSearchTimer = setTimeout(() => this.runKbSearch(), 300);
+    },
+    async runKbSearch() {
+      const query = this.kbQuery.trim();
+      if (!query) {
+        this.kbSearchItems = null;
+        this.kbSearchLoading = false;
+        return;
+      }
+      this.kbSearchLoading = true;
+      try {
+        const data = await apiFetch("/api/kb/search?q=" + encodeURIComponent(query));
+        this.kbSearchItems = data.items;
+      } catch (err) {
+        this.kbSearchItems = [];
+      } finally {
+        this.kbSearchLoading = false;
+      }
+    },
+    softwareLabel(software) {
+      const hit = this.kbSoftwares.find((item) => item.software === software);
+      return hit ? hit.label : software;
+    },
+    isDanger(level) {
+      return level === "medium" || level === "high";
+    },
+    dangerText(level) {
+      return level === "high" ? "高风险" : level === "medium" ? "中风险" : "";
+    },
+    async loadKbList() {
+      this.kbLoading = true;
+      try {
+        const data = await apiFetch("/api/kb");
+        this.kbSoftwares = data.items;
+      } finally {
+        this.kbLoading = false;
+      }
+    },
+    async openKbSoftware(software) {
+      this.kbDetailLoading = true;
+      try {
+        const data = await apiFetch("/api/kb/" + encodeURIComponent(software));
+        this.kbSelected = data;
+        this.kbTab = "cli";
+        this.kbExpanded = {};
+      } finally {
+        this.kbDetailLoading = false;
+      }
+    },
+    async jumpKbResult(item) {
+      this.kbQuery = "";
+      this.kbSearchItems = null;
+      this.kbDetailLoading = true;
+      try {
+        const data = await apiFetch("/api/kb/" + encodeURIComponent(item.software));
+        this.kbSelected = data;
+        this.kbTab = item.category === "cli" ? "cli" : "conf";
+        this.kbExpanded = {};
+      } finally {
+        this.kbDetailLoading = false;
+      }
+    },
+    backToKb() {
+      this.kbSelected = null;
+      this.kbExpanded = {};
+    },
+    toggleKbExpand(name) {
+      this.kbExpanded = Object.assign({}, this.kbExpanded, {
+        [name]: !this.kbExpanded[name],
+      });
+    },
     queueCommandSearch() {
       clearTimeout(this.commandSearchTimer);
       this.commandSearchTimer = setTimeout(() => this.loadCommands(), 300);
@@ -178,9 +273,11 @@ const App = {
       this.page = parseRoute();
     });
     if (this.page === "commands") this.loadCommands();
+    if (this.page === "kb") this.loadKbList();
   },
   beforeUnmount() {
     clearTimeout(this.commandSearchTimer);
+    clearTimeout(this.kbSearchTimer);
   },
   template: [
     '<div class="layout">',
@@ -222,6 +319,69 @@ const App = {
     '        </article>',
     '      </div>',
     '    </section>',
+    '    <section v-else-if="page === \'kb\'" class="kb-page">',
+    '      <header class="page-header">',
+    "        <div>",
+    "          <h1>配置速查</h1>",
+    '          <p v-if="!kbSelected">nginx / zabbix 启停命令与配置参数分 Tab 查询</p>',
+    '          <p v-else>{{ kbSelected.label }} · {{ kbSelected.version_ref }}</p>',
+    "        </div>",
+    '        <span class="result-count">AI 整理，使用前请核对官方文档</span>',
+    "      </header>",
+    '      <label class="command-search">',
+    "        <span>搜索</span>",
+    '        <input v-model="kbQuery" @input="queueKbSearch" type="search"',
+    '               placeholder="跨软件搜索命令或配置参数，例如：worker" autocomplete="off">',
+    "      </label>",
+    '      <div v-if="kbSearchActive" class="kb-panel">',
+    '        <p class="result-count">{{ kbSearchLoading ? "检索中…" : "共 " + kbSearchItems.length + " 条匹配" }}</p>',
+    '        <div v-for="item in kbSearchItems" :key="item.software + item.name" class="kb-entry kb-clickable" @click="jumpKbResult(item)">',
+    '          <div class="kb-entry-head">',
+    "            <strong>{{ item.name }}</strong>",
+    '            <span class="kb-soft-tag">{{ softwareLabel(item.software) }} · {{ item.category === "cli" ? "命令" : "配置" }}</span>',
+    '            <span v-if="isDanger(item.danger)" class="kb-danger">⚠ {{ dangerText(item.danger) }}</span>',
+    "          </div>",
+    '          <p class="kb-entry-desc">{{ item.desc }}</p>',
+    "        </div>",
+    '        <p v-if="!kbSearchLoading && kbSearchItems.length === 0" class="empty-state">未找到匹配条目</p>',
+    "      </div>",
+    '      <div v-else-if="!kbSelected" class="kb-cards">',
+    '        <button v-for="s in kbSoftwares" :key="s.software" type="button" class="kb-card" @click="openKbSoftware(s.software)">',
+    "          <h2>{{ s.label }}</h2>",
+    "          <p>{{ s.cli_count }} 条启停命令 · {{ s.conf_count }} 条配置参数</p>",
+    "        </button>",
+    '        <p v-if="kbDetailLoading" class="empty-state">加载中…</p>',
+    '        <p v-else-if="!kbLoading && kbSoftwares.length === 0" class="empty-state">知识库为空</p>',
+    "      </div>",
+    '      <div v-else class="kb-panel">',
+    '        <div class="kb-toolbar">',
+    '          <button type="button" class="copy-button" @click="backToKb">← 返回软件列表</button>',
+    '          <div class="kb-tabs">',
+    '            <button type="button" :class="{ active: kbTab === \'cli\' }" @click="kbTab = \'cli\'">启停与运行命令</button>',
+    '            <button type="button" :class="{ active: kbTab === \'conf\' }" @click="kbTab = \'conf\'">配置参数</button>',
+    "          </div>",
+    "        </div>",
+    '        <p v-if="kbDetailLoading" class="empty-state">加载中…</p>',
+    '        <div v-for="cat in kbTabCategories" :key="cat.label" class="kb-group">',
+    '          <h3>{{ cat.label }} <span class="result-count">（{{ (cat.entries || []).length }} 条）</span></h3>',
+    '          <div v-for="e in cat.entries" :key="e.name" class="kb-entry">',
+    '            <div class="kb-entry-head kb-clickable" @click="toggleKbExpand(e.name)">',
+    "              <strong>{{ e.name }}</strong>",
+    '              <span v-if="isDanger(e.danger)" class="kb-danger">⚠ {{ dangerText(e.danger) }}</span>',
+    '              <code class="kb-syntax">{{ e.syntax }}</code>',
+    "            </div>",
+    '            <p class="kb-entry-desc">{{ e.desc }}</p>',
+    '            <div v-if="kbExpanded[e.name]" class="kb-entry-detail">',
+    '              <p v-if="e.default !== undefined && e.default !== null"><span class="kb-field">默认值</span><code>{{ e.default }}</code></p>',
+    '              <p v-if="e.section"><span class="kb-field">层级</span><code>{{ e.section }}</code></p>',
+    '              <p><span class="kb-field">示例</span><code class="kb-example">{{ e.example }}</code></p>',
+    '              <p><span class="kb-field">说明</span>{{ e.notes }}</p>',
+    '              <p v-if="e.tags && e.tags.length"><span class="kb-field">标签</span>{{ e.tags.join(" / ") }}</p>',
+    "            </div>",
+    "          </div>",
+    "        </div>",
+    "      </div>",
+    "    </section>",
     '    <section v-else class="placeholder-page">',
     '      <h1 class="ready-title">OpsMate 已就绪</h1>',
     '      <p class="placeholder">当前模块：{{ activeLabel }}</p>',

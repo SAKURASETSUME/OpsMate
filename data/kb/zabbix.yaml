@@ -1,0 +1,1013 @@
+software: zabbix
+label: Zabbix
+version_ref: "Zabbix 6.0 LTS 官方文档（参考；7.0 起有变化的条目单独注明）"
+generated: "AI 整理"
+sources:
+  - https://www.zabbix.com/documentation/6.0/zh/manual
+  - https://www.zabbix.com/documentation/6.0/zh/manual/appendix/config/zabbix_server
+  - https://www.zabbix.com/documentation/6.0/zh/manual/appendix/config/zabbix_agent2
+
+categories:
+  - id: cli
+    label: 启停与运行命令
+    entries:
+      - name: systemctl start zabbix-server
+        syntax: systemctl start zabbix-server
+        desc: 启动 zabbix-server 服务（采集调度与告警中枢）。
+        example: systemctl start zabbix-server
+        notes: 启动前确认数据库已初始化且 DBPassword 正确；开机自启用 enable。无 reload。
+        danger: low
+        tags: [服务]
+      - name: systemctl stop zabbix-server
+        syntax: systemctl stop zabbix-server
+        desc: 停止 zabbix-server 服务，全部采集与告警中断。
+        example: systemctl stop zabbix-server
+        notes: 停止期间数据缺失不可回补（Agent 侧缓存有限）。
+        danger: high
+        tags: [服务, 停止]
+      - name: systemctl restart zabbix-server
+        syntax: systemctl restart zabbix-server
+        desc: 重启 zabbix-server 服务（改配置后的标准生效方式）。
+        example: systemctl restart zabbix-server
+        notes: zabbix-server.conf 改动需 restart 生效；重启清空内部缓存。
+        danger: medium
+        tags: [服务]
+      - name: systemctl status zabbix-server
+        syntax: systemctl status zabbix-server
+        desc: 查看 server 服务状态与最近日志。
+        example: systemctl status zabbix-server --no-pager -l
+        notes: 只读；排障先看这里与 /var/log/zabbix/zabbix_server.log。
+        danger: false
+        tags: [服务, 状态]
+      - name: systemctl start zabbix-agent2
+        syntax: systemctl start zabbix-agent2
+        desc: 启动 zabbix-agent2（Go 版采集代理）。
+        example: systemctl start zabbix-agent2
+        notes: 启动前确认 Server/ServerActive 指向正确。无 reload。
+        danger: low
+        tags: [服务]
+      - name: systemctl stop zabbix-agent2
+        syntax: systemctl stop zabbix-agent2
+        desc: 停止本机 agent2 采集，该主机监控全部中断。
+        example: systemctl stop zabbix-agent2
+        notes: 主动模式积压数据将丢弃。
+        danger: medium
+        tags: [服务, 停止]
+      - name: systemctl restart zabbix-agent2
+        syntax: systemctl restart zabbix-agent2
+        desc: 重启 agent2（改 zabbix_agent2.conf 后的生效方式）。
+        example: systemctl restart zabbix-agent2
+        notes: agent2 支持 runtime 控制接口的部分热操作，配置改动仍以 restart 为准。
+        danger: low
+        tags: [服务]
+      - name: systemctl status zabbix-agent2
+        syntax: systemctl status zabbix-agent2
+        desc: 查看 agent2 服务状态与最近日志。
+        example: systemctl status zabbix-agent2 --no-pager -l
+        notes: 只读；配合 agent2 -t 验证采集键。
+        danger: false
+        tags: [服务, 状态]
+      - name: zabbix_server --version
+        syntax: zabbix_server --version
+        desc: 查看 server 版本与编译信息。
+        example: zabbix_server --version
+        notes: 升级前后核对版本；6.0.x 与 7.0 配置有差异。只读。
+        danger: false
+        tags: [版本]
+      - name: zabbix_server -c <file>
+        syntax: zabbix_server -c /etc/zabbix/zabbix_server.conf
+        desc: 以指定配置文件前台/手工启动 server（排障用）。
+        example: zabbix_server -c /etc/zabbix/zabbix_server.conf -R config_cache_reload
+        notes: 生产用 systemd 管理；手工跑注意别双开（PidFile 冲突）。
+        danger: low
+        tags: [调试]
+      - name: zabbix_agentd（-c/-t/-p）
+        syntax: zabbix_agentd [-c file] [-t key] [-p]
+        desc: 老 C 版代理二进制：-t 测试单个采集键，-p 打印全部键值，-c 指定配置。
+        example: zabbix_agentd -t system.uname
+        notes: agent2 与 agentd 是两个包，命令不同不可混用。只读测试。
+        danger: false
+        tags: [调试]
+      - name: zabbix_agent2 -t <key>
+        syntax: zabbix_agent2 -t <key> [-c file]
+        desc: 在本机测试 agent2 采集键的取值，排"无数据"问题首选。
+        example: zabbix_agent2 -t vfs.fs.size[/,pused]
+        notes: 必须用 agent2 的配置文件（默认 /etc/zabbix/zabbix_agent2.conf）。只读。
+        danger: false
+        tags: [调试]
+      - name: zabbix_get -s <ip> -k <key>
+        syntax: zabbix_get -s <host-ip> -k <key> [-p port] [-I source-ip]
+        desc: 从 server/proxy 端远程拉取某主机的采集键值，验证端到端链路。
+        example: zabbix_get -s 10.0.0.21 -k agent.version
+        notes: 只能对被动模式端口发起；超时多为防火墙或 agent 未运行。只读。
+        danger: false
+        tags: [调试]
+      - name: zabbix_sender -s/z/k/o
+        syntax: zabbix_sender -z <server-ip> -s <host-name> -k <key> -o <value>
+        desc: 主动向 server 推送自定义值（陷阱测试/临时上报）。
+        example: zabbix_sender -z 10.0.0.10 -s "web01" -k trap.test -o "hello"
+        notes: -s 必须是 server 上配置的主机名（非 IP）；-z 指向 server 或 proxy。会写监控数据。
+        danger: low
+        tags: [调试, 数据]
+      - name: zabbix_server -R config_cache_reload
+        syntax: zabbix_server -R config_cache_reload
+        desc: 运行时重载 server 配置缓存，改监控对象后不必重启 server。
+        example: zabbix_server -R config_cache_reload
+        notes: 热加载仅刷新缓存；zabbix_server.conf 参数改动仍需 restart。
+        danger: low
+        tags: [热加载]
+      - name: 数据库初始化（zcat schema.sql）
+        syntax: zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uzabbix -p zabbix
+        desc: 首次部署时导入数据库结构（server schema）。
+        example: zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz | sudo -u zabbix psql zabbix
+        notes: 只在全新库执行一次；重复导入会破坏数据。6.0 起脚本路径随发行版变化。
+        danger: high
+        tags: [安装, 数据库]
+
+  - id: conf
+    label: 配置参数（zabbix-server.conf）
+    entries:
+      - name: ListenPort
+        section: server
+        syntax: ListenPort=10051
+        default: "10051"
+        context: server
+        desc: server 被动接收 trap 与 agent 主动连接的监听端口。
+        example: "ListenPort=10051"
+        notes: 改后 restart 生效；需同步防火墙与 agent 的 Server/ServerActive 端口。
+        danger: low
+        tags: [网络]
+      - name: ListenIP
+        section: server
+        syntax: ListenIP=127.0.0.1,10.0.0.10
+        default: "全部本机地址"
+        context: server
+        desc: server 监听的本地 IP 列表，逗号分隔。
+        example: "ListenIP=10.0.0.10"
+        notes: 多网卡机器限定内网地址更安全。restart 生效。
+        danger: false
+        tags: [网络, 安全]
+      - name: SourceIP
+        section: server
+        syntax: SourceIP=<ip>
+        default: "无（由路由决定）"
+        context: server
+        desc: server 主动外连（如 SNMP、Web 检测）时使用的源 IP。
+        example: "SourceIP=10.0.0.10"
+        notes: 对端防火墙按源 IP 放行时必须指定。restart 生效。
+        danger: false
+        tags: [网络]
+      - name: LogFile
+        section: server
+        syntax: LogFile=/var/log/zabbix/zabbix_server.log
+        default: "（syslog 或指定文件）"
+        context: server
+        desc: 日志文件路径；留空走 syslog。
+        example: "LogFile=/var/log/zabbix/zabbix_server.log"
+        notes: 与 LogType 配套（file）。restart 生效。
+        danger: false
+        tags: [日志]
+      - name: LogFileSize
+        section: server
+        syntax: LogFileSize=<MB>
+        default: "1"
+        context: server
+        desc: 日志滚动大小上限（MB）；0=不自动滚动（交给 logrotate）。
+        example: "LogFileSize=100"
+        notes: 生产建议 0+logrotate 统一管理。restart 生效。
+        danger: false
+        tags: [日志]
+      - name: DebugLevel
+        section: server
+        syntax: DebugLevel=<0-5>
+        default: "3"
+        context: server
+        desc: 日志级别：0 基本信息 1 关键 2 错误 3 警告 4 调试 5 扩展调试。
+        example: "DebugLevel=4"
+        notes: 4/5 仅排障临时开启，日志量极大；用后改回 3。restart 生效。
+        danger: low
+        tags: [日志, 调试]
+      - name: PidFile
+        section: server
+        syntax: PidFile=/run/zabbix/zabbix_server.pid
+        default: "/tmp/zabbix_server.pid"
+        context: server
+        desc: 进程 PID 文件位置。
+        example: "PidFile=/run/zabbix/zabbix_server.pid"
+        notes: systemd 单元通常指定 /run 下；避免手工与 systemd 双开。restart 生效。
+        danger: false
+        tags: [进程]
+      - name: SocketDir
+        section: server
+        syntax: SocketDir=/tmp
+        default: "/tmp"
+        context: server
+        desc: 内部 IPC socket 目录。
+        example: "SocketDir=/run/zabbix"
+        notes: 一般不动；多实例时分开目录。restart 生效。
+        danger: false
+        tags: [进程]
+      - name: DBHost
+        section: server
+        syntax: DBHost=<host>
+        default: "localhost"
+        context: server
+        desc: 数据库主机地址；远程库填 IP/域名。
+        example: "DBHost=10.0.0.20"
+        notes: 改后 restart；数据库需先授权 zabbix 用户远程访问。
+        danger: low
+        tags: [数据库]
+      - name: DBName
+        section: server
+        syntax: DBName=<database>
+        default: "zabbix"
+        context: server
+        desc: 数据库名（PostgreSQL 也可写连接串）。
+        example: "DBName=zabbix"
+        notes: 必须已导入 schema；大小写敏感。restart 生效。
+        danger: false
+        tags: [数据库]
+      - name: DBSchema
+        section: server
+        syntax: DBSchema=<schema>
+        default: "无"
+        context: server
+        desc: PostgreSQL 的 schema 名。
+        example: "DBSchema=public"
+        notes: 仅 PostgreSQL 用；MySQL 忽略。restart 生效。
+        danger: false
+        tags: [数据库]
+      - name: DBUser
+        section: server
+        syntax: DBUser=<user>
+        default: "无（必填）"
+        context: server
+        desc: 数据库连接用户。
+        example: "DBUser=zabbix"
+        notes: 最小权限原则，只授权 zabbix 库。restart 生效。
+        danger: false
+        tags: [数据库]
+      - name: DBPassword
+        section: server
+        syntax: DBPassword=<password>
+        default: "无"
+        context: server
+        desc: 数据库连接密码。
+        example: "DBPassword=StrongPassExample"
+        notes: 明文存储，配置文件权限应 640 root:zabbix；不要入代码库。restart 生效。
+        danger: medium
+        tags: [数据库, 安全]
+      - name: DBSocket
+        section: server
+        syntax: DBSocket=/tmp/mysql.sock
+        default: "无（TCP）"
+        context: server
+        desc: MySQL 本机 socket 路径（本机库免 TCP）。
+        example: "DBSocket=/var/lib/mysql/mysql.sock"
+        notes: 与 DBHost 二选一生效逻辑：本机用 socket 更快。restart 生效。
+        danger: false
+        tags: [数据库]
+      - name: DBPort
+        section: server
+        syntax: DBPort=<port>
+        default: "3306 / 5432"
+        context: server
+        desc: 数据库端口。
+        example: "DBPort=3307"
+        notes: 非默认端口才需要。restart 生效。
+        danger: false
+        tags: [数据库]
+      - name: StartPollers
+        section: server
+        syntax: StartPollers=<num>
+        default: "5"
+        context: server
+        desc: 被动轮询进程数（zabbix_server.conf 核心性能参数）。
+        example: "StartPollers=20"
+        notes: 队列积压时上调；受机器 CPU 与 DB 性能约束。restart 生效。
+        danger: low
+        tags: [性能, 进程]
+      - name: StartIPMIPollers
+        section: server
+        syntax: StartIPMIPollers=<num>
+        default: "0"
+        context: server
+        desc: IPMI 设备轮询进程数。
+        example: "StartIPMIPollers=2"
+        notes: 只有用 IPMI 监控硬件时开启。restart 生效。
+        danger: false
+        tags: [性能]
+      - name: StartPollersUnreachable
+        section: server
+        syntax: StartPollersUnreachable=<num>
+        default: "1"
+        context: server
+        desc: 不可达主机专用轮询进程数。
+        example: "StartPollersUnreachable=5"
+        notes: 大量主机掉线时避免占用常规 poller。restart 生效。
+        danger: false
+        tags: [性能]
+      - name: StartTrappers
+        section: server
+        syntax: StartTrappers=<num>
+        default: "5"
+        context: server
+        desc: 处理主动上报（sender/主动 agent/trap）的进程数。
+        example: "StartTrappers=15"
+        notes: 主动模式 agent 多或 trap 量大时上调。restart 生效。
+        danger: false
+        tags: [性能]
+      - name: StartPingers
+        section: server
+        syntax: StartPingers=<num>
+        default: "1"
+        context: server
+        desc: ICMP ping 检测进程数。
+        example: "StartPingers=6"
+        notes: 需要 fping；每进程默认并发 1000。restart 生效。
+        danger: false
+        tags: [性能]
+      - name: StartDiscoverers
+        section: server
+        syntax: StartDiscoverers=<num>
+        default: "1"
+        context: server
+        desc: 自动发现进程数。
+        example: "StartDiscoverers=3"
+        notes: 发现规则多/网段大时上调。restart 生效。
+        danger: false
+        tags: [性能]
+      - name: StartHTTPPollers
+        section: server
+        syntax: StartHTTPPollers=<num>
+        default: "1"
+        context: server
+        desc: Web 场景检测进程数。
+        example: "StartHTTPPollers=4"
+        notes: HTTP 检测项多时上调。restart 生效。
+        danger: false
+        tags: [性能]
+      - name: StartTimers
+        section: server
+        syntax: StartTimers=<num>
+        default: "1"
+        context: server
+        desc: 定时器进程（维护期、trigger 时间函数等）。
+        example: "StartTimers=2"
+        notes: 一般默认即可。restart 生效。
+        danger: false
+        tags: [性能]
+      - name: StartEscalators
+        section: server
+        syntax: StartEscalators=<num>
+        default: "1"
+        context: server
+        desc: 告警升级（动作多步 escalation）进程数。
+        example: "StartEscalators=2"
+        notes: 复杂告警剧本多时上调。restart 生效。
+        danger: false
+        tags: [告警]
+      - name: StartAlerters
+        section: server
+        syntax: StartAlerters=<num>
+        default: "3"
+        context: server
+        desc: 告警发送进程数（邮件/脚本等通知媒介）。
+        example: "StartAlerters=5"
+        notes: 通知积压（大量告警风暴）时上调。restart 生效。
+        danger: false
+        tags: [告警]
+      - name: JavaGateway
+        section: server
+        syntax: JavaGateway=<ip>
+        default: "无"
+        context: server
+        desc: Java 网关地址（JMX 监控必配）。
+        example: "JavaGateway=127.0.0.1"
+        notes: 需单独部署 zabbix-java-gateway 服务。restart 生效。
+        danger: false
+        tags: [JMX]
+      - name: JavaGatewayPort
+        section: server
+        syntax: JavaGatewayPort=<port>
+        default: "10052"
+        context: server
+        desc: Java 网关端口。
+        example: "JavaGatewayPort=10052"
+        notes: 与网关服务配置一致。restart 生效。
+        danger: false
+        tags: [JMX]
+      - name: StartJavaPollers
+        section: server
+        syntax: StartJavaPollers=<num>
+        default: "0"
+        context: server
+        desc: JMX 轮询进程数。
+        example: "StartJavaPollers=5"
+        notes: 配合 JavaGateway 使用。restart 生效。
+        danger: false
+        tags: [JMX, 性能]
+      - name: StartVMwareCollectors
+        section: server
+        syntax: StartVMwareCollectors=<num>
+        default: "0"
+        context: server
+        desc: VMware vCenter/ESXi 采集进程数。
+        example: "StartVMwareCollectors=4"
+        notes: 一般按 vCenter 数量的 2 倍以上配置。restart 生效。
+        danger: false
+        tags: [虚拟化, 性能]
+      - name: VMwareFrequency
+        section: server
+        syntax: VMwareFrequency=<seconds>
+        default: "60"
+        context: server
+        desc: VMware 集群级数据采集间隔。
+        example: "VMwareFrequency=120"
+        notes: 实例级间隔用 VMwarePerfFrequency（7.0 前合并）。restart 生效。
+        danger: false
+        tags: [虚拟化]
+      - name: VMwareCacheSize
+        section: server
+        syntax: VMwareCacheSize=<bytes>
+        default: "8M"
+        context: server
+        desc: VMware 数据共享内存缓存大小。
+        example: "VMwareCacheSize=64M"
+        notes: 日志出现 cache 满/丢数据时调大。restart 生效。
+        danger: false
+        tags: [虚拟化, 缓存]
+      - name: HousekeepingFrequency
+        section: server
+        syntax: HousekeepingFrequency=<hours>
+        default: "1"
+        context: server
+        desc: 历史数据清理（housekeeper）执行间隔（小时）。
+        example: "HousekeepingFrequency=4"
+        notes: 大库清理压力可调大间隔并配合分区表。restart 生效。
+        danger: false
+        tags: [维护]
+      - name: MaxHousekeeperDelete
+        section: server
+        syntax: MaxHousekeeperDelete=<rows>
+        default: "5000"
+        context: server
+        desc: housekeeper 单轮最多删除行数（每小时段）。
+        example: "MaxHousekeeperDelete=100000"
+        notes: 删除过慢磁盘涨、删除过猛锁表，需平衡。restart 生效。
+        danger: false
+        tags: [维护]
+      - name: CacheSize
+        section: server
+        syntax: CacheSize=<bytes>
+        default: "8M"
+        context: server
+        desc: 配置缓存（主机/监控项/触发器）共享内存大小。
+        example: "CacheSize=256M"
+        notes: 监控项十万级必调大；日志报 "conf cache is full"。restart 生效。
+        danger: low
+        tags: [缓存, 性能]
+      - name: CacheUpdateFrequency
+        section: server
+        syntax: CacheUpdateFrequency=<seconds>
+        default: "60"
+        context: server
+        desc: 配置缓存刷新间隔。
+        example: "CacheUpdateFrequency=120"
+        notes: 前端改配置后生效延迟与此相关；也可手动 -R 热刷。restart 生效。
+        danger: false
+        tags: [缓存]
+      - name: StartDBSyncers
+        section: server
+        syntax: StartDBSyncers=<num>
+        default: "4"
+        context: server
+        desc: 历史数据写库同步进程数。
+        example: "StartDBSyncers=8"
+        notes: 写入瓶颈时上调；配合数据库调优。restart 生效。
+        danger: false
+        tags: [数据库, 性能]
+      - name: HistoryCacheSize
+        section: server
+        syntax: HistoryCacheSize=<bytes>
+        default: "16M"
+        context: server
+        desc: 历史数据共享内存缓存。
+        example: "HistoryCacheSize=256M"
+        notes: 值写入慢于采集时积压于此；日志报满即调大。restart 生效。
+        danger: low
+        tags: [缓存, 性能]
+      - name: HistoryIndexCacheSize
+        section: server
+        syntax: HistoryIndexCacheSize=<bytes>
+        default: "4M"
+        context: server
+        desc: 历史数据索引缓存大小。
+        example: "HistoryIndexCacheSize=64M"
+        notes: 与 HistoryCacheSize 按比例调。restart 生效。
+        danger: false
+        tags: [缓存]
+      - name: TrendCacheSize
+        section: server
+        syntax: TrendCacheSize=<bytes>
+        default: "4M"
+        context: server
+        desc: 趋势（小时聚合）数据缓存大小。
+        example: "TrendCacheSize=64M"
+        notes: 长期大监控量时关注。restart 生效。
+        danger: false
+        tags: [缓存]
+      - name: ValueCacheSize
+        section: server
+        syntax: ValueCacheSize=<bytes>
+        default: "8M"
+        context: server
+        desc: 触发器表达式取值缓存，加速函数计算。
+        example: "ValueCacheSize=128M"
+        notes: 日志报 "value cache" 相关告警时调大。restart 生效。
+        danger: false
+        tags: [缓存]
+      - name: Timeout
+        section: server
+        syntax: Timeout=<seconds>
+        default: "3"
+        context: server
+        desc: server 侧各类检测（agent/snmp 等）的超时秒数。
+        example: "Timeout=10"
+        notes: 慢脚本/远程 agent 必要时上调；越大越拖长队列。restart 生效。
+        danger: false
+        tags: [超时]
+      - name: TrapperTimeout
+        section: server
+        syntax: TrapperTimeout=<seconds>
+        default: "300"
+        context: server
+        desc: 处理 trapper/sender 数据的超时。
+        example: "TrapperTimeout=300"
+        notes: 一般默认。restart 生效。
+        danger: false
+        tags: [超时]
+      - name: UnavailableDelay
+        section: server
+        syntax: UnavailableDelay=<seconds>
+        default: "60"
+        context: server
+        desc: 主机不可用（接口级）后的重试间隔。
+        example: "UnavailableDelay=60"
+        notes: 网络闪断频繁时适当调小以尽快恢复。restart 生效。
+        danger: false
+        tags: [可用性]
+      - name: UnreachableDelay
+        section: server
+        syntax: UnreachableDelay=<seconds>
+        default: "15"
+        context: server
+        desc: 接口不可达（超时/拒绝）后的重试间隔。
+        example: "UnreachableDelay=15"
+        notes: 与 UnavailablePeriod 配合。restart 生效。
+        danger: false
+        tags: [可用性]
+      - name: UnreachablePeriod
+        section: server
+        syntax: UnreachablePeriod=<seconds>
+        default: "45"
+        context: server
+        desc: 不可达持续多久后标记为"不可用"（UNAVAILABLE）。
+        example: "UnreachablePeriod=45"
+        notes: 告警模板常依赖该状态切换。restart 生效。
+        danger: false
+        tags: [可用性]
+      - name: ExternalScripts
+        section: server
+        syntax: ExternalScripts=/usr/lib/zabbix/externalscripts
+        default: "/usr/local/share/zabbix/externalscripts"
+        context: server
+        desc: 外部检查脚本的存放目录。
+        example: "ExternalScripts=/usr/lib/zabbix/externalscripts"
+        notes: 脚本需可执行；参数来自监控项，注意注入风险。restart 生效。
+        danger: low
+        tags: [脚本, 安全]
+      - name: AlertScriptPath
+        section: server
+        syntax: AlertScriptPath=/usr/lib/zabbix/alertscripts
+        default: "（编译前缀 alertscripts）"
+        context: server
+        desc: 告警媒介脚本目录（自定义通知方式）。
+        example: "AlertScriptPath=/usr/lib/zabbix/alertscripts"
+        notes: 6.0 起通知脚本也可放 externalscripts；7.0 前后有目录口径变化。restart 生效。
+        danger: false
+        tags: [告警, 脚本]
+      - name: FpingLocation
+        section: server
+        syntax: FpingLocation=/usr/sbin/fping
+        default: "/usr/sbin/fping"
+        context: server
+        desc: fping 二进制路径（ICMP 检测依赖）。
+        example: "FpingLocation=/usr/sbin/fping"
+        notes: 需 setuid root 或能力授权；路径错则 ping 项全部失败。restart 生效。
+        danger: false
+        tags: [检测]
+      - name: Fping6Location
+        section: server
+        syntax: Fping6Location=/usr/sbin/fping6
+        default: "/usr/sbin/fping6"
+        context: server
+        desc: fping6 二进制路径（部分系统 fping 已合并 v6）。
+        example: "Fping6Location=/usr/sbin/fping"
+        notes: 新发行版 fping 自带 -6 时与 FpingLocation 同值。restart 生效。
+        danger: false
+        tags: [检测]
+      - name: LogSlowQueries
+        section: server
+        syntax: LogSlowQueries=<milliseconds>
+        default: "0"
+        context: server
+        desc: 慢数据库查询日志阈值（毫秒），超时记录告警日志。
+        example: "LogSlowQueries=3000"
+        notes: 排 DB 性能问题时开启；0=关闭。restart 生效。
+        danger: false
+        tags: [日志, 数据库]
+      - name: ProxyConfigFrequency
+        section: server
+        syntax: ProxyConfigFrequency=<seconds>
+        default: "10"
+        context: server
+        desc: server 向被动 proxy 下发配置的间隔。
+        example: "ProxyConfigFrequency=30"
+        notes: 6.0 前叫 ConfigFrequency（proxy 侧）；7.0 起有变化（口径移至 proxy）。restart 生效。
+        danger: false
+        tags: [代理]
+      - name: ProxyDataFrequency
+        section: server
+        syntax: ProxyDataFrequency=<seconds>
+        default: "1"
+        context: server
+        desc: server 向被动 proxy 请求历史数据的间隔。
+        example: "ProxyDataFrequency=1"
+        notes: 影响被动 proxy 数据落库延迟。restart 生效。
+        danger: false
+        tags: [代理]
+      - name: StartProxyPollers
+        section: server
+        syntax: StartProxyPollers=<num>
+        default: "1"
+        context: server
+        desc: 被动模式 proxy 轮询进程数。
+        example: "StartProxyPollers=4"
+        notes: 被动 proxy 数量多时上调。restart 生效。
+        danger: false
+        tags: [代理, 性能]
+      - name: Include
+        section: server
+        syntax: "Include=/etc/zabbix/zabbix_server.d/*.conf"
+        default: "无"
+        context: server
+        desc: 额外配置片段包含路径，支持通配符。
+        example: "Include=/etc/zabbix/zabbix_server.d/*.conf"
+        notes: 参数分组管理（如数据库单独文件）更清晰；冲突时后读覆盖。restart 生效。
+        danger: false
+        tags: [组织]
+      - name: TLSConnect/TLSAccept（server 侧）
+        section: server
+        syntax: "TLSConnect=psk|cert TLSAccept=unencrypted|psk|cert（可组合）"
+        default: "无（不加密）"
+        context: server
+        desc: server 连接数据库加密方式（TLSConnect）与接受加密连接策略（TLSAccept）。
+        example: "TLSAccept=unencrypted,psk"
+        notes: 配错会导致 agent/proxy 连不上；先在测试环境验证。restart 生效。
+        danger: medium
+        tags: [安全, TLS]
+
+  - id: conf
+    label: 配置参数（zabbix_agent2.conf）
+    entries:
+      - name: PidFile（agent2）
+        section: agent
+        syntax: PidFile=/run/zabbix/zabbix_agent2.pid
+        default: "（临时目录）"
+        context: agent
+        desc: agent2 进程 PID 文件位置。
+        example: "PidFile=/run/zabbix/zabbix_agent2.pid"
+        notes: systemd 管理时按单元定义。restart 生效。
+        danger: false
+        tags: [进程]
+      - name: LogFile（agent2）
+        section: agent
+        syntax: LogFile=/var/log/zabbix/zabbix_agent2.log
+        default: "（stdout/syslog）"
+        context: agent
+        desc: agent2 日志文件路径。
+        example: "LogFile=/var/log/zabbix/zabbix_agent2.log"
+        notes: 排采集问题先看这里。restart 生效。
+        danger: false
+        tags: [日志]
+      - name: LogFileSize（agent2）
+        section: agent
+        syntax: LogFileSize=<MB>
+        default: "1"
+        context: agent
+        desc: 日志滚动上限（MB）；0=不滚动。
+        example: "LogFileSize=50"
+        notes: 与 server 同名参数语义一致。restart 生效。
+        danger: false
+        tags: [日志]
+      - name: DebugLevel（agent2）
+        section: agent
+        syntax: DebugLevel=<0-5>
+        default: "3"
+        context: agent
+        desc: agent2 日志级别，4/5 为调试。
+        example: "DebugLevel=4"
+        notes: 排障临时开；agent2 支持 -R log_level_reload 热切。restart/热切生效。
+        danger: low
+        tags: [日志, 调试]
+      - name: Server
+        section: agent
+        syntax: Server=<ip1>,<ip2>/CIDR
+        default: "无（必填）"
+        context: agent
+        desc: 允许向本 agent 发起被动查询的 server/proxy 白名单，支持 CIDR。
+        example: "Server=10.0.0.10,10.0.1.0/24"
+        notes: 安全关键项：授权外主机可读取采集数据。restart 生效。
+        danger: medium
+        tags: [安全, 网络]
+      - name: ServerActive
+        section: agent
+        syntax: ServerActive=<server:port>[,server2:port]
+        default: "无"
+        context: agent
+        desc: 主动模式上报目标 server/proxy 列表；留空则纯被动。
+        example: "ServerActive=10.0.0.10:10051"
+        notes: 主动模式穿过 NAT 友好；与 Server 独立配置。restart 生效。
+        danger: false
+        tags: [网络]
+      - name: ListenPort（agent2）
+        section: agent
+        syntax: ListenPort=10050
+        default: "10050"
+        context: agent
+        desc: agent2 被动监听端口。
+        example: "ListenPort=10050"
+        notes: 改后需同步 server 侧接口端口与防火墙。restart 生效。
+        danger: false
+        tags: [网络]
+      - name: ListenIP（agent2）
+        section: agent
+        syntax: ListenIP=<ip>
+        default: "全部本机地址"
+        context: agent
+        desc: 被动监听绑定的本机 IP。
+        example: "ListenIP=10.0.0.21"
+        notes: 多网卡时限定内网地址。restart 生效。
+        danger: false
+        tags: [网络]
+      - name: Hostname
+        section: agent
+        syntax: Hostname=<name>
+        default: "（HostnameItem 决定）"
+        context: agent
+        desc: 主动模式上报时标识本机的主机名，必须与 server 前端配置的主机名一致。
+        example: "Hostname=web01"
+        notes: 不一致时主动数据被丢弃；被动模式无需。restart 生效。
+        danger: low
+        tags: [身份]
+      - name: HostnameItem
+        section: agent
+        syntax: HostnameItem=system.hostname
+        default: "system.hostname"
+        context: agent
+        desc: 未写死 Hostname 时用采集键动态取主机名。
+        example: "HostnameItem=system.hostname"
+        notes: 与 Hostname 互斥，写死优先。restart 生效。
+        danger: false
+        tags: [身份]
+      - name: HostMetadata
+        section: agent
+        syntax: HostMetadata=<metadata>
+        default: "无"
+        context: agent
+        desc: 主机元数据静态串，用于自动注册动作匹配条件。
+        example: "HostMetadata=linux-web"
+        notes: 与 HostMetadataItem 二选一；自动注册核心参数。restart 生效。
+        danger: false
+        tags: [自动注册]
+      - name: HostMetadataItem
+        section: agent
+        syntax: HostMetadataItem=<key>
+        default: "无"
+        context: agent
+        desc: 用采集键动态生成主机元数据。
+        example: "HostMetadataItem=system.uname"
+        notes: 输出截断 256 字符。restart 生效。
+        danger: false
+        tags: [自动注册]
+      - name: HostInterface
+        section: agent
+        syntax: HostInterface=<string>
+        default: "无"
+        context: agent
+        desc: 主机接口描述（联系人/位置等自定义文本）。
+        example: "HostInterface=IDC-A rack12"
+        notes: 255 字符限制；资产信息用途。restart 生效。
+        danger: false
+        tags: [资产]
+      - name: HostInterfaceItem
+        section: agent
+        syntax: HostInterfaceItem=<key>
+        default: "无"
+        context: agent
+        desc: 用采集键动态生成主机接口描述。
+        example: "HostInterfaceItem=vfs.file.contents[/etc/host-interface]"
+        notes: 与 HostInterface 互斥。restart 生效。
+        danger: false
+        tags: [资产]
+      - name: RefreshActiveChecks
+        section: agent
+        syntax: RefreshActiveChecks=<seconds>
+        default: "120"
+        context: agent
+        desc: 主动模式刷新监控项列表的间隔。
+        example: "RefreshActiveChecks=120"
+        notes: server 端改采集项后最长延迟此值生效。restart 生效。
+        danger: false
+        tags: [主动模式]
+      - name: BufferSend
+        section: agent
+        syntax: BufferSend=<seconds>
+        default: "5"
+        context: agent
+        desc: 缓冲数据最长停留多久后发送。
+        example: "BufferSend=5"
+        notes: 值小延迟低、包多。restart 生效。
+        danger: false
+        tags: [主动模式, 缓冲]
+      - name: BufferSize
+        section: agent
+        syntax: BufferSize=<values>
+        default: "100"
+        context: agent
+        desc: 内存缓冲可容纳的采集值数量。
+        example: "BufferSize=1000"
+        notes: 网络中断时缓存能力上限，溢出丢最旧。restart 生效。
+        danger: false
+        tags: [主动模式, 缓冲]
+      - name: MaxLinesPerSecond
+        section: agent
+        syntax: MaxLinesPerSecond=<lines>
+        default: "20"
+        context: agent
+        desc: 主动发送 log/logrt 监控项时每秒最大行数。
+        example: "MaxLinesPerSecond=100"
+        notes: 日志采集量大时上调，注意 server 端负载。restart 生效。
+        danger: false
+        tags: [日志监控]
+      - name: Timeout（agent2）
+        section: agent
+        syntax: Timeout=<seconds>
+        default: "3"
+        context: agent
+        desc: agent2 执行采集（含 UserParameter 脚本）的超时。
+        example: "Timeout=10"
+        notes: 慢脚本采集被截断报 ZBX_NOTSUPPORTED 时上调；需 ≤ server 侧 Timeout。restart 生效。
+        danger: false
+        tags: [超时]
+      - name: Include（agent2）
+        section: agent
+        syntax: "Include=/etc/zabbix/zabbix_agent2.d/*.conf"
+        default: "无"
+        context: agent
+        desc: 额外配置包含（常放 UserParameter）。
+        example: "Include=/etc/zabbix/zabbix_agent2.d/*.conf"
+        notes: 模板化部署友好；后读覆盖。restart 生效。
+        danger: false
+        tags: [组织]
+      - name: UnsafeUserParameters
+        section: agent
+        syntax: UnsafeUserParameters=<0|1>
+        default: "0"
+        context: agent
+        desc: 是否允许 UserParameter 传参包含特殊字符（\ " ' ` * ? [ ] { } ~ $ ! & ; ( ) < > | # @）。
+        example: "UnsafeUserParameters=0"
+        notes: 开 1 有命令注入风险——参数会拼进 shell 命令，除非脚本做严格过滤。restart 生效。
+        danger: high
+        tags: [安全, 脚本]
+      - name: UserParameter
+        section: agent
+        syntax: "UserParameter=<key>,<command>"
+        default: "无"
+        context: agent
+        desc: 自定义采集项：键名+取值命令，命令黑名单提醒——反斜杠 \ 、引号、反引号、星号等默认不允许出现在参数中。
+        example: "UserParameter=custom.tcp.estab,ss -ant state established | grep -c ."
+        notes: 支持位置参数 $1-$9（配合 UnsafeUserParameters）；命令输出首行作为值。restart 生效。
+        danger: medium
+        tags: [脚本, 自定义监控]
+      - name: Alias
+        section: agent
+        syntax: "Alias=<alias>:<key>"
+        default: "无"
+        context: agent
+        desc: 为长键名定义别名（模板迁移利器）。
+        example: "Alias=cpu.util:system.cpu.util"
+        notes: 采集时按别名映射到真实键。restart 生效。
+        danger: false
+        tags: [自定义监控]
+      - name: ListenBacklog
+        section: agent
+        syntax: ListenBacklog=<num>
+        default: "系统默认（128+）"
+        context: agent
+        desc: 被动监听 socket 的等待队列长度。
+        example: "ListenBacklog=1024"
+        notes: server 大量并发被动轮询时调大。restart 生效。
+        danger: false
+        tags: [网络, 性能]
+      - name: TLSConnect
+        section: agent
+        syntax: TLSConnect=unencrypted|psk|cert
+        default: "unencrypted"
+        context: agent
+        desc: 主动模式连接 server 使用的加密方式（agent 侧单选）。
+        example: "TLSConnect=psk"
+        notes: 需配 TLSPSKFile 等配套项；server 端同步开启。restart 生效。
+        danger: low
+        tags: [安全, TLS]
+      - name: TLSAccept
+        section: agent
+        syntax: TLSAccept=unencrypted|psk|cert（可组合）
+        default: "unencrypted"
+        context: agent
+        desc: 被动模式接受的加密方式，可逗号组合（过渡期兼容）。
+        example: "TLSAccept=unencrypted,psk"
+        notes: 迁移加密时先组合再收紧。restart 生效。
+        danger: low
+        tags: [安全, TLS]
+      - name: TLSCAFile
+        section: agent
+        syntax: TLSCAFile=/etc/zabbix/tls/ca.pem
+        default: "无"
+        context: agent
+        desc: 证书模式信任的 CA 文件。
+        example: "TLSCAFile=/etc/zabbix/tls/ca.pem"
+        notes: cert 加密必配；与 TLSCertFile/TLSKeyFile 成套。restart 生效。
+        danger: false
+        tags: [安全, TLS]
+      - name: TLSCertFile
+        section: agent
+        syntax: TLSCertFile=/etc/zabbix/tls/agent.crt
+        default: "无"
+        context: agent
+        desc: agent 证书文件。
+        example: "TLSCertFile=/etc/zabbix/tls/agent.crt"
+        notes: 权限应最小化。restart 生效。
+        danger: false
+        tags: [安全, TLS]
+      - name: TLSKeyFile
+        section: agent
+        syntax: TLSKeyFile=/etc/zabbix/tls/agent.key
+        default: "无"
+        context: agent
+        desc: agent 私钥文件。
+        example: "TLSKeyFile=/etc/zabbix/tls/agent.key"
+        notes: 600 权限。restart 生效。
+        danger: false
+        tags: [安全, TLS]
+      - name: TLSPSKIdentity
+        section: agent
+        syntax: TLSPSKIdentity=<string>
+        default: "无"
+        context: agent
+        desc: PSK 预共享密钥身份串（server 端配置同名项匹配）。
+        example: "TLSPSKIdentity=web01-psk"
+        notes: 与 server/proxy 侧一致才能握手。restart 生效。
+        danger: false
+        tags: [安全, TLS]
+      - name: TLSPSKFile
+        section: agent
+        syntax: TLSPSKFile=/etc/zabbix/tls/agent.psk
+        default: "无"
+        context: agent
+        desc: PSK 密钥文件（十六进制文本）。
+        example: "TLSPSKFile=/etc/zabbix/tls/agent.psk"
+        notes: 600 权限；与 Identity 成对。restart 生效。
+        danger: false
+        tags: [安全, TLS]
+      - name: LoadModule
+        section: agent
+        syntax: "LoadModule=<module.so>"
+        default: "无"
+        context: agent
+        desc: 启动时加载的负载模块（写监控数据给第三方系统用）。
+        example: "LoadModule=/usr/lib/zabbix/modules/example.so"
+        notes: 需配 LoadModulePath；一般用不到。restart 生效。
+        danger: low
+        tags: [扩展]
+      - name: Plugins
+        section: agent
+        syntax: "Plugins.<Name>.<Param>=<value>"
+        default: "无"
+        context: agent
+        desc: agent2 插件子配置（Go 插件体系）：如 Plugins.Memcached.Uri、Plugins.UserParameter... 每个插件独立命名空间。
+        example: "Plugins.PostgreSQL.Uri=tcp://10.0.0.5:5432"
+        notes: agent2 特有；替代老 agentd 的编译扩展方式。7.0 起部分插件参数有变化。restart 生效。
+        danger: false
+        tags: [插件, 扩展]

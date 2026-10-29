@@ -1,0 +1,818 @@
+software: nginx
+label: Nginx
+version_ref: "官方文档 1.24/1.26 稳定版（参考）"
+generated: "AI 整理"
+sources:
+  - https://nginx.org/en/docs/
+  - https://nginx.org/en/docs/dirindex.html
+
+categories:
+  - id: cli
+    label: 启停与运行命令
+    entries:
+      - name: nginx
+        syntax: nginx [-c file]
+        desc: 以默认配置启动 nginx（前台拉起 master 进程并派生 worker）。安装为服务后通常用 systemctl 管理。
+        example: nginx
+        notes: 手动启动前确认配置无误；生产环境建议用 systemctl start nginx。无 reload 语义。
+        danger: low
+        tags: [启动]
+      - name: nginx -t
+        syntax: nginx -t [-c file] [-q]
+        desc: 测试配置文件语法是否正确，不启动服务。改完配置后必须先执行。
+        example: nginx -t -c /etc/nginx/nginx.conf
+        notes: 返回码 0=通过；输出 test is successful。仅检查不生效。
+        danger: false
+        tags: [验证]
+      - name: nginx -s reload
+        syntax: nginx -s reload
+        desc: 平滑重载配置（不断连接，master 重读配置、新 worker 替换旧 worker）。
+        example: nginx -s reload
+        notes: 执行前先 nginx -t；与 systemctl reload nginx 等价。reload 生效。
+        danger: medium
+        tags: [热加载]
+      - name: nginx -s stop
+        syntax: nginx -s stop
+        desc: 立即强制关闭 nginx（SIGTERM 快速退出，活跃连接被切断）。
+        example: nginx -s stop
+        notes: 会断开所有在线连接；生产慎用，优先 quit。
+        danger: high
+        tags: [停止]
+      - name: nginx -s quit
+        syntax: nginx -s quit
+        desc: 优雅关闭 nginx（处理完已接受的请求后再退出，SIGQUIT）。
+        example: nginx -s quit
+        notes: 停机维护用；等待请求排空，可能需要数秒。
+        danger: medium
+        tags: [停止]
+      - name: nginx -s reopen
+        syntax: nginx -s reopen
+        desc: 重新打开日志文件（USR1），日志切割后让 nginx 写入新文件。
+        example: nginx -s reopen
+        notes: 配合 mv access.log access.log.old 后使用；logrotate 的 postrotate 常用。
+        danger: low
+        tags: [日志]
+      - name: nginx -v / -V
+        syntax: nginx -v | nginx -V
+        desc: 查看版本号；-V 额外显示编译参数（前缀、已启用模块）。
+        example: nginx -V
+        notes: 排查模块缺失（如 --with-http_ssl_module）时用 -V。无副作用。
+        danger: false
+        tags: [版本]
+      - name: nginx -c <file>
+        syntax: nginx -c /path/to/nginx.conf
+        desc: 指定配置文件启动（默认为编译前缀下 conf/nginx.conf）。
+        example: nginx -t -c /etc/nginx/test.conf
+        notes: 常与 -t 连用验证备用配置；启动备用实例需另配 pid 与端口避免冲突。
+        danger: low
+        tags: [启动]
+      - name: nginx -g <directive>
+        syntax: nginx -g "directive;"
+        desc: 启动时追加全局指令，覆盖配置文件中的同名值。
+        example: nginx -g "daemon off;"
+        notes: 容器/前台调试常用 daemon off；指令须带分号。
+        danger: medium
+        tags: [调试]
+      - name: nginx -T
+        syntax: nginx -T
+        desc: 输出完整生效配置（主文件 + 全部 include 展开后的最终结果）。
+        example: nginx -T | grep -n "server_name"
+        notes: 排查"配置到底在哪个文件生效"的首选命令。只读。
+        danger: false
+        tags: [验证, 调试]
+      - name: nginx -p <prefix>
+        syntax: nginx -p /path/to/prefix
+        desc: 指定运行前缀（相对路径的 conf/log/temp 都以此为基准）。
+        example: nginx -p /data/nginx-test/ -c conf/nginx.conf
+        notes: 多实例/测试环境用；与 -c 配合。
+        danger: low
+        tags: [启动]
+      - name: systemctl start nginx
+        syntax: systemctl start nginx
+        desc: 启动 nginx 系统服务。
+        example: systemctl start nginx
+        notes: CentOS/Ubuntu 通用；需已 install systemd unit。
+        danger: low
+        tags: [服务]
+      - name: systemctl stop nginx
+        syntax: systemctl stop nginx
+        desc: 停止 nginx 系统服务（走 quit 语义，等待请求结束）。
+        example: systemctl stop nginx
+        notes: 会中断服务；计划内停机才用。
+        danger: high
+        tags: [服务, 停止]
+      - name: systemctl restart nginx
+        syntax: systemctl restart nginx
+        desc: 重启 nginx 服务（先停后起，瞬间断开所有连接）。
+        example: systemctl restart nginx
+        notes: 二进制/监听端口变更才需要；普通改配置用 reload。
+        danger: medium
+        tags: [服务]
+      - name: systemctl reload nginx
+        syntax: systemctl reload nginx
+        desc: 平滑重载配置，等价 nginx -s reload。
+        example: systemctl reload nginx
+        notes: reload 生效；建议前置于 nginx -t 检查。
+        danger: medium
+        tags: [服务, 热加载]
+      - name: systemctl status nginx
+        syntax: systemctl status nginx
+        desc: 查看服务运行状态、PID 与最近日志片段。
+        example: systemctl status nginx --no-pager
+        notes: 只读；加 -l 看完整日志行。
+        danger: false
+        tags: [服务, 状态]
+
+  - id: conf
+    label: 配置参数（nginx.conf 及 include 文件）
+    entries:
+      - name: worker_processes
+        section: main
+        syntax: "worker_processes number | auto;"
+        default: "auto"
+        context: main
+        desc: worker 进程数；auto=按 CPU 核数。
+        example: "worker_processes auto;"
+        notes: 建议保持 auto；CPU 密集型业务才需要手调。reload 生效。
+        danger: false
+        tags: [进程模型]
+      - name: worker_cpu_affinity
+        section: main
+        syntax: "worker_cpu_affinity cpumask ...;"
+        default: "无（不绑定）"
+        context: main
+        desc: 将 worker 进程绑定到指定 CPU 核，减少跨核调度开销。
+        example: "worker_cpu_affinity 0001 0010 0100 1000;"
+        notes: 仅高性能场景使用；核数与 worker 数对应。reload 生效。
+        danger: low
+        tags: [进程模型, 性能]
+      - name: worker_rlimit_nofile
+        section: main
+        syntax: "worker_rlimit_nofile number;"
+        default: "无（跟随系统 ulimit）"
+        context: main
+        desc: worker 进程可打开的最大文件描述符数。
+        example: "worker_rlimit_nofile 65535;"
+        notes: 高并发必调，需配合系统 fs.file-max 与 limits.conf。restart 更稳妥。
+        danger: low
+        tags: [进程模型, 性能]
+      - name: worker_connections
+        section: events
+        syntax: "worker_connections number;"
+        default: "512"
+        context: events
+        desc: 单个 worker 可同时处理的最大连接数（含代理上游连接）。
+        example: "worker_connections 10240;"
+        notes: 实际并发=该值×worker 数；反向代理时上游连接也计入。reload 生效。
+        danger: false
+        tags: [网络, 性能]
+      - name: use epoll
+        section: events
+        syntax: "use epoll;"
+        default: "无（自动选择）"
+        context: events
+        desc: 指定事件驱动模型为 epoll（Linux 高性能多路复用）。
+        example: "use epoll;"
+        notes: Linux 下默认即 epoll，显式写明可读性更好。reload 生效。
+        danger: false
+        tags: [网络, 性能]
+      - name: default_type
+        section: http
+        syntax: "default_type mime-type;"
+        default: "text/plain"
+        context: http, server, location
+        desc: 未匹配到 types 表扩展名时使用的默认 Content-Type。
+        example: "default_type application/octet-stream;"
+        notes: 影响浏览器下载 vs 直接展示行为。reload 生效。
+        danger: false
+        tags: [HTTP]
+      - name: log_format
+        section: http
+        syntax: "log_format name [escape=default|json|none] string ...;"
+        default: "预定义 combined"
+        context: http
+        desc: 定义访问日志格式，支持变量插值与 JSON 转义。
+        example: "log_format main '$remote_addr - $remote_user [$time_local] \"$request\" $status $body_bytes_sent';"
+        notes: 供 access_log 引用；改名后引用处需同步。reload 生效。
+        danger: false
+        tags: [日志]
+      - name: access_log
+        section: http
+        syntax: "access_log path [format [buffer=size] [gzip[=level]]] | off;"
+        default: "logs/access.log combined"
+        context: http, server, location
+        desc: 访问日志输出位置与格式；off 关闭。
+        example: "access_log /var/log/nginx/access.log main buffer=32k;"
+        notes: 加 buffer 减少磁盘 IO；切割日志后用 reopen。reload 生效。
+        danger: false
+        tags: [日志]
+      - name: error_log
+        section: main
+        syntax: "error_log path [level];"
+        default: "logs/error.log error"
+        context: main, http, server, location
+        desc: 错误日志位置与级别（debug/info/notice/warn/error/crit/alert/emerg）。
+        example: "error_log /var/log/nginx/error.log warn;"
+        notes: 可分级多处配置，就近覆盖；debug 需编译开关。reload 生效。
+        danger: false
+        tags: [日志]
+      - name: sendfile
+        section: http
+        syntax: "sendfile on | off;"
+        default: "off"
+        context: http, server, location
+        desc: 静态文件发送启用内核零拷贝，降低 CPU 占用。
+        example: "sendfile on;"
+        notes: 与 tcp_nopush 配合效果最佳。reload 生效。
+        danger: false
+        tags: [性能, 静态资源]
+      - name: tcp_nopush
+        section: http
+        syntax: "tcp_nopush on | off;"
+        default: "off"
+        context: http, server, location
+        desc: 发送响应头后数据包攒满再发，提升包利用率。
+        example: "tcp_nopush on;"
+        notes: 仅在 sendfile on 时有意义。reload 生效。
+        danger: false
+        tags: [网络, 性能]
+      - name: tcp_nodelay
+        section: http
+        syntax: "tcp_nodelay on | off;"
+        default: "on"
+        context: http, server, location
+        desc: 禁用 Nagle 算法，小包立即发送，降低 keepalive 长连接延迟。
+        example: "tcp_nodelay on;"
+        notes: 与 tcp_nopush 不冲突（作用于不同阶段）。reload 生效。
+        danger: false
+        tags: [网络]
+      - name: keepalive_timeout
+        section: http
+        syntax: "keepalive_timeout time | none;"
+        default: "75s"
+        context: http, server, location
+        desc: 客户端 keepalive 连接空闲保持时间，超时关闭。
+        example: "keepalive_timeout 65s;"
+        notes: 0=禁用长连接；过长占用连接资源。reload 生效。
+        danger: false
+        tags: [网络, 超时]
+      - name: keepalive_requests
+        section: http
+        syntax: "keepalive_requests number;"
+        default: "1000"
+        context: http, server, location
+        desc: 单条 keepalive 连接上允许处理的最大请求数，达到后关闭重连。
+        example: "keepalive_requests 10000;"
+        notes: 防止长连接内存碎片累积。reload 生效。
+        danger: false
+        tags: [网络]
+      - name: send_timeout
+        section: http
+        syntax: "send_timeout time;"
+        default: "60s"
+        context: http, server, location
+        desc: 向客户端写响应的两次成功写操作之间的超时，超时断开。
+        example: "send_timeout 30s;"
+        notes: 只统计写间隔，不是总时长。reload 生效。
+        danger: false
+        tags: [超时]
+      - name: client_max_body_size
+        section: http
+        syntax: "client_max_body_size size;"
+        default: "1m"
+        context: http, server, location
+        desc: 客户端请求体最大值，超出返回 413。
+        example: "client_max_body_size 50m;"
+        notes: 上传接口必查项；0=不限制（不建议）。reload 生效。
+        danger: low
+        tags: [HTTP, 限制]
+      - name: client_body_buffer_size
+        section: http
+        syntax: "client_body_buffer_size size;"
+        default: "8k/16k"
+        context: http, server, location
+        desc: 请求体缓冲区大小，超出写临时文件。
+        example: "client_body_buffer_size 128k;"
+        notes: 调大可减少磁盘临时文件。reload 生效。
+        danger: false
+        tags: [HTTP, 性能]
+      - name: client_header_buffer_size
+        section: http
+        syntax: "client_header_buffer_size size;"
+        default: "1k"
+        context: http, server
+        desc: 请求头初始缓冲区大小。
+        example: "client_header_buffer_size 4k;"
+        notes: 头过大时配合 large_client_header_buffers。reload 生效。
+        danger: false
+        tags: [HTTP]
+      - name: large_client_header_buffers
+        section: http
+        syntax: "large_client_header_buffers number size;"
+        default: "4 8k"
+        context: http
+        desc: 读取大请求头用的缓冲区数量与单块大小，超出返回 414/400。
+        example: "large_client_header_buffers 4 32k;"
+        notes: 长 URL/大 Cookie 场景必调。reload 生效。
+        danger: false
+        tags: [HTTP, 限制]
+      - name: server_tokens
+        section: http
+        syntax: "server_tokens on | off | build | string;"
+        default: "on"
+        context: http, server, location
+        desc: 是否在错误页与响应头中暴露 nginx 版本号。
+        example: "server_tokens off;"
+        notes: 安全基线建议 off，减少版本泄露。reload 生效。
+        danger: false
+        tags: [安全]
+      - name: types_hash_max_size
+        section: http
+        syntax: "types_hash_max_size size;"
+        default: "1024"
+        context: http, server, location
+        desc: MIME 类型哈希表大小，不足时启动告警。
+        example: "types_hash_max_size 2048;"
+        notes: 出现 hash bucket size 警告时调大。reload 生效。
+        danger: false
+        tags: [HTTP]
+      - name: server_names_hash_bucket_size
+        section: http
+        syntax: "server_names_hash_bucket_size size;"
+        default: "自动（32/64/128）"
+        context: http
+        desc: server_name 哈希桶大小，域名过长时需调大。
+        example: "server_names_hash_bucket_size 128;"
+        notes: 报 could not build server_names_hash 时调大。reload 生效。
+        danger: false
+        tags: [HTTP]
+      - name: listen
+        section: server
+        syntax: "listen address[:port] [default_server] [ssl] [http2] [proxy_protocol] [backlog=number] [so_keepalive=on|off];"
+        default: "*:80"
+        context: server
+        desc: 监听地址与端口及 socket 选项。
+        example: "listen 443 ssl http2;"
+        notes: 改监听端口/地址后建议 restart。reload 通常也能生效但行为依赖版本。
+        danger: low
+        tags: [网络]
+      - name: listen backlog / so_keepalive
+        section: server
+        syntax: "listen 80 backlog=4096 so_keepalive=on;"
+        default: "backlog=511, so_keepalive=off"
+        context: server
+        desc: listen 的两个 socket 级选项：backlog 控制等待队列长度；so_keepalive 开启 TCP 层保活。
+        example: "listen 80 default_server backlog=4096 so_keepalive=on;"
+        notes: 高并发突增连接时调大 backlog。restart 生效更可靠。
+        danger: low
+        tags: [网络, 性能]
+      - name: server_name
+        section: server
+        syntax: "server_name name ...;"
+        default: "空字符串"
+        context: server
+        desc: 虚拟主机域名匹配（精确/前缀通配/后缀通配/正则），决定请求进入哪个 server 块。
+        example: "server_name example.com www.example.com;"
+        notes: 都不匹配时走 default_server。reload 生效。
+        danger: false
+        tags: [虚拟主机]
+      - name: root
+        section: server
+        syntax: "root path;"
+        default: "html"
+        context: http, server, location
+        desc: 请求根目录，URI 直接拼接到其后找文件。
+        example: "root /data/www;"
+        notes: 与 alias 区别：root 拼 URI 全路径，alias 替换匹配段。reload 生效。
+        danger: false
+        tags: [静态资源]
+      - name: alias
+        section: location
+        syntax: "alias path;"
+        default: "无"
+        context: location
+        desc: location 匹配部分的替代路径（把 location 前缀替换为 alias 路径）。
+        example: "location /static/ { alias /data/www/static/; }"
+        notes: 结尾斜杠要与 location 保持一致，否则易 404。reload 生效。
+        danger: false
+        tags: [静态资源]
+      - name: index
+        section: server
+        syntax: "index file ...;"
+        default: "index.html"
+        context: http, server, location
+        desc: 目录请求时依次尝试的默认首页文件。
+        example: "index index.html index.htm index.php;"
+        notes: 内部会产生内部重定向。reload 生效。
+        danger: false
+        tags: [静态资源]
+      - name: location 匹配（= ^~ ~ ~* /）
+        section: location
+        syntax: "location [=|~|~*|^~] uri { ... }"
+        default: "无"
+        context: server, location
+        desc: "匹配修饰符：= 精确；^~ 前缀匹配后不再查正则；~ 区分大小写正则；~* 不区分大小写正则；无修饰符为普通前缀。"
+        example: "location = /health { return 200 'ok'; }"
+        notes: 优先级：精确 > ^~ > 正则 > 前缀；嵌套 location 可细化。reload 生效。
+        danger: false
+        tags: [路由]
+      - name: try_files
+        section: location
+        syntax: "try_files file ... uri | =code;"
+        default: "无"
+        context: server, location
+        desc: 依次尝试文件存在性，都失败时内部跳转到指定 URI 或返回码。
+        example: "try_files $uri $uri/ /index.html?$query_string;"
+        notes: SPA 前端路由兜底标准写法。reload 生效。
+        danger: false
+        tags: [路由, 静态资源]
+      - name: rewrite
+        section: server
+        syntax: "rewrite regex replacement [flag];"
+        default: "无"
+        context: server, location
+        desc: 按 regex 匹配并重写 URI；flag 控制 continue/break/redirect/permanent。
+        example: "rewrite ^/old/(.*)$ /new/$1 permanent;"
+        notes: last 会重新匹配 location，可能循环；调试开 rewrite_log。reload 生效。
+        danger: low
+        tags: [重写]
+      - name: return
+        section: server
+        syntax: "return code [text] | return URL;"
+        default: "无"
+        context: server, location, if
+        desc: 直接返回状态码/文本或跳转 URL，不再走后续处理。
+        example: "return 301 https://example.com$request_uri;"
+        notes: 比 rewrite 更直接，优先使用。reload 生效。
+        danger: false
+        tags: [重写]
+      - name: error_page
+        section: server
+        syntax: "error_page code ... [=[response]] uri;"
+        default: "无（内置错误页）"
+        context: http, server, location
+        desc: 自定义错误码对应的展示页面。
+        example: "error_page 404 /404.html; error_page 502 503 504 /50x.html;"
+        notes: 可组合 =response 改写最终状态码。reload 生效。
+        danger: false
+        tags: [HTTP]
+      - name: autoindex
+        section: location
+        syntax: "autoindex on | off;"
+        default: "off"
+        context: http, server, location
+        desc: 目录无首页文件时列出目录内容。
+        example: "autoindex on;"
+        notes: 对外站点慎开，暴露文件结构；内网共享可用。reload 生效。
+        danger: medium
+        tags: [静态资源, 安全]
+      - name: internal
+        section: location
+        syntax: "internal;"
+        default: "无"
+        context: location
+        desc: 标记该 location 仅允许内部请求（内部重定向）访问，外部直接访问返回 404。
+        example: "location /internal/ { internal; }"
+        notes: 与 error_page/X-Accel-Redirect 配合。reload 生效。
+        danger: false
+        tags: [安全, 路由]
+      - name: limit_except
+        section: location
+        syntax: "limit_except method ... { ... }"
+        default: "无"
+        context: location
+        desc: 限制 location 内允许的 HTTP 方法，其余返回 403。
+        example: "limit_except GET POST { deny all; }"
+        notes: GET 隐含允许 HEAD。reload 生效。
+        danger: low
+        tags: [安全, 限制]
+      - name: limit_conn_zone
+        section: http
+        syntax: "limit_conn_zone key zone=name:size;"
+        default: "无"
+        context: http
+        desc: 定义连接数限制的共享内存区（按 key 统计，常用 $binary_remote_addr）。
+        example: "limit_conn_zone $binary_remote_addr zone=perip:10m;"
+        notes: 10m 约可存 16 万 IP 状态。reload 生效。
+        danger: false
+        tags: [限流]
+      - name: limit_conn
+        section: http
+        syntax: "limit_conn zone number;"
+        default: "无"
+        context: http, server, location
+        desc: 引用 limit_conn_zone，限制每 key 的并发连接数，超出返回 503。
+        example: "limit_conn perip 20;"
+        notes: 对同一 IP 的长连接场景生效。reload 生效。
+        danger: low
+        tags: [限流]
+      - name: limit_req_zone
+        section: http
+        syntax: "limit_req_zone key zone=name:size rate=rate;"
+        default: "无"
+        context: http
+        desc: 定义请求速率限制区（漏桶），rate 如 10r/s、30r/m。
+        example: "limit_req_zone $binary_remote_addr zone=reqperip:10m rate=10r/s;"
+        notes: zone 大小决定可追踪的 key 数。reload 生效。
+        danger: false
+        tags: [限流]
+      - name: limit_req
+        section: http
+        syntax: "limit_req zone=name [burst=number] [nodelay];"
+        default: "无"
+        context: http, server, location
+        desc: 引用 limit_req_zone 应用速率限制；burst 允许突发队列，nodelay 突发立即处理。
+        example: "limit_req zone=reqperip burst=20 nodelay;"
+        notes: 不加 nodelay 时突发请求按固定间隔排队。reload 生效。
+        danger: low
+        tags: [限流]
+      - name: gzip on/off
+        section: http
+        syntax: "gzip on | off;"
+        default: "off"
+        context: http, server, location
+        desc: 响应体 gzip 压缩开关。
+        example: "gzip on;"
+        notes: 与 gzip_types/gzip_min_length 配合；已压缩文件（jpg/zip）别再压。reload 生效。
+        danger: false
+        tags: [压缩]
+      - name: gzip_types
+        section: http
+        syntax: "gzip_types mime-type ...;"
+        default: "text/html"
+        context: http, server, location
+        desc: 参与压缩的响应 MIME 类型列表。
+        example: "gzip_types text/plain text/css application/json application/javascript;"
+        notes: text/html 恒为压缩对象无需写。reload 生效。
+        danger: false
+        tags: [压缩]
+      - name: gzip_min_length
+        section: http
+        syntax: "gzip_min_length length;"
+        default: "20"
+        context: http, server, location
+        desc: 响应体小于该值不压缩（依据 Content-Length）。
+        example: "gzip_min_length 1k;"
+        notes: 太小的体压缩反亏（头部开销）。reload 生效。
+        danger: false
+        tags: [压缩]
+      - name: gzip_comp_level
+        section: http
+        syntax: "gzip_comp_level level;"
+        default: "1"
+        context: http, server, location
+        desc: 压缩级别 1-9，越高越省带宽越耗 CPU。
+        example: "gzip_comp_level 5;"
+        notes: 一般 4-6 平衡点。reload 生效。
+        danger: false
+        tags: [压缩]
+      - name: proxy_pass
+        section: location
+        syntax: "proxy_pass URL;"
+        default: "无"
+        context: http, server, location
+        desc: 反向代理目标（http/https），请求转发给上游。
+        example: "proxy_pass http://127.0.0.1:8080;"
+        notes: 带 URI 与不带 URI 的变量替换规则不同；末尾斜杠敏感。reload 生效。
+        danger: low
+        tags: [代理]
+      - name: proxy_set_header（Host/X-Real-IP/X-Forwarded-For）
+        section: location
+        syntax: "proxy_set_header field value;"
+        default: "Host $proxy_host, Connection close"
+        context: http, server, location
+        desc: 修改转发给上游的请求头；经典三件套传递真实客户端信息。
+        example: "proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"
+        notes: 后端取真实 IP 依赖此配置。reload 生效。
+        danger: false
+        tags: [代理]
+      - name: proxy_connect_timeout
+        section: http
+        syntax: "proxy_connect_timeout time;"
+        default: "60s"
+        context: http, server, location
+        desc: 与上游建立连接的超时。
+        example: "proxy_connect_timeout 5s;"
+        notes: 不要超过 75s；快速失败便于切换。reload 生效。
+        danger: false
+        tags: [代理, 超时]
+      - name: proxy_read_timeout
+        section: http
+        syntax: "proxy_read_timeout time;"
+        default: "60s"
+        context: http, server, location
+        desc: 读取上游响应的两次读操作间隔超时。
+        example: "proxy_read_timeout 60s;"
+        notes: 慢接口/长轮询必须调大，否则 504。reload 生效。
+        danger: false
+        tags: [代理, 超时]
+      - name: proxy_send_timeout
+        section: http
+        syntax: "proxy_send_timeout time;"
+        default: "60s"
+        context: http, server, location
+        desc: 向上游发送请求的两次写操作间隔超时。
+        example: "proxy_send_timeout 30s;"
+        notes: 大请求体上传上游时关注。reload 生效。
+        danger: false
+        tags: [代理, 超时]
+      - name: proxy_buffering
+        section: http
+        syntax: "proxy_buffering on | off;"
+        default: "on"
+        context: http, server, location
+        desc: 上游响应缓冲开关；off 时边收边转发（流式/SSE 必须 off）。
+        example: "proxy_buffering off;"
+        notes: SSE/WebSocket 场景必关，否则事件被攒住。reload 生效。
+        danger: low
+        tags: [代理]
+      - name: proxy_cache
+        section: http
+        syntax: "proxy_cache zone | off;"
+        default: "off"
+        context: http, server, location
+        desc: 启用代理响应缓存（引用 proxy_cache_path 定义的 zone）。
+        example: "proxy_cache mycache;"
+        notes: 需先在 http 层 proxy_cache_path 定义；配合 key 与 valid。reload 生效。
+        danger: low
+        tags: [代理, 缓存]
+      - name: proxy_cache_valid
+        section: http
+        syntax: "proxy_cache_valid [code ...] time;"
+        default: "无"
+        context: http, server, location
+        desc: 指定状态码响应的缓存时长。
+        example: "proxy_cache_valid 200 302 10m; proxy_cache_valid 404 1m;"
+        notes: 上游返回 Cache-Control 时优先级更高。reload 生效。
+        danger: false
+        tags: [代理, 缓存]
+      - name: upstream server（weight/max_fails/fail_timeout）
+        section: http
+        syntax: "upstream name { server address [weight=n] [max_fails=n] [fail_timeout=t]; ... }"
+        default: "无"
+        context: http
+        desc: 上游服务器组与调度参数；weight 加权轮询，max_fails+fail_timeout 构成被动健康检查。
+        example: "upstream app { server 10.0.0.1:8080 weight=3; server 10.0.0.2:8080 max_fails=3 fail_timeout=30s; }"
+        notes: 无主动探活，需商业版或 njs；摘除节点用 down。reload 生效。
+        danger: low
+        tags: [负载均衡]
+      - name: ip_hash
+        section: http
+        syntax: "ip_hash;"
+        default: "无"
+        context: upstream
+        desc: 会话保持：按客户端 IP 哈希固定分发到同一上游。
+        example: "upstream app { ip_hash; server 10.0.0.1:8080; server 10.0.0.2:8080; }"
+        notes: 7.0 起有变化（上游改版哈希实现）；NAT 出口集中时分布不均。reload 生效。
+        danger: false
+        tags: [负载均衡]
+      - name: least_conn
+        section: http
+        syntax: "least_conn;"
+        default: "无（轮询）"
+        context: upstream
+        desc: 最少连接数优先调度，长连接差异大的场景比轮询均衡。
+        example: "upstream app { least_conn; server 10.0.0.1:8080; }"
+        notes: 与 weight 可共存。reload 生效。
+        danger: false
+        tags: [负载均衡]
+      - name: fastcgi_pass
+        section: location
+        syntax: "fastcgi_pass address;"
+        default: "无"
+        context: http, server, location
+        desc: FastCGI 上游转发（PHP-FPM 标配）。
+        example: "fastcgi_pass 127.0.0.1:9000;"
+        notes: 需配 fastcgi_param 脚本名等参数。reload 生效。
+        danger: low
+        tags: [FastCGI]
+      - name: ssl_certificate
+        section: server
+        syntax: "ssl_certificate file;"
+        default: "无"
+        context: http, server
+        desc: HTTPS 证书文件（PEM 全链）。
+        example: "ssl_certificate /etc/nginx/ssl/example.com.fullchain.pem;"
+        notes: 更换证书 reload 即可热生效。reload 生效。
+        danger: false
+        tags: [HTTPS]
+      - name: ssl_certificate_key
+        section: server
+        syntax: "ssl_certificate_key file;"
+        default: "无"
+        context: http, server
+        desc: HTTPS 私钥文件，与证书配对。
+        example: "ssl_certificate_key /etc/nginx/ssl/example.com.key;"
+        notes: 权限应 root 只读（600）。reload 生效。
+        danger: false
+        tags: [HTTPS]
+      - name: ssl_protocols
+        section: server
+        syntax: "ssl_protocols protocol ...;"
+        default: "TLSv1.2 TLSv1.3"
+        context: http, server
+        desc: 允许的 TLS 协议版本。
+        example: "ssl_protocols TLSv1.2 TLSv1.3;"
+        notes: 安全基线建议只留 1.2/1.3；禁 1.0/1.1 可能影响老客户端。reload 生效。
+        danger: medium
+        tags: [HTTPS, 安全]
+      - name: ssl_ciphers
+        section: server
+        syntax: "ssl_ciphers ciphers;"
+        default: "HIGH:!aNULL:!MD5"
+        context: http, server
+        desc: 允许的加密套件列表（OpenSSL 格式）。
+        example: "ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;"
+        notes: 只在 TLSv1.2 及以下起作用；1.3 套件独立。reload 生效。
+        danger: low
+        tags: [HTTPS, 安全]
+      - name: ssl_session_cache
+        section: server
+        syntax: "ssl_session_cache off | none | [builtin[:size]] [shared:name:size];"
+        default: "none"
+        context: http, server
+        desc: TLS 会话缓存，加速握手复用。
+        example: "ssl_session_cache shared:SSL:10m;"
+        notes: shared 模式 worker 间共享，1MB 约存 4000 会话。reload 生效。
+        danger: false
+        tags: [HTTPS, 性能]
+      - name: resolver
+        section: http
+        syntax: "resolver address ... [valid=time] [ipv6=on|off];"
+        default: "无（用系统 DNS）"
+        context: http, server, location
+        desc: 指定 nginx 自用 DNS（proxy_pass 变量域名等动态解析）。
+        example: "resolver 223.5.5.5 114.114.114.114 valid=300s ipv6=off;"
+        notes: proxy_pass 带变量域名时必须配置。reload 生效。
+        danger: false
+        tags: [DNS]
+      - name: charset
+        section: http
+        syntax: "charset charset | off;"
+        default: "off"
+        context: http, server, location
+        desc: 在 Content-Type 中追加指定字符集（自动转换需 source_charset）。
+        example: "charset utf-8;"
+        notes: 中文老站点兼容常用。reload 生效。
+        danger: false
+        tags: [HTTP]
+      - name: add_header
+        section: http
+        syntax: "add_header name value [always];"
+        default: "无"
+        context: http, server, location
+        desc: 向响应追加自定义头（安全头/跨源头等）。
+        example: "add_header X-Content-Type-Options nosniff always;"
+        notes: always 才对 4xx/5xx 也生效；下层配置会整体覆盖上层。reload 生效。
+        danger: false
+        tags: [HTTP, 安全]
+      - name: expires
+        section: location
+        syntax: "expires time | epoch | max | off;"
+        default: "off"
+        context: http, server, location
+        desc: 设置 Cache-Control/Expires 静态资源缓存时长。
+        example: "expires 30d;"
+        notes: 静态资源长缓存+文件名指纹是标准组合。reload 生效。
+        danger: false
+        tags: [缓存, 静态资源]
+      - name: stub_status
+        section: location
+        syntax: "stub_status;"
+        default: "无"
+        context: server, location
+        desc: 暴露 nginx 自身运行状态页（活跃连接、请求数等）。
+        example: "location /nginx_status { stub_status; allow 10.0.0.0/8; deny all; }"
+        notes: 必须限制访问来源，zabbix 抓取 nginx 状态常用。reload 生效。
+        danger: low
+        tags: [监控, 调试]
+      - name: auth_basic
+        section: location
+        syntax: "auth_basic string | off;"
+        default: "off"
+        context: http, server, location
+        desc: HTTP Basic 认证开关与提示语。
+        example: "auth_basic 'ops only'; auth_basic_user_file /etc/nginx/.htpasswd;"
+        notes: 密码文件用 htpasswd 生成。reload 生效。
+        danger: low
+        tags: [安全]
+      - name: allow / deny
+        section: location
+        syntax: "allow address | CIDR | all; deny address | CIDR | all;"
+        default: "无"
+        context: http, server, location, limit_except
+        desc: 访问控制黑白名单，按序首次匹配生效。
+        example: "allow 10.0.0.0/8; allow 192.168.1.0/24; deny all;"
+        notes: 规则顺序敏感；写错可能把自己锁在外面。reload 生效。
+        danger: medium
+        tags: [安全, 访问控制]
+      - name: access_by_lua
+        section: location
+        syntax: "access_by_lua_block { lua-code }"
+        default: "无"
+        context: http, server, location
+        desc: 请求进入 access 阶段执行 Lua 逻辑（鉴权/限流等），需 lua 模块。
+        example: "access_by_lua_block { if ngx.var.arg_token ~= 'x' then ngx.exit(403) end }"
+        notes: 需要 OpenResty 或编译 --with-lua；原生 nginx 无此指令。reload 生效。
+        danger: medium
+        tags: [扩展, 安全]

@@ -221,3 +221,73 @@
 ### Phase 状态
 
 **验收通过；随 `feat(commands): 完成 Phase 1 指令速查` 提交封账。停工汇报，未经用户确认不进入 Phase 2。**
+
+## 2026-10-29 · 设计变更 · 智能体化（方案 A+B，用户已确认）
+
+### 用户决策
+
+- 用户原话："先不要着手施工，在我需求的基础上，增加智能体的特征，你来出方案，我们讨论。" → 出具三档方案（A：脚本工坊+日志分析智能体化；B：A + 运维问答助手新模块；C：最小化）。
+- 用户原话："AB一起"——A 与 B 全部采纳。
+
+### 已落地的设计变更（施工文档与 AGENTS.md 同步改写）
+
+- 新增第 6 模块**运维助手**（对话智能体）：`#/assistant` 路由、`app/assistant/`、会话持久化表（assistant_sessions/assistant_messages）、SSE 对话 API；导航从 5 项扩为 6 项（插入日志中心与设置之间，Phase 7 落地）。
+- **脚本工坊智能体化**（Phase 4）：ReAct 文本协议引擎（`app/agent/engine.py` + 只读工具注册表 `tools.py`）、轨迹卡片 UI、脚本历史 FTS5 长期记忆、单轮降级保护。
+- **日志 L2 诊断智能体化**（Phase 6）：SSE 先推工具事件（filter_log/get_stats/get_context 下钻）再流式报告。
+- 新增共用引擎规范 **§9.3**：文本协议（不用原生 function calling）、步数上限 6、解析容错与降级、只读工具注册表、安全边界（永不执行/永不写库/永不联网）、温度分轮策略。
+- Phase 计划 0–7 → **0–8**（新 Phase 7 = 运维助手，原 Phase 7 打包顺延为 Phase 8 并补助手抽测）。
+- SQLite DDL 增加：`codegen_history.steps` 列、`codegen_history_fts`（FTS5）、assistant 两表及索引。
+
+决策：工具调用采用 ReAct 文本协议而非原生 function calling。（理由：glm-4-flash 等免费小模型对 tools 字段支持不稳；文本协议在任何 OpenAI 兼容端点可运行，零新依赖。）
+
+决策："运维助手"插入导航第 5 位（日志中心之后、设置之前）。（理由：问答是辅助入口，不打断"检索→生成→分析"主链路心智；设置永远居末。）
+
+决策：智能体安全边界为"只生成、只解释、只检索"，工具全部只读。（理由：桌面端是 Windows、脚本目标是 Linux 服务器，执行权必须留在用户手中；也规避任何误操作风险。）
+
+决策：过程/轨迹卡片保留（方案 A 描述的一部分，"AB一起"隐含采纳）。（理由：智能体行为可视化是本次升级的核心体验，也是排查模型乱查的工具。）
+
+决策：依赖清单不变——智能体化全部用现有依赖实现（httpx 循环 + stdlib sqlite3 FTS5）。（理由：Never 规则禁止引入 LangChain/向量库等；ReAct 文本协议与 FTS5 恰好零依赖即可满足。）
+
+### 影响评估
+
+- Phase 2（配置速查）/Phase 3（LLM 设置）/Phase 5（日志基础层）验收标准不变——它们是智能体的"工具层"，照常施工。
+- Phase 4/6 验收标准已按智能体化改写；新增 Phase 7；Phase 8 顺延。
+- 预估智能体特征占比：从 ~10% 升至 ~50-60%（功能面 4/6 模块具备规划/工具/循环/记忆中至少三项）。
+
+### Phase 状态
+
+**设计变更已落文档；Phase 2 照常开工（用户"继续下一个阶段"指令仍然有效）。**
+
+## 2026-10-29 · Phase 2 · 配置速查
+
+### 步骤 1：知识数据编写
+
+- `data/kb/nginx.yaml`：cli 16 条 + conf 69 条，覆盖 main/events/http/server/location 五层；danger=high 2 条（nginx -s stop、systemctl stop nginx）。
+- `data/kb/zabbix.yaml`：cli 16 条 + conf 88 条（server 分组 55 条 + agent2 分组 33 条，两个 id=conf 的 category，标签区分 zabbix-server.conf / zabbix_agent2.conf）。
+- 全部条目含 §11 要求的九字段（conf 另带 context），notes 统一标注生效方式（reload/restart/热加载/无）。
+
+决策：agent2 分组中与 server 分组同名的 8 个参数（PidFile/LogFile/LogFileSize/DebugLevel/ListenPort/ListenIP/Timeout/Include）加"（agent2）"后缀消歧。（理由：§4.3 契约要求同一软件内 name 唯一；子串搜索仍可用本名命中，分组标签已标明所属文件。）
+
+### 步骤 2：后端索引与 API
+
+- `app/kb/service.py`：KnowledgeBase 内存加载 `data/kb/*.yaml`；`summary()`（id==cli 计 cli_count，其余合计 conf_count）；`get(software)`；`search(q, software?)` 对 name/syntax/desc 做大小写不敏感子串匹配。
+- `app/kb/routes.py`：`GET /api/kb`、`GET /api/kb/search`（先注册）、`GET /api/kb/{software}`（后注册，404 兜底）——注册顺序满足 §6 硬性要求。
+- `app/server.py` 挂载 kb 路由（静态托管之前）。
+
+### 步骤 3：前端 `#/kb`
+
+- `app.js`：三视图（跨软件搜索结果 / 软件卡片 / 软件详情）；详情内"启停与运行命令 | 配置参数"双 Tab（cli 与 conf 永不混排，用户核心诉求）；条目点击展开默认值/层级/示例/说明/标签；medium+ 红字 ⚠；搜索结果点击跳转对应软件对应 Tab；300ms 防抖。
+- `style.css`：kb 卡片网格、Tab、条目卡片、危险标记样式（沿用暗色契约变量）。
+
+### 验收命令与结果
+
+- YAML 契约校验脚本（Temp 一次性）：name 唯一、danger ∈ 枚举、conf 必有 section/default、cli 必有 example、数量达标——首跑发现 8 个重名，消歧后全过（nginx 16/69；zabbix 16/88=55+33）。
+- TestClient：`/api/kb` 返回 2 软件且计数 >0；`/api/kb/search?q=worker` 命中 worker_processes；`/api/kb/nginx` 200；`/api/kb/nope` 404；Tab 隔离断言（cli∩conf 条目名 = ∅，worker_processes ∈ conf、nginx -t ∈ cli）通过。
+- `compileall main.py app tools` 通过。
+- 开发态浏览器验收 7/7：卡片计数精确、双 Tab 存在且默认命令 Tab、命令 Tab 无 worker_processes / 配置 Tab 有且无 nginx -t、红色 ⚠ 4 条与展开详情、搜索 worker 6 条带"软件 · 命令/配置"标签、结果点击跳转、`/api/kb` JSON 正确。
+- 打包冒烟：pyinstaller（hidden-import winforms + app/commands/kb 数据）→ 预置 ASCII 缓存子进程启动 → health `{"ok":true}`、`/api/kb` nginx=16/69 zabbix=16/88、search worker 6 条、`/api/commands` total=621（Phase 1 回归通过）；WM_CLOSE 干净退出无残留进程。
+- 冒烟后清理：Temp 缓存与构建目录、一次性验收脚本、`__pycache__`；删除 0 字节 README.md 占位（README 属 Phase 8 产出）。
+
+### Phase 状态
+
+**验收通过；随 `feat(kb): 完成 Phase 2 配置速查` 提交封账。停工汇报，未经用户确认不进入 Phase 3。**

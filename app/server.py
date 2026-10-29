@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import config
 from app.commands.routes import router as commands_router
+from app.kb.routes import router as kb_router
 
 VERSION = "1.0.0"
 
@@ -21,6 +22,7 @@ def create_app() -> FastAPI:
         return JSONResponse({"ok": True, "version": VERSION})
 
     app.include_router(commands_router)
+    app.include_router(kb_router)
 
     # 静态托管前端（零构建，Vue3/marked 为 vendored 全局构建）
     app.mount("/", StaticFiles(directory=str(config.WEB_DIR), html=True), name="web")
