@@ -1,6 +1,6 @@
 # AGENTS.md
 
-OpsMate（运维提效智能体）的仓库级协作文档。**母文档为同目录《OpsMate-施工提示词.md》（下称"施工文档"）**：两者冲突时以施工文档为准；施工文档未覆盖的日常约定以本文件为准。施工必须按施工文档 §8 的 Phase 0→8 顺序推进，每个 Phase 结束跑完验收标准再进入下一个。
+OpsMate（运维提效智能体）的仓库级协作文档。**母文档为同目录《OpsMate-施工提示词.md》（下称"施工文档"）**：两者冲突时以施工文档为准；施工文档未覆盖的日常约定以本文件为准。施工必须按施工文档 §8 的 Phase 0→9 顺序推进，每个 Phase 结束跑完验收标准再进入下一个。
 
 ## 项目定位与技术栈
 
@@ -20,21 +20,21 @@ OpsMate/                    # 本目录即项目根（含中文路径，注意 s
 │   ├── server.py           # create_app()：FastAPI 实例、/api 路由、静态托管 app/web
 │   ├── config.py           # 路径常量与 settings 读写；frozen/开发双态 data 目录逻辑
 │   ├── commands/           # 指令速查：service.py(内存索引+搜索) + routes.py
-│   ├── kb/                 # 配置速查：service.py(YAML 加载) + routes.py
+│   ├── kb/                 # 配置速查：service.py(YAML 加载) + workbench.py(用户配置校验，Phase 7) + routes.py
 │   ├── llm/                # provider.py(OpenAI 兼容客户端 chat/chat_stream) + routes.py
 │   ├── agent/              # ReAct 引擎 engine.py + 只读工具注册表 tools.py（Phase 4 落地）
-│   ├── assistant/          # 运维问答智能体：service.py(会话持久化) + routes.py（Phase 7 落地）
+│   ├── assistant/          # 运维问答智能体：service.py(会话持久化) + routes.py（Phase 8 落地）
 │   ├── codegen/            # prompts.py(CODEGEN_SYSTEM_PROMPT 全文) + routes.py
 │   └── logs/               # store.py(SQLite) + rules.py(L1 规则引擎) + analyze.py(L2 SSE) + routes.py
 ├── app/web/                # index.html + app.js + style.css + vendor/(vue/marked)
 ├── data/                   # 运行时数据（.gitignore；打包后随 exe）
 │   ├── commands/           # 621 个命令 md
-│   ├── kb/                 # nginx.yaml / zabbix.yaml
+│   ├── kb/                 # nginx/zabbix/keepalived/kafka/redis/docker 六软件 YAML（后四个 Phase 7 扩充）
 │   ├── opsmate.db          # SQLite
 │   └── config.json         # {provider, base_url, model, api_key}
 ├── tools/import_commands.py  # 数据导入（三级降级）
 ├── PHASE_LOG.md            # 施工进度与决策记录（每 Phase 追加一节）
-└── README.md               # Phase 8 产出
+└── README.md               # Phase 9 产出
 ```
 
 ## Coding Style
@@ -50,7 +50,7 @@ OpsMate/                    # 本目录即项目根（含中文路径，注意 s
 
 **前端（app/web/，原生 ES module + Vue3 全局构建）**
 
-- hash 路由：`#/commands`、`#/kb`、`#/codegen`、`#/logs`、`#/logs/:id`、`#/assistant`（Phase 7 起生效）、`#/settings`；单 `app.js` 内组织，组件用模板字符串/`template` 选项。
+- hash 路由：`#/commands`、`#/kb`（含"我的配置"工坊视图，Phase 7 起）、`#/codegen`、`#/logs`、`#/logs/:id`、`#/assistant`（Phase 8 起生效）、`#/settings`；单 `app.js` 内组织，组件用模板字符串/`template` 选项。
 - 暗色主题 CSS 变量：背景 `#1e1f24`、卡片 `#26272e`、主色 `#4f8cff`、文字 `#d5d7de`；手写 CSS，交互反馈统一右上角 toast（成功绿/失败红，3s 消失）。
 - 所有 fetch 走统一封装（超时、错误 toast、JSON 解析）。
 - SSE 一律 `fetch POST` + `ReadableStream` 逐 chunk 按 `data: ` 行解析（**EventSource 不支持 POST，禁用**）。

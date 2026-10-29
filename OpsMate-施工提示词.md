@@ -32,7 +32,7 @@
 | # | 模块 | 一句话验收 |
 |---|------|-----------|
 | 1 | **指令速查** | 本地离线检索 600+ 条中文 Linux 命令文档（数据源 = github.com/jaywcjlove/linux-command） |
-| 2 | **配置速查** | nginx / zabbix 的"启停命令"与"配置参数"严格分 Tab 展示，支持搜索 |
+| 2 | **配置速查** | nginx / zabbix / keepalived / kafka / redis / docker 六软件的"启停命令"与"配置参数"严格分 Tab 展示，支持搜索；"我的配置"工坊支持上传/编辑/格式校验/正则效果预览，可显式共享给智能体引用 |
 | 3 | **脚本工坊** | 智能体循环（ReAct）：模型自主检索命令库/配置库/脚本历史后生成带完整中文注释的 bash 脚本 + 右侧逐段解读与工具轨迹卡片（解读绝不混入脚本本体） |
 | 4 | **日志中心** | 上传/粘贴日志 → level 着色、关键词/正则/level 过滤、统计、导出（对标 mclo.gs 的核心体验，本地化） |
 | 5 | **日志 AI 分析** | L1 规则引擎免费提炼"问题日志"并聚类；L2 诊断智能体调用过滤/统计/上下文工具下钻日志，产出"假设-证据-建议"根因报告 |
@@ -109,7 +109,8 @@ OpsMate/                    # 本文档所在目录即项目根
 │   ├── kb/
 │   │   ├── __init__.py
 │   │   ├── service.py       # load_kb()：读 data/kb/*.yaml；search 跨软件搜索
-│   │   └── routes.py        # /api/kb*
+│   │   ├── workbench.py     # 我的配置：user_configs 存取 + 多格式静态校验（Phase 7 落地）
+│   │   └── routes.py        # /api/kb*（含 /api/kb/workbench/*）
 │   ├── llm/
 │   │   ├── __init__.py
 │   │   ├── provider.py      # LLMClient：OpenAI 兼容 chat/completions；chat() 非流式、chat_stream() SSE
@@ -117,7 +118,7 @@ OpsMate/                    # 本文档所在目录即项目根
 │   ├── agent/
 │   │   ├── __init__.py
 │   │   ├── engine.py        # ReAct 引擎：文本协议循环、步数上限 6、解析容错、单轮降级（§9.3）
-│   │   └── tools.py         # 只读工具注册表：search_commands/search_kb/search_history/filter_log/get_stats/get_context
+│   │   └── tools.py         # 只读工具注册表：search_commands/search_kb/search_history/filter_log/get_stats/get_context/read_user_config（仅 shared=1）
 │   ├── assistant/
 │   │   ├── __init__.py
 │   │   ├── service.py       # 会话与消息持久化（SQLite）
@@ -143,14 +144,18 @@ OpsMate/                    # 本文档所在目录即项目根
 │   ├── commands/            # 621 个命令 md（由 tools/import_commands.py 落地）
 │   ├── kb/
 │   │   ├── nginx.yaml
-│   │   └── zabbix.yaml
+│   │   ├── zabbix.yaml
+│   │   ├── keepalived.yaml    # Phase 7 扩充
+│   │   ├── kafka.yaml         # Phase 7 扩充
+│   │   ├── redis.yaml         # Phase 7 扩充
+│   │   └── docker.yaml        # Phase 7 扩充
 │   ├── opsmate.db           # SQLite
 │   ├── config.json          # {provider, base_url, model, api_key}
 │   └── logs/                # 上传日志的原始副本 {id}.txt（DELETE 时连带删除；不打包、不入库）
 ├── tools/
 │   └── import_commands.py   # 数据导入（三级降级，见 §4.2）
 ├── PHASE_LOG.md
-└── README.md                # Phase 8 产出
+└── README.md                # Phase 9 产出
 ```
 
 `main.py` 关键行为：`socket` 绑定 `127.0.0.1:0` 取空闲端口 → 线程里 `uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")` → `webview.create_window("OpsMate", url, width=1280, height=860)` → `webview.start()`；`webview.start` 抛异常（无 WebView2）则 `webbrowser.open(url)` 并保持进程。注意：**打包(frozen)后** data 目录以 `sys.executable` 的父目录为基准（`getattr(sys, "frozen", False)` 判断），开发态以项目根为基准——此逻辑放 `app/config.py`。两个补充硬性点：① `webview.start()` 返回（用户关窗）后必须显式结束进程（uvicorn 线程不会随窗口自动终止，进程会挂死）；② `--noconsole` 打包态 `sys.stdout` 为 `None`，所有 `print` 与 `sys.stdout.reconfigure` 前必须判空，否则 exe 内直接崩溃。
@@ -278,6 +283,15 @@ CREATE TABLE IF NOT EXISTS assistant_messages (
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_asst_msg_session ON assistant_messages(session_id, id);
+CREATE TABLE IF NOT EXISTS user_configs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  format TEXT NOT NULL,               -- yaml/nginx/keepalived/properties/json/text
+  content TEXT NOT NULL,
+  shared INTEGER NOT NULL DEFAULT 0,  -- 1=智能体可读（用户显式开启）
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
 ```
 
 约束：单文件 ≤ 50MB（超出拒绝并提示"请先 split/grep 裁剪"）；导入用单事务 + 每 5000 行 `executemany`；`PRAGMA journal_mode=WAL`；`codegen_history` 写入后同步 INSERT 对应 fts 行（DELETE 同步清理），供智能体 `search_history` 检索；`assistant_messages` 每轮对话追加 user/assistant（及可选 tool 轨迹）行并刷新会话 `updated_at`。格式猜测规则（导入时逐行采样前 200 行）：nginx 访问日志（`^\S+ \S+ \S+ \[.*\] "\w+ .*" \d{3} `）→ nginx_access；含 ` \[error\] | \[warn\] ` → nginx_error；`^\w{3} +\d+ \d{2}:\d{2}:\d{2} \S+ ` → syslog；含 ` \[main\]|java\.|Exception|ERROR` → java_app；`zabbix_server|zabbix_agent` 字样 → known_service；否则 unknown。
@@ -290,6 +304,20 @@ CREATE INDEX IF NOT EXISTS idx_asst_msg_session ON assistant_messages(session_id
   2. `https://cdn.bootcdn.net/ajax/libs/vue/3.4.38/vue.global.prod.js`；`https://cdn.bootcdn.net/ajax/libs/marked/12.0.2/marked.min.js`
   3. `https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js`；`https://unpkg.com/marked@12.0.2/marked.min.js`
   4. 全失败：PHASE_LOG.md 记录，请用户手动下载这两个 URL 存入 vendor/（文件大小量级：vue ≈ 130KB+，marked ≈ 40KB+）。
+
+### 4.6 用户配置工坊（"我的配置"，Phase 7 落地）
+
+- 存储：`user_configs` 表（§4.4）；单份内容 ≤ 2MB（超出 413）；仅存文本，永不解析执行、永不联网。
+- format 枚举与校验规则（`app/kb/workbench.py` 静态校验，全部只读分析）：
+  - `yaml`：`yaml.safe_load` 全量解析，异常消息解析出行号（`^\s*\^?\s*line (\d+)` 或 Mark），错误定位到行；另查重复键（PyYAML 默认覆盖，需自定 constructor 或逐层 dict 检查）。
+  - `nginx` / `keepalived`：大括号配对栈检查（含行内 `{}`）、指令行缺分号提示（跳过注释/`}`行/块首）、`#` 注释与引号内内容豁免。
+  - `properties`（zabbix server/agent2、kafka server.properties、redis 兼容）：非法行（不含 `=` 且非注释/空行）报行号；重复键警告（后值覆盖）。
+  - `json`：`json.loads` + 行号尽力定位。
+  - `text`：仅通用检查。
+  - 通用：UTF-8 BOM、混合行尾（CRLF/LF 混用）、尾随空格、超长行（>1000 字符提示）。
+- 返回结构：`{"ok": bool, "errors": [{"line": int, "message": str}], "warnings": [...], "stats": {"lines": int, "bytes": int}}`——errors 非空即 ok=false。
+- 正则效果预览：**纯前端**（`new RegExp(pattern, flags)`），展示全部匹配片段高亮与捕获分组表、命名分组；无效正则即时显示错误。不上传后端。
+- 共享给智能体（显式白名单）：`shared` 默认 0；用户对单条配置开启后置 1，智能体工具 `read_user_config(name)`（§9.3）可读其内容（截断 ~4000 字符）；UI 开关旁明示"开启后该配置内容会被发送给大模型"；关闭立即生效。除 shared=1 的配置外，任何 LLM 请求不得携带用户上传内容。
 
 ---
 
@@ -342,6 +370,12 @@ CREATE INDEX IF NOT EXISTS idx_asst_msg_session ON assistant_messages(session_id
 | GET | `/api/assistant/sessions` | - | `{"items":[{id,title,updated_at}]}`（倒序） |
 | GET | `/api/assistant/sessions/{id}` | - | `{"messages":[{id,role,content}]}`（tool 行 content 为 JSON 轨迹字符串） |
 | DELETE | `/api/assistant/sessions/{id}` | - | `{"ok":true}`（连带删消息） |
+| GET | `/api/kb/workbench/configs` | - | `{"items":[{id,name,format,shared,size_bytes,updated_at}]}`（倒序） |
+| POST | `/api/kb/workbench/configs` | `{"name","format","content"}` | `{"id","name","format"}`；content >2MB 返回 413 |
+| PUT | `/api/kb/workbench/configs/{id}` | body 同上 | `{"ok":true}` |
+| DELETE | `/api/kb/workbench/configs/{id}` | - | `{"ok":true}` |
+| PUT | `/api/kb/workbench/configs/{id}/share` | `{"shared": true\|false}` | `{"ok":true,"shared":N}` |
+| POST | `/api/kb/workbench/validate` | `{"format","content"}` | `{"ok","errors":[{line,message}],"warnings":[...],"stats":{lines,bytes}}`（不落库） |
 
 规则：分页 limit 上限 2000；`q` 大小写不敏感子串；`regex` 无效时返回 400 `{"detail":"正则表达式无效"}`；SSE 的响应头 `Content-Type: text/event-stream`（用 fetch+ReadableStream 消费，**不是 EventSource**，因为需要 POST）。路由注册顺序硬性要求：`/api/kb/search` 必须先于 `/api/kb/{software}` 注册——FastAPI 按注册顺序匹配，否则 `search` 会被当作 `{software}` 参数吞掉。
 
@@ -354,10 +388,10 @@ CREATE INDEX IF NOT EXISTS idx_asst_msg_session ON assistant_messages(session_id
 **hash 路由与视图**：
 
 - `#/commands`：顶部搜索框（防抖 300ms）→ 左列结果列表（name 加粗 + title 灰字）→ 点击右栏 marked 渲染 md；右上"复制 md"按钮；空关键词显示全部字母序。
-- `#/kb`：软件卡片（nginx/zabbix）→ 进入后 **Tab：`启停与运行命令` | `配置参数`**（用户核心诉求，永不合并）；列表项显示 name/syntax/desc/danger 标记（medium+ 红字 ⚠）；点击展开详情（example/notes）；顶部跨软件搜索框。
+- `#/kb`：顶部视图 Tab **【知识库 | 我的配置】**。知识库视图：软件卡片（6 软件）→ 进入后 **Tab：`启停与运行命令` | `配置参数`**（用户核心诉求，永不合并）；列表项显示 name/syntax/desc/danger 标记（medium+ 红字 ⚠）；点击展开详情（example/notes）；顶部跨软件搜索框。我的配置视图（Phase 7）：左侧配置列表（名称/格式/shared 徽标/更新时间）+ 右侧编辑器（格式下拉 yaml/nginx/keepalived/properties/json/text + 内容 textarea + 上传按钮）；"校验"按钮 → 错误/警告按行号列示（可点击跳行）；"正则测试"折叠面板（输入正则+示例文本 → 实时高亮匹配与分组表）；"共享给智能体"开关（旁有醒目提示文案）；保存/删除。
 - `#/codegen`：表单（需求 textarea 必填、发行版下拉 [不指定/CentOS/Ubuntu/Debian/其他]、补充说明 textarea）→ 生成按钮（loading 态，可 60–120s，按钮显示"生成中…"并禁用）→ **智能体轨迹卡片**（可折叠：每步"工具名 + 参数 + 结果摘要"，默认展开，可整体收起；单轮降级时显示"直接生成"提示）→ 结果区左右布局：左=脚本（`<pre>` 等宽显示 + 复制 + 下载 .sh 按钮），右=逐段解读卡片（lines 徽标 + title + detail）+ warnings 红块 + usage 灰块；底部历史记录列表（点击回看）。若返回 `need_clarification`：把 questions 以对话形式展示，用户回答后自动拼进 requirement 重新生成。
 - `#/logs`：上部"新建"区（拖拽/点击上传 + 或粘贴文本框，粘贴时 title 必填）→ 下部日志列表（title/行数/大小/格式/level 统计小徽章/时间），行内"分析"和"删除"按钮。
-- `#/logs/:id`：顶部元信息条（标题、行数、格式、level 徽章）；工具栏（level 多选过滤、关键词、正则开关、排序、导出按钮、**AI 分析**按钮、历史报告下拉）；主体行列表（行号灰、level 着色：ERROR 红/WARN 橙/INFO 蓝/DEBUG 灰/未知默认色，长行截断+hover 展开）；分页"加载更多"（每次 +500）；点击 AI 分析 → 右侧抽屉先流式显示诊断下钻步骤（工具调用小卡片：工具名+参数+结果摘要），再流式渲染 markdown 报告，完成后提示"已存历史"。
+- `#/logs/:id`：顶部元信息条（标题、行数、格式、level 徽章）；工具栏（level 多选过滤、关键词、正则开关 + **正则测试**小按钮——弹出与配置工坊同款正则预览组件（Phase 5 先落地该组件）、排序、导出按钮、**AI 分析**按钮、历史报告下拉）；主体行列表（行号灰、level 着色：ERROR 红/WARN 橙/INFO 蓝/DEBUG 灰/未知默认色，长行截断+hover 展开）；分页"加载更多"（每次 +500）；点击 AI 分析 → 右侧抽屉先流式显示诊断下钻步骤（工具调用小卡片：工具名+参数+结果摘要），再流式渲染 markdown 报告，完成后提示"已存历史"。
 - `#/assistant`：左侧会话列表（标题+更新时间，可删除）+ 右侧消息流；用户消息右对齐气泡、助手消息左侧 markdown 渲染（marked）；智能体工具调用渲染为灰色小卡片（工具名+参数+结果摘要，SSE 过程事件实时插入）；输入框 + 发送按钮（SSE 流式追加回复）；回答中的来源引用（命中的命令名/配置参数名）渲染为可点击链接，跳转到 `#/commands` 或 `#/kb` 对应详情。
 - `#/settings`：预设下拉（§5 表）→ base_url/model/api_key（password 型输入，已保存显示 `••••已保存`，留空=不修改）→ 保存 + "测试连通"按钮（显示延迟 ms 或错误）→ 底部灰字说明：key 仅存本机 `data/config.json`；免费推荐：智谱 GLM-4-Flash（open.bigmodel.cn 注册领取）。
 
@@ -365,11 +399,11 @@ CREATE INDEX IF NOT EXISTS idx_asst_msg_session ON assistant_messages(session_id
 
 ---
 
-## 8. 施工计划（Phase 0–8）
+## 8. 施工计划（Phase 0–9）
 
 ### Phase 0 · 环境与骨架
 **做**：检查 Python ≥3.10；`git init` 与根目录 `.gitignore`（规范见 §0 第 9 条）；`python -m venv .venv`；`python -m pip` 配华为云镜像装 requirements；建目录树（§3 全部空文件）；`main.py`+`server.py`+`config.py` 跑通（health 接口 + 静态托管 + 窗口）；`index.html` 空壳（边栏 5 导航 + "OpsMate 已就绪"）；下载 vendor 两文件（§4.5）；建 `PHASE_LOG.md`；下载 `data/kb` 与 `data/commands` 留到 Phase 1/2。
-**打包冒烟（风险前置）**：骨架跑通后立即安装 pyinstaller 并按 §8 Phase 8 的命令试打包一次，确认 dist 下 exe 能双击弹窗——尽早暴露 pywebview/WebView2 打包链路问题；此后每个 Phase 完成后都复打一次冒烟。
+**打包冒烟（风险前置）**：骨架跑通后立即安装 pyinstaller 并按 §8 Phase 9 的命令试打包一次，确认 dist 下 exe 能双击弹窗——尽早暴露 pywebview/WebView2 打包链路问题；此后每个 Phase 完成后都复打一次冒烟。
 **验收**：`python main.py` 弹出 1280×860 窗口，左侧 5 个导航可切换空页面；浏览器访问窗口同源地址 `/api/health` 返回 `{"ok":true}`（窗口内 F12 或外部 curl 均可验证）；试打包出的 exe 双击能弹出与开发态一致的窗口。
 
 ### Phase 1 · 指令速查
@@ -389,8 +423,8 @@ CREATE INDEX IF NOT EXISTS idx_asst_msg_session ON assistant_messages(session_id
 **验收**：输入"每天凌晨 2 点打包 /var/log/nginx 目录为 tgz，保留最近 7 天"→ 轨迹卡片出现至少 1 次工具调用（如 `search_commands("tar")` 或 `search_kb("nginx 日志")`）；得到带 `#!/usr/bin/env bash` 与 `set -euo pipefail` 的脚本，含中文注释；**script 字段内搜索不到"解读""分析"字样**（解读只在 explanation）；右侧至少 3 张解读卡片；warnings 提及 cron/root/路径等注意事项；生成记录出现在历史列表可回看；再生成一个相似需求时轨迹中出现 `search_history` 命中先前记录。再输入一个故意含糊需求（如"清理一下日志"）→ 追问 questions 而非瞎编脚本。无 key/断网时明确报错不挂死。
 
 ### Phase 5 · 日志中心·基础层
-**做**：`logs/store.py`（建表/导入/分页/统计/导出/删除）；`logs/rules.py` 的 `classify_level`（导入时预计算 level 入库）；前端 `#/logs` 与 `#/logs/:id` 的全部非 AI 功能（上传、拖拽、粘贴、过滤、着色、分页、导出）。文件方式导入另存一份原始文件 `data/logs/{id}.txt` 供导出兜底。
-**验收**：上传一份含 ERROR/WARN/Java 堆栈的样例日志（自造 200 行）→ 行数/大小/格式猜测正确；level 过滤"仅 ERROR"后 total 与实际 ERROR 行数一致；正则 `Exception` 过滤正常；关键词+level 组合过滤取交集；导出文件每行带原行号；删除后列表消失且 DB 行数下降；50MB 限制生效（造一个超限文件被拒并提示）。
+**做**：`logs/store.py`（建表/导入/分页/统计/导出/删除）；`logs/rules.py` 的 `classify_level`（导入时预计算 level 入库）；前端 `#/logs` 与 `#/logs/:id` 的全部非 AI 功能（上传、拖拽、粘贴、过滤、着色、分页、导出）；正则过滤输入旁的**正则测试组件**（纯前端 RegExp 高亮预览，Phase 7 配置工坊复用同一组件）。文件方式导入另存一份原始文件 `data/logs/{id}.txt` 供导出兜底。
+**验收**：上传一份含 ERROR/WARN/Java 堆栈的样例日志（自造 200 行）→ 行数/大小/格式猜测正确；level 过滤"仅 ERROR"后 total 与实际 ERROR 行数一致；正则 `Exception` 过滤正常；关键词+level 组合过滤取交集；正则测试组件对 `Exception|Error` 展示高亮匹配且无效正则有提示；导出文件每行带原行号；删除后列表消失且 DB 行数下降；50MB 限制生效（造一个超限文件被拒并提示）。
 
 ### Phase 6 · 日志 AI 分析（L2 诊断智能体）
 **做**：`logs/rules.py` 补全 L1（多行堆栈合并、变量归一化聚类——规格见下）；`/api/logs/{id}/stats` 输出 top_clusters；`logs/analyze.py`（L2 诊断智能体：复用 §9.3 引擎，SSE 先推工具事件再流式报告→落库）；前端 AI 分析按钮+右侧抽屉（下钻轨迹+流式渲染）+历史报告。
@@ -399,13 +433,16 @@ CREATE INDEX IF NOT EXISTS idx_asst_msg_session ON assistant_messages(session_id
 - **L2 诊断智能体**：首轮注入 L1 材料（日志元信息 + level 统计 + 时间范围 + top_clusters 全量 + 可选 focus，总长截断 ~6000 字符）；随后模型按需调用 `filter_log`/`get_stats`/`get_context`（§9.3 工具注册表，上限 6 步）下钻；SSE 先逐条推送工具事件，再流式生成"结论速览/问题清单/下一步排查"报告。**不喂原始日志全文**——省 token 且防超窗。
 **验收**：对 Phase 5 样例日志点"AI 分析"→ 抽屉先出现下钻步骤卡片再流式出报告（逐字出现）；报告含"结论速览/问题清单/下一步排查"结构；问题条目引用了行号或"聚类×次数"证据；报告出现在历史报告下拉并可重新打开；无 key 时点击给出明确引导去设置页；断网时 SSE 报错且界面不卡死。
 
-### Phase 7 · 运维助手（对话智能体）
-**做**：`assistant/service.py`（assistant_sessions/assistant_messages 持久化）；`assistant/routes.py`（`/api/assistant/chat` SSE 等 §6 契约）；前端 `#/assistant`（会话列表+消息流+工具轨迹卡片+来源跳转）；侧边栏从 5 项扩为 6 项（"运维助手"插入日志中心与设置之间，hash 路由 `#/assistant`）。复用 `agent/engine.py`，工具集 = `search_commands` + `search_kb` + `search_history`；系统提示词要求：只依据工具检索结果回答、来源以"【命令：tar】【配置：nginx/worker_processes】"式标记嵌入正文（前端渲染为跳转链接）、检索不到就明说。
+### Phase 7 · 知识库扩充与配置工坊
+**做**：编写 `data/kb/keepalived.yaml`、`kafka.yaml`、`redis.yaml`、`docker.yaml`（§4.3 schema + §11 清单，cli/conf 数量达标）；`kb/workbench.py`（user_configs 存取 + §4.6 多格式静态校验）与 `/api/kb/workbench/*` 路由；agent 工具注册表接入 `read_user_config`（仅 shared=1）；前端 `#/kb` 顶部【知识库 | 我的配置】视图切换，工坊视图完整落地（列表/编辑/校验/正则测试复用 Phase 5 组件/共享开关）。
+**验收**：`/api/kb` 返回 6 个软件且新软件 cli/conf 计数达标；四个新软件的"启停命令"Tab 看不到配置参数、反之亦然（抽验 keepalived 与 kafka）；上传一份故意写错的 YAML（缩进错 + 重复键）→ 校验返回行号级错误与重复键警告；keepalived 风格配置少写 `}` → 报括号不配对及所在行；正则 `(\w+)@(\w+\.\w+)` 测试 → 高亮全部邮箱并显示两列分组；保存配置 → 列表可回看、刷新后仍在；开启共享 → 智能体工具 `read_user_config` 能读到内容，关闭后读到"不存在或未共享"；2MB 超限被拒提示。
+### Phase 8 · 运维助手（对话智能体）
+**做**：`assistant/service.py`（assistant_sessions/assistant_messages 持久化）；`assistant/routes.py`（`/api/assistant/chat` SSE 等 §6 契约）；前端 `#/assistant`（会话列表+消息流+工具轨迹卡片+来源跳转）；侧边栏从 5 项扩为 6 项（"运维助手"插入日志中心与设置之间，hash 路由 `#/assistant`）。复用 `agent/engine.py`，工具集 = `search_commands` + `search_kb` + `search_history` + `read_user_config`（若用户已共享配置）；系统提示词要求：只依据工具检索结果回答、来源以"【命令：tar】【配置：nginx/worker_processes】"式标记嵌入正文（前端渲染为跳转链接）、检索不到就明说。
 **验收**：问"nginx 怎么平滑重载"→ 回答包含 `nginx -s reload` 且带可跳转来源（跳到配置速查 nginx 分组）；问"磁盘占用排查用什么命令"→ 引用 df/du 文档来源；连续追问能理解上下文（"那它和 du 的区别呢"无需重复背景）；会话列表可回看历史、可删除；无 key 时明确引导去设置页；SSE 流式渲染 markdown 正常。
 
-### Phase 8 · 打磨与打包
+### Phase 9 · 打磨与打包
 **做**：全局 UI 走查（空态/loading/错误态文案中文）；`pyinstaller --noconsole --name OpsMate --add-data "app;app" --add-data "data/commands;data/commands" --add-data "data/kb;data/kb" main.py`（Windows 下 `--add-data` 分隔符为分号 `;`，以附录 A 第 6 条为准——本文档及 AGENTS.md 早期写法中的冒号一律以分号为准）（**全量知识数据必须打进包**：`data/commands/` 与 `data/kb/` 随 exe 发布，保证双击即有全量数据，不要求用户跑任何导入脚本；`data/config.json`（含用户 API key）与 `opsmate.db` **不打包**，由 `app/config.py` 在 frozen 态首启动时于 exe 旁 `data/` 自动创建，并把包内 commands/kb 拷贝落地一次，运行期始终读写 exe 旁副本）；README.md（功能简介、首次配置模型 key 指引、数据目录说明、常见问题：WebView2 缺失/端口占用/编码）；图标（可选，无素材则跳过并记录）。
-**验收**：`dist/OpsMate/OpsMate.exe` 双击启动，功能抽测（搜索一个命令、看一个配置 Tab、生成一个脚本需真 key、上传一份日志并过滤、问运维助手一个问题需真 key）；exe 旁生成 data/ 且重启数据仍在；首次启动自动落地全量知识数据（commands ≥600、kb 齐全），无需任何手动导入；README 存在且含模型配置章节；PHASE_LOG.md 覆盖全部 Phase。
+**验收**：`dist/OpsMate/OpsMate.exe` 双击启动，功能抽测（搜索一个命令、看一个配置 Tab、校验一份用户配置、生成一个脚本需真 key、上传一份日志并过滤、问运维助手一个问题需真 key）；exe 旁生成 data/ 且重启数据仍在；首次启动自动落地全量知识数据（commands ≥600、kb 六软件齐全），无需任何手动导入；README 存在且含模型配置章节；PHASE_LOG.md 覆盖全部 Phase。
 
 ---
 
@@ -500,7 +537,7 @@ user 模板：日志材料组装（§8 Phase 6）+ 可选 `重点关注：{focus
 - 工具执行结果以 `{"ok": true, "result": ...}` 或 `{"ok": false, "error": "..."}` 作为 user 消息回填，进入下一轮。
 - **步数上限 6**：达到上限后追加 user 消息"工具调用次数已用完，请基于已有信息直接给出最终结果"，不再接受 tool 动作。
 - **解析容错**：复用统一顺序——剥 ``` 围栏 → 取首个 `{` 到末个 `}` 子串 → `json.loads`；失败重试请求 1 次；**累计 3 轮失败 → 整体退回单轮直接生成模式**（`steps=[]`，UI 显示"直接生成"）。
-- **工具注册表（全部只读，永不执行任何 shell）**：`search_commands(q, limit=5)`、`search_kb(q, software?, limit=5)`、`search_history(q, limit=5)`（FTS5）、`filter_log(log_id, q?, level?, regex?, limit=50)`、`get_stats(log_id)`、`get_context(log_id, line_no, around=10)`。工具实现直接复用各模块 service 层函数，注册表集中放在 `app/agent/tools.py`。
+- **工具注册表（全部只读，永不执行任何 shell）**：`search_commands(q, limit=5)`、`search_kb(q, software?, limit=5)`、`search_history(q, limit=5)`（FTS5）、`filter_log(log_id, q?, level?, regex?, limit=50)`、`get_stats(log_id)`、`get_context(log_id, line_no, around=10)`、`read_user_config(name)`（仅返回 user_configs 中 shared=1 的记录，内容截断 ~4000 字符；未共享/不存在返回 `{"ok":false}`；Phase 7 接入）。工具实现直接复用各模块 service 层函数，注册表集中放在 `app/agent/tools.py`。
 - **安全边界（硬性）**：智能体只生成、只解释、只检索；任何工具不得写数据库、不得执行命令、不得访问网络；产出物的执行权永远在用户手中。
 - **温度**：工具循环轮 temperature=0.1；最终生成轮按场景取值（codegen 0.3 / 日志分析 0.3 / 运维问答 0.5）。
 - **轨迹落盘**：每步 `{tool, args, result_summary}`（result 截断 300 字符）随场景入库（codegen_history.steps / SSE 过程事件），前端渲染为轨迹卡片。
@@ -528,7 +565,19 @@ user 模板：日志材料组装（§8 Phase 6）+ 可选 `重点关注：{focus
 **zabbix · conf（server ≥35）**：ListenPort、ListenIP、SourceIP、LogFile、LogFileSize、DebugLevel、PidFile、SocketDir、DBHost、DBName、DBSchema、DBUser、DBPassword、DBSocket、DBPort、StartPollers、StartIPMIPollers、StartPollersUnreachable、StartTrappers、StartPingers、StartDiscoverers、StartHTTPPollers、StartTimers、StartEscalators、StartAlerters、JavaGateway、JavaGatewayPort、StartJavaPollers、StartVMwareCollectors、VMwareFrequency、VMwareCacheSize、HousekeepingFrequency、MaxHousekeeperDelete、CacheSize、CacheUpdateFrequency、StartDBSyncers、HistoryCacheSize、HistoryIndexCacheSize、TrendCacheSize、ValueCacheSize、Timeout、TrapperTimeout、UnavailableDelay、UnreachableDelay、UnreachablePeriod、ExternalScripts、AlertScriptPath、FpingLocation、Fping6Location、LogSlowQueries、ProxyConfigFrequency、ProxyDataFrequency、StartProxyPollers、Include、TLSConnect/TLSAccept（server 侧）。
 **zabbix · conf（agent2 ≥25）**：PidFile、LogFile、LogFileSize、DebugLevel、Server、ServerActive、ListenPort、ListenIP、Hostname、HostnameItem、HostMetadata、HostMetadataItem、HostInterface、HostInterfaceItem、RefreshActiveChecks、BufferSend、BufferSize、MaxLinesPerSecond、Timeout、Include、UnsafeUserParameters、UserParameter（含示例与命令黑名单提醒）、Alias、ListenBacklog、TLSConnect、TLSAccept、TLSCAFile、TLSCertFile、TLSKeyFile、TLSPSKIdentity、TLSPSKFile、LoadModule、Plugins（UserParameter/Mock 等插件子配置概述）。
 
-每条必须有：name、syntax、default（conf 类必填，cli 类可省）、section（nginx conf 标 main/events/http/server/location；zabbix conf 标 server/agent）、desc（1-3 句中文）、example（真实可抄）、notes（改动生效方式：reload/restart/无）、danger、tags。**版本口径**：nginx 1.24/1.26、Zabbix 6.0 LTS（notes 标注"7.0 起有变化"的条目单独注明）。
+**keepalived · cli（≥8）**：`systemctl start|stop|restart|status keepalived`、`keepalived -t`（配置语法测试）、`keepalived -f <file>`（指定配置启动）、`keepalived --help/-v`、`ipvsadm -Ln`（查看 LVS 虚拟服务表）、`ipvsadm -C`（清空转发表，高危）、`ip addr show <iface>`（验证 VIP 漂移）、`journalctl -u keepalived -f`、`tcpdump vrrp`（抓 VRRP 报文排双主）。
+**keepalived · conf（≥30，keepalived.conf 段落与指令）**：global_defs{router_id}、global_defs{script_user}、global_defs{enable_script_security}、vrrp_script{script}、vrrp_script{interval}、vrrp_script{timeout}、vrrp_script{weight}、vrrp_script{fall/rise}、vrrp_instance{state MASTER/BACKUP}、vrrp_instance{interface}、vrrp_instance{virtual_router_id}、vrrp_instance{priority}、vrrp_instance{advert_int}、vrrp_instance{authentication}、vrrp_instance{virtual_ipaddress}、vrrp_instance{virtual_ipaddress_excluded}、vrrp_instance{track_script}、vrrp_instance{track_interface}、vrrp_instance{preempt/nopreempt}、vrrp_instance{preempt_delay}、vrrp_instance{garp_master_delay}、vrrp_instance{notify_master/notify_backup/notify_fault/notify_stop}、vrrp_instance{unicast_src_ip/unicast_peer}、vrrp_garp_master_repeat、vrrp_sync_group、virtual_server{delay_loop}、virtual_server{lb_algo rr/wlc/lc/sh/dh}、virtual_server{lb_kind NAT/DR/TUN}、virtual_server{persistence_timeout}、virtual_server{protocol TCP/UDP}、virtual_server{sorry_server}、virtual_server{real_server{weight}}、real_server{TCP_CHECK/HTTP_GET/SSL_GET/MISC_CHECK}、real_server{notify_up/notify_down}、smtp_server（邮件告警）、vrrp_mcast_group4、vrrp_skip_check_adv_addr、vrrp_strict、vrrp_version（VRRPv2/v3）。
+
+**kafka · cli（≥10）**：`systemctl start|stop|restart|status kafka`（或 kafka-server-start.sh -daemon）、`kafka-topics.sh --create/--list/--describe/--alter/--delete`、`kafka-console-producer.sh`、`kafka-console-consumer.sh`（--from-beginning/--group）、`kafka-consumer-groups.sh --list/--describe`、`kafka-consumer-groups.sh --reset-offsets`（高危）、`kafka-configs.sh --describe/--alter`（动态配置）、`kafka-log-dirs.sh --describe`（磁盘占用）、`kafka-cluster.sh cluster-id`、`kafka-broker-api-versions.sh`、`kafka-acls.sh`（权限）。
+**kafka · conf（≥30，server.properties）**：broker.id、listeners、advertised.listeners、listener.security.protocol.map、inter.broker.listener.name、controller.listener.names、num.network.threads、num.io.threads、socket.send.buffer.bytes、socket.receive.buffer.bytes、socket.request.max.bytes、log.dirs、num.partitions、num.recovery.threads.per.data.dir、default.replication.factor、offsets.topic.num.partitions、offsets.topic.replication.factor、transaction.state.log.replication.factor、transaction.state.log.min.isr、log.retention.hours、log.retention.bytes、log.segment.bytes、log.retention.check.interval.ms、log.cleanup.policy、log.compaction、delete.topic.enable、auto.create.topics.enable、message.max.bytes、replica.fetch.max.bytes、min.insync.replicas、unclean.leader.election.enable、group.initial.rebalance.delay.ms、zookeeper.connect（2.x/ZK 模式）、process.roles（KRaft）、node.id（KRaft）、controller.quorum.voters（KRaft）、advertised.host.name（旧单机）。
+
+**redis · cli（≥10）**：`systemctl start|stop|restart|status redis`、`redis-cli ping`、`redis-cli -h -p -a`、`redis-cli info [section]`、`redis-cli config get <param>`、`redis-cli config set <param> <value>`（部分热生效）、`redis-cli bgsave/save`、`redis-cli lastsave`、`redis-cli dbsize`、`redis-cli --scan --pattern`（生产替代 keys）、`redis-cli slowlog get`、`redis-cli client list/kill`、`redis-benchmark`、`redis-check-rdb`、`redis-cli --latency`。
+**redis · conf（≥30，redis.conf）**：bind、protected-mode、port、tcp-backlog、timeout、tcp-keepalive、daemonize、supervised、pidfile、loglevel、logfile、databases、save（RDB 触发条件）、stop-writes-on-bgsave-error、rdbcompression、rdbchecksum、dbfilename、dir、appendonly、appendfilename、appendfsync（always/everysec/no）、no-appendfsync-on-rewrite、auto-aof-rewrite-percentage、auto-aof-rewrite-min-size、aof-load-truncated、maxmemory、maxmemory-policy（noeviction/allkeys-lru/volatile-lru 等）、maxmemory-samples、lazyfree-lazy-eviction、replicaof（旧 slaveof）、masterauth、replica-read-only、repl-backlog-size、repl-backlog-ttl、min-replicas-to-write、min-replicas-max-lag、requirepass、rename-command（安全加固）、maxclients、io-threads、slowlog-log-slower-than、slowlog-max-len、latency-monitor-threshold、notify-keyspace-events、cluster-enabled、cluster-config-file、cluster-node-timeout、hz、activedefrag、LFU 设置（lfu-log-factor/lfu-decay-time）。
+
+**docker · cli（≥15）**：`docker run`（-d/-p/-v/--name/--restart/--network）、`docker ps`（-a）、`docker images`、`docker pull`、`docker push`、`docker stop|start|restart`、`docker rm`（-f 高危）、`docker rmi`、`docker logs`（-f --tail）、`docker exec -it <c> sh`、`docker inspect`、`docker stats`、`docker cp`、`docker top`、`docker build -t`、`docker tag`、`docker network create/ls/inspect`、`docker volume ls/inspect`、`docker compose up/down/ps/logs`、`docker system df`、`docker system prune`（高危）、`docker info/version`、`docker login`。
+**docker · conf（≥25，/etc/docker/daemon.json）**：data-root、registry-mirrors、insecure-registries、log-driver（json-file/local/none）、log-opts{max-size}、log-opts{max-file}、storage-driver（overlay2）、live-restore、max-concurrent-downloads、max-concurrent-uploads、default-shm-size、max-download-attempts、dns、dns-search、hosts（-H 等价）、tls、tlscacert、tlscert、tlskey、debug、experimental、metrics-addr、default-address-pools、default-ulimits、ipv6、fixed-cidr-v6、userland-proxy、seccomp-profile、exec-opts{native.cgroupdriver}、features{buildkit}、containerd（命名空间）说明、cgroup-parent、oom-score-adjust。
+
+每条必须有：name、syntax、default（conf 类必填，cli 类可省）、section（nginx conf 标 main/events/http/server/location；zabbix conf 标 server/agent；keepalived conf 标 global/vrrp/virtual_server；kafka conf 标 broker；redis conf 标 server；docker conf 标 daemon）、desc（1-3 句中文）、example（真实可抄）、notes（改动生效方式：reload/restart/无）、danger、tags。**版本口径**：nginx 1.24/1.26、Zabbix 6.0 LTS（notes 标注"7.0 起有变化"的条目单独注明）、Keepalived 2.x、Kafka 3.x（ZK 与 KRaft 双模式标注）、Redis 7.x、Docker Engine 24+/26+。
 
 ---
 
@@ -536,10 +585,10 @@ user 模板：日志材料组装（§8 Phase 6）+ 可选 `重点关注：{focus
 
 - [ ] 桌面窗口打开，六模块导航可用，暗色主题
 - [ ] 指令速查：600+ 命令离线可搜可看
-- [ ] 配置速查：nginx/zabbix 启停与配置严格分 Tab，可搜索，危险项有标记
+- [ ] 配置速查：六软件（nginx/zabbix/keepalived/kafka/redis/docker）启停与配置严格分 Tab，可搜索，危险项有标记；"我的配置"工坊可上传/编辑/校验（YAML 行号报错、括号配对）/正则预览；显式共享后智能体可读、关闭即失效
 - [ ] 脚本工坊：含糊需求会追问；工具轨迹卡片可见（或降级提示"直接生成"）；成稿脚本注释全、无解读混入；右侧解读/风险/用法齐全；历史可回看且可被检索复用
-- [ ] 日志中心：上传/粘贴、level 着色、组合过滤、导出带行号
+- [ ] 日志中心：上传/粘贴、level 着色、组合过滤、导出带行号、正则测试组件可用
 - [ ] AI 分析：L1 聚类免费可用；L2 抽屉先展示下钻步骤再流式报告、证据带行号、可回看
-- [ ] 运维助手：本地知识问答带可跳转来源；连续追问有上下文；会话可回看可删除
+- [ ] 运维助手：本地知识问答带可跳转来源；连续追问有上下文；会话可回看可删除；可引用用户共享的配置
 - [ ] 设置：key 不回传；测试连通有延迟/错误反馈；免费模型预设就绪
 - [ ] 打包 exe 可独立运行：双击即用、无需 Python/中间件，首启动自动落地全量知识数据，README 完整
