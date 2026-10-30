@@ -1063,3 +1063,14 @@
 ### Phase 状态
 
 **完成，随 `feat(assistant): 附件引用图片识别与确认式文件写入` 提交。Phase 9 仍待用户确认后开工。**
+
+### 追加（同日）：助手代码块 URL 转义修复（用户复验反馈）
+
+- 现象：助手回答中的代码块整块显示为 `%20/%3B/%0A` 编码文本，命令不可读。
+- 排查（多层探针逐层二分）：存库原文干净 → 标记转换后文本干净 → `renderer.code` 入参干净 → 但 `marked.parse` 输出编码。根因：多次改造 `assistantMarkdown` 时 **`const escape = ...` 声明行丢失**，函数内 `escape(code)` 解析到 JS 内置全局 **`window.escape()`（URI 编码函数）**，空格/分号/换行被编码——字符集与现象完全吻合。
+- 修复：补回 HTML 转义的 `escape` 局部声明；顺带加固两处——①来源标记正则禁止跨行/含反引号（防止模型把 `【…` 写进代码块后跨段吞内容再 encodeURIComponent）；②静态资源响应统一 `Cache-Control: no-cache`（自定义 NoCacheStaticFiles），根治 WebView2 持久磁盘缓存导致桌面程序读到旧前端的问题。
+- 验证：Node 单测（畸形跨行标记不再吞代码块）；浏览器冷加载实测同会话代码块恢复原文（`worker_processes auto;` 直显）、来源链接文字可读且跳转正常、全页无 %20/%3B 残留；node --check、compileall 通过。
+
+### Phase 状态
+
+**修复完成，随 `fix(web): 助手代码块转义根因修复与静态资源禁缓存` 提交。Phase 9 仍待用户确认后开工。**

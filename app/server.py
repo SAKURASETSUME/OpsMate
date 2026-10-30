@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import MutableHeaders
 
 from app import config
 from app.commands.routes import router as commands_router
@@ -19,6 +20,18 @@ from app.assistant.routes import router as assistant_router
 from app.assistant.service import init_assistant
 
 VERSION = "1.0.0"
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """本地桌面应用：静态资源禁用 HTTP 缓存，保证启动即用最新前端（WebView2 磁盘缓存持久）。"""
+
+    async def __call__(self, scope, receive, send) -> None:
+        async def send_no_cache(message) -> None:
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)["Cache-Control"] = "no-cache"
+            await send(message)
+
+        await super().__call__(scope, receive, send_no_cache)
 
 
 def create_app() -> FastAPI:
@@ -48,6 +61,6 @@ def create_app() -> FastAPI:
     app.include_router(logs_router)
     app.include_router(assistant_router)
 
-    # 静态托管前端（零构建，Vue3/marked 为 vendored 全局构建）
-    app.mount("/", StaticFiles(directory=str(config.WEB_DIR), html=True), name="web")
+    # 静态托管前端（零构建，Vue3/marked 为 vendored 全局构建；no-cache 防缓存旧版）
+    app.mount("/", NoCacheStaticFiles(directory=str(config.WEB_DIR), html=True), name="web")
     return app

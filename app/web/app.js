@@ -987,10 +987,15 @@ const App = {
     },
     assistantMarkdown(text) {
       // 来源标记 → 站内链接：【命令：tar】→#/commands/tar；【配置：nginx/name】→#/kb/nginx/name
-      const withLinks = String(text || "")
-        .replace(/【命令：([^】]+)】/g, (m, name) => "[`" + name.trim() + "`](#/commands/" + encodeURIComponent(name.trim()) + ")")
-        .replace(/【配置：([^】/]+)\/([^】]+)】/g, (m, software, entry) =>
-          "[`" + software.trim() + "/" + entry.trim() + "`](#/kb/" + encodeURIComponent(software.trim()) + "/" + encodeURIComponent(entry.trim()) + ")");
+      // 代码围栏与行内代码内的标记不转换，保持命令原文（避免链接语法/URL 编码混入代码块）
+      const escape = (value) => String(value || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+      const raw = String(text || "").replace(/<!--rehype:[^>]*-->/gi, "");
+      const segments = raw.split(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)/g);
+      // 标记名不允许跨行/含反引号：防止把整段代码块吞进链接名后 encodeURIComponent
+      const withLinks = segments.map((segment, index) => (index % 2 === 1) ? segment : segment
+        .replace(/【命令：([^】\n`]+)】/g, (m, name) => "[`" + name.trim() + "`](#/commands/" + encodeURIComponent(name.trim()) + ")")
+        .replace(/【配置：([^】/\n`]+)\/([^】\n`]+)】/g, (m, software, entry) =>
+          "[`" + software.trim() + "/" + entry.trim() + "`](#/kb/" + encodeURIComponent(software.trim()) + "/" + encodeURIComponent(entry.trim()) + ")")).join("");
       const renderer = new marked.Renderer();
       renderer.html = (html) => escape(html);
       renderer.image = (href,title,alt) => escape(alt || "图片");
