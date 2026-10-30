@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.agent.tools import TOOL_DESCRIPTIONS, execute_tool
-from app.llm.provider import LLMClient, LLMError
+from app.llm.provider import LLMClient, LLMError, stream_with_reasoning
 
 
 class AgentFormatError(ValueError):
@@ -202,9 +202,12 @@ async def run_assistant(client: LLMClient, system: str,
     final_messages = [{"role": "system", "content": system}, *exchanges,
                       {"role": "user", "content": "现在依据以上资料直接输出完整中文 markdown 回答；来源标记规则按 system 执行；本地资料没有的内容如实说明，不要编造。"}]
     parts: list[str] = []
-    async for chunk in client.chat_stream(final_messages, temperature=0.5, timeout=120):
-        parts.append(chunk)
-        yield {"delta": chunk}
+    async for kind, text in stream_with_reasoning(client, final_messages, temperature=0.5, timeout=120):
+        if kind == "thinking":
+            yield {"thinking": text}
+            continue
+        parts.append(text)
+        yield {"delta": text}
     answer = "".join(parts).strip()
     if not answer:
         raise LLMError("模型未返回回答")

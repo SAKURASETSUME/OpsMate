@@ -8,7 +8,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 from app.agent.engine import plan_log_analysis
-from app.llm.provider import LLMClient, LLMError
+from app.llm.provider import LLMClient, LLMError, stream_with_reasoning
 from app.logs import store
 
 LOG_ANALYZE_SYSTEM_PROMPT = """你是资深运维排障专家。用户会提供一段日志的预处理结果（元信息、级别统计、错误/告警聚类样本）。你只依据这些证据分析，输出一份 markdown 排障报告。
@@ -94,9 +94,13 @@ async def analysis_events(log_id: int, focus: str, settings: dict[str, Any],
         if ready is None:
             raise LLMError("诊断规划未返回结果，未保存")
         content = ""
-        async for delta in client.chat_stream(ready["messages"], temperature=0.3, timeout=180):
+        async for kind, piece in stream_with_reasoning(client, ready["messages"], temperature=0.3, timeout=180):
             if disconnected and await disconnected():
                 return
+            if kind == "thinking":
+                yield {"thinking": piece}
+                continue
+            delta = piece
             content += delta
             if len(content) > 64000:
                 raise LLMError("报告超过长度上限，未保存")

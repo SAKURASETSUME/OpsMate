@@ -89,13 +89,15 @@ function parseRoute() {
   return NAV_ITEMS.some((item) => item.page === name) ? name : "commands";
 }
 
-/** 分析报告禁止活动 HTML/远程图片，日志或模型正文仅作为显示数据。 */
+/** 分析报告禁止活动 HTML/远程图片，日志或模型正文仅作为显示数据；代码块带复制按钮。 */
 function reportMarkdown(text) {
   const escape = (value) => String(value || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
   const renderer = new marked.Renderer();
   renderer.html = (html) => escape(html);
   renderer.image = (href,title,alt) => escape(alt || "图片");
   renderer.link = (href,title,label) => label + " (" + escape(href) + ")";
+  renderer.code = (code) => '<div class="code-block"><button class="copy-button code-copy" type="button">复制</button><pre><code>'
+    + escape(code || "") + "</code></pre></div>";
   return marked.parse(text.replace(/<!--rehype:[^>]*-->/gi,""), {renderer});
 }
 
@@ -208,8 +210,9 @@ const App = {
       pendingDeleteLogId: null,
       analysisOpen: false, analysisBusy: false, analysisContent: "", analysisSteps: [], analysisError: "",
       analysisFocus: "", analysisAbort: null, logReports: [], selectedReportId: "", analysisSaved: false,
-      asstSessions: [], asstMessages: [], asstSessionId: null, asstInput: "",
+      asstSessions: [], asstMessages: [], asstSessionId: null, asstInput: "", asstQueue: [],
       asstBusy: false, asstAbort: null, asstError: "", pendingDeleteAsstId: null, asstKeySeq: 0,
+      analysisThinking: "",
       paneWidths: { commands: 320, wb: 300, asst: 260, codegen: 0.5, side: 200 },
       themePref: "auto",
     };
@@ -270,7 +273,7 @@ const App = {
   methods: {
     async refreshLogsRoute() {
       if (this.analysisAbort) this.analysisAbort.abort();
-      this.analysisOpen = false; this.logReports = []; this.selectedReportId = "";
+      this.analysisOpen = false; this.logReports = []; this.selectedReportId = ""; this.analysisThinking = "";
       clearTimeout(this.logFilterTimer); ++this.logRequestId;
       const ticket = ++this.logRouteRequestId;
       const match = location.hash.match(/^#\/logs\/(\d+)$/);
@@ -360,13 +363,13 @@ const App = {
     },
     openAnalysis() {
       if (this.analysisBusy) { this.analysisOpen = true; return; }
-      this.analysisOpen = true; this.analysisContent = ""; this.analysisSteps = []; this.analysisError = ""; this.analysisSaved = false; this.selectedReportId = "";
+      this.analysisOpen = true; this.analysisContent = ""; this.analysisThinking = ""; this.analysisSteps = []; this.analysisError = ""; this.analysisSaved = false; this.selectedReportId = "";
     },
     closeAnalysis() { if (this.analysisAbort) this.analysisAbort.abort(); this.analysisOpen = false; },
     async startAnalysis() {
       if (this.analysisBusy || !this.logId) return;
       const id = this.logId; const controller = new AbortController(); this.analysisAbort = controller;
-      this.analysisBusy = true; this.analysisSaved = false; this.analysisError = ""; this.analysisSteps = []; this.analysisContent = "";
+      this.analysisBusy = true; this.analysisSaved = false; this.analysisError = ""; this.analysisSteps = []; this.analysisContent = ""; this.analysisThinking = "";
       try {
         await apiFetch("/api/logs/" + id + "/llm-analyze", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({focus:this.analysisFocus}),signal:controller.signal}, 305000, async (response) => {
           const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8"); let buffer = ""; let completed = false;
@@ -375,6 +378,7 @@ const App = {
             const event = JSON.parse(line.slice(5).trim());
             if (event.error) throw new Error(event.error);
             if (event.tool) this.analysisSteps.push({tool:event.tool,args:event.args,result:event.result});
+            if (event.thinking) this.analysisThinking += event.thinking;
             if (event.delta) this.analysisContent += event.delta;
             if (event.done) { completed = true; this.analysisSaved = true; this.selectedReportId = String(event.report_id); }
           };
@@ -398,7 +402,7 @@ const App = {
       if (!this.selectedReportId || this.analysisBusy) return;
       try {
         const data = await apiFetch("/api/logs/" + this.logId + "/reports/" + this.selectedReportId);
-        this.analysisContent = data.content; this.analysisSteps = []; this.analysisError = ""; this.analysisSaved = true; this.analysisOpen = true;
+        this.analysisContent = data.content; this.analysisThinking = ""; this.analysisSteps = []; this.analysisError = ""; this.analysisSaved = true; this.analysisOpen = true;
       } catch (err) { /* 统一提示 */ }
     },
     async loadCodegenHistory() {
@@ -767,6 +771,8 @@ const App = {
     startPaneDrag(event, key) {
       if (event.button !== 0) return;
       event.preventDefault();
+      // 若上次拖拽在窗口外松开导致状态残留，先清理，避免整页被锁死无法选择/点击
+      document.body.classList.remove("pane-dragging");
       const limits = { commands: [180, 640], wb: [200, 720], asst: [200, 520], side: [160, 320] }[key];
       const startX = event.clientX;
       const startWidth = this.paneWidths[key];
@@ -775,6 +781,14 @@ const App = {
       const splitter = event.currentTarget;
       splitter.classList.add("active");
       document.body.classList.add("pane-dragging");
+      const cleanup = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", cleanup);
+        window.removeEventListener("blur", cleanup);
+        splitter.classList.remove("active");
+        document.body.classList.remove("pane-dragging");
+        try { localStorage.setItem("opsmate-pane-widths", JSON.stringify(this.paneWidths)); } catch (err) { /* 忽略持久化失败 */ }
+      };
       const onMove = (moveEvent) => {
         const delta = moveEvent.clientX - startX;
         if (key === "codegen") {
@@ -783,15 +797,9 @@ const App = {
           this.paneWidths[key] = Math.round(Math.min(limits[1], Math.max(limits[0], startWidth + delta)));
         }
       };
-      const onUp = () => {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-        splitter.classList.remove("active");
-        document.body.classList.remove("pane-dragging");
-        try { localStorage.setItem("opsmate-pane-widths", JSON.stringify(this.paneWidths)); } catch (err) { /* 忽略持久化失败 */ }
-      };
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", cleanup);
+      window.addEventListener("blur", cleanup);
     },
     /* ============ 运维助手（Phase 8） ============ */
     async loadAsstSessions() {
@@ -834,14 +842,24 @@ const App = {
     },
     askKeydown(event) {
       if (event.isComposing) return; // 中文输入法选词回车不发送
-      this.sendAsstMessage();
+      this.trySendAsst();
     },
-    async sendAsstMessage() {
-      if (this.asstBusy || !this.asstInput.trim()) return;
-      const message = this.asstInput.trim();
-      this.asstInput = ""; this.asstError = "";
+    trySendAsst() {
+      const text = this.asstInput.trim();
+      if (!text) return;
+      this.asstInput = "";
+      if (this.asstBusy) {
+        this.asstQueue.push(text);
+        showToast("已加入队列，当前回答完成后自动发送");
+        return;
+      }
+      this.dispatchAsst(text);
+    },
+    async dispatchAsst(message) {
+      if (this.asstBusy) return;
+      this.asstError = "";
       this.asstMessages.push({ key: "u" + (++this.asstKeySeq), role: "user", content: message, tools: [] });
-      const live = { key: "a" + (++this.asstKeySeq), role: "assistant", content: "", tools: [] };
+      const live = { key: "a" + (++this.asstKeySeq), role: "assistant", content: "", thinking: "", tools: [] };
       this.asstMessages.push(live);
       const controller = new AbortController(); this.asstAbort = controller;
       this.asstBusy = true;
@@ -857,6 +875,7 @@ const App = {
             const event = JSON.parse(line.slice(5).trim());
             if (event.error) throw new Error(event.error);
             if (event.tool) live.tools.push({ tool: event.tool, args: event.args, result: event.result });
+            if (event.thinking) live.thinking += event.thinking;
             if (event.delta) live.content += event.delta;
             if (event.done) { completed = true; this.asstSessionId = event.session_id; }
           };
@@ -873,8 +892,11 @@ const App = {
         await this.loadAsstSessions();
       } catch (err) {
         if (err.name !== "AbortError") this.asstError = String(err.message || err);
-        if (!live.content && !live.tools.length) this.asstMessages.pop();
-      } finally { this.asstBusy = false; this.asstAbort = null; }
+        if (!live.content && !live.tools.length && !live.thinking) this.asstMessages.pop();
+      } finally {
+        this.asstBusy = false; this.asstAbort = null;
+        if (this.asstQueue.length) this.dispatchAsst(this.asstQueue.shift());
+      }
     },
     assistantMarkdown(text) {
       // 来源标记 → 站内链接：【命令：tar】→#/commands/tar；【配置：nginx/name】→#/kb/nginx/name
@@ -882,13 +904,14 @@ const App = {
         .replace(/【命令：([^】]+)】/g, (m, name) => "[`" + name.trim() + "`](#/commands/" + encodeURIComponent(name.trim()) + ")")
         .replace(/【配置：([^】/]+)\/([^】]+)】/g, (m, software, entry) =>
           "[`" + software.trim() + "/" + entry.trim() + "`](#/kb/" + encodeURIComponent(software.trim()) + "/" + encodeURIComponent(entry.trim()) + ")");
-      const escape = (value) => String(value || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
       const renderer = new marked.Renderer();
       renderer.html = (html) => escape(html);
       renderer.image = (href,title,alt) => escape(alt || "图片");
       renderer.link = (href, title, label) => (href && href.indexOf("#/") === 0)
         ? '<a href="' + escape(href) + '">' + label + "</a>"
         : label + " (" + escape(href) + ")";
+      renderer.code = (code) => '<div class="code-block"><button class="copy-button code-copy" type="button">复制</button><pre><code>'
+        + escape(code || "") + "</code></pre></div>";
       return marked.parse(withLinks.replace(/<!--rehype:[^>]*-->/gi,""), {renderer});
     },
     async handleDeepLink() {
@@ -976,6 +999,14 @@ const App = {
     },
   },
   created() {
+    document.addEventListener("click", (event) => {
+      // 事件委托：智能体回答中的代码块复制按钮（v-html 内无法绑 Vue 事件）
+      const button = event.target && event.target.closest ? event.target.closest(".code-copy") : null;
+      if (!button) return;
+      const block = button.closest(".code-block");
+      const pre = block && block.querySelector("pre");
+      if (pre) this.copyText(pre.textContent, "代码已复制");
+    });
     try { this.themePref = localStorage.getItem("opsmate-theme") || "auto"; } catch (err) { /* 默认跟随系统 */ }
     this.applyTheme();
     if (window.matchMedia) {
@@ -1227,6 +1258,7 @@ const App = {
     '            <p v-if="analysisBusy" role="status">正在检索证据并生成报告…</p><p v-if="analysisSaved" role="status">报告已存历史</p>',
     '            <p v-if="analysisError" class="regex-error" role="alert">{{ analysisError }} <a href="#/settings">前往模型设置</a></p>',
     '            <details v-for="(step,i) in analysisSteps" :key="i" class="trace-card" open><summary>{{ i+1 }} · {{ step.tool }}</summary><pre>{{ JSON.stringify(step.args) }}</pre><p>{{ step.result }}</p></details>',
+    '            <details v-if="analysisThinking" class="agent-thinking" open><summary>思考过程</summary><div class="agent-thinking-body">{{ analysisThinking }}</div></details>',
     '            <article class="markdown-body analysis-report" v-html="analysisHtml"></article>',
     '          </aside>',
     '        </template>',
@@ -1298,6 +1330,7 @@ const App = {
     "              </div>",
     '              <div v-else-if="m.role === \'user\'" class="asst-bubble-user">{{ m.content }}</div>',
     '              <template v-else>',
+    '                <details v-if="m.thinking" class="agent-thinking" open><summary>思考过程</summary><div class="agent-thinking-body">{{ m.thinking }}</div></details>',
     '                <div v-for="(t,i) in m.tools" :key="\'t\'+i" class="asst-tool">',
     '                  <span class="asst-tool-name">{{ t.tool }}</span>',
     "                  <code>{{ JSON.stringify(t.args) }}</code>",
@@ -1306,12 +1339,13 @@ const App = {
     '                <article v-if="m.content" class="markdown-body asst-bubble-bot" v-html="assistantMarkdown(m.content)"></article>',
     "              </template>",
     "            </div>",
-    '            <p v-if="!asstMessages.length" class="empty-state">问一个运维问题，例如：nginx 怎么平滑重载？<br>助手只依据本地知识库检索结果回答，检索不到会明说；配置工坊中开启共享的配置可被引用。</p>',
+    '            <p v-if="!asstMessages.length && !asstQueue.length" class="empty-state">问一个运维问题，例如：nginx 怎么平滑重载？<br>助手只依据本地知识库检索结果回答，检索不到会明说；配置工坊中开启共享的配置可被引用。</p>',
+    '            <div v-for="(q,i) in asstQueue" :key="\'q\'+i" class="asst-user"><div class="asst-bubble-user asst-queued">排队中：{{ q }}</div></div>',
     "          </div>",
     '          <p v-if="asstError" class="regex-error" role="alert">{{ asstError }} <a href="#/settings">前往模型设置</a></p>',
-    '          <form class="asst-composer" @submit.prevent="sendAsstMessage">',
-    '            <textarea v-model="asstInput" rows="2" :disabled="asstBusy" placeholder="输入运维问题，Enter 发送" @keydown.enter.exact.prevent="askKeydown"></textarea>',
-    '            <button class="copy-button" type="submit" :disabled="asstBusy || !asstInput.trim()">{{ asstBusy ? "回答中…" : "发送" }}</button>',
+    '          <form class="asst-composer" @submit.prevent="trySendAsst">',
+    '            <textarea v-model="asstInput" rows="2" :placeholder="asstBusy ? \'回答中…可继续输入，回车加入队列\' : \'输入运维问题，Enter 发送\'" @keydown.enter.exact.prevent="askKeydown"></textarea>',
+    '            <button class="copy-button" type="submit" :disabled="!asstInput.trim()">{{ asstBusy ? "排队" : "发送" }}</button>',
     '            <button v-if="asstBusy" class="copy-button" type="button" @click="asstAbort.abort()">停止</button>',
     "          </form>",
     "        </section>",

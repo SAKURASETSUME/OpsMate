@@ -86,8 +86,12 @@ class LLMClient:
         return {"ok": False, "error": "模型服务未返回结果"}
 
     async def chat_stream(self, messages: list[dict[str, str]], temperature: float = 0.3,
-                          timeout: float = 300) -> AsyncIterator[str]:
-        """逐段返回文本，失败抛出可脱敏的 LLMError（供 SSE 层捕获）。"""
+                          timeout: float = 300, on_reasoning=None) -> AsyncIterator[str]:
+        """逐段返回文本，失败抛出可脱敏的 LLMError（供 SSE 层捕获）。
+
+        on_reasoning：可选同步回调；思考型模型（如 GLM-5.3）的 reasoning_content
+        分片经它实时转交，不混入正文。
+        """
         body = {"model": self.model, "messages": messages, "temperature": temperature, "stream": True}
         self._adapt_request(body)
         try:
@@ -111,9 +115,13 @@ class LLMClient:
                                 payload = json.loads(value)
                                 choices = payload.get("choices", [])
                                 if choices:
-                                    delta = choices[0].get("delta", {}).get("content")
-                                    if isinstance(delta, str) and delta:
-                                        yield delta
+                                    delta = choices[0].get("delta", {})
+                                    reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                                    if isinstance(reasoning, str) and reasoning and on_reasoning:
+                                        on_reasoning(reasoning)
+                                    content = delta.get("content")
+                                    if isinstance(content, str) and content:
+                                        yield content
                             return
                     await asyncio.sleep(2)
         except httpx.TimeoutException as exc:
@@ -122,3 +130,36 @@ class LLMClient:
             raise LLMError("连接模型服务失败；请检查网络/密钥/模型名") from None
         except (ValueError, KeyError, IndexError, TypeError):
             raise LLMError("流式响应格式无效；请检查兼容协议") from None
+
+
+async def stream_with_reasoning(client: LLMClient, messages: list[dict[str, str]], *,
+                                temperature: float, timeout: float) -> AsyncIterator[tuple[str, str]]:
+    """把 chat_stream 的正文与思考分片统一为 ("delta"|"thinking", text) 事件流。
+
+    思考分片经任务泵与正文交错产出，保证长思考阶段 UI 仍有实时输出；消费者
+    提前退出时泵任务在 finally 中取消。错误以原异常抛出（LLMError 等）。
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def pump() -> None:
+        try:
+            async for chunk in client.chat_stream(messages, temperature=temperature, timeout=timeout,
+                                                  on_reasoning=lambda piece: queue.put_nowait(("thinking", piece))):
+                queue.put_nowait(("delta", chunk))
+        except BaseException as exc:  # 转交消费者后由其决定错误事件形态
+            queue.put_nowait(("error", exc))
+        else:
+            queue.put_nowait(("done", None))
+
+    task = asyncio.create_task(pump())
+    try:
+        while True:
+            kind, payload = await queue.get()
+            if kind == "done":
+                return
+            if kind == "error":
+                raise payload
+            yield kind, payload
+    finally:
+        if not task.done():
+            task.cancel()
