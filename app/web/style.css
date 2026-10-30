@@ -464,13 +464,19 @@ a.copy-button, label.copy-button { text-decoration: none; }
 /* ============ Phase 5/6：日志中心 ============ */
 
 .log-drop {
-  padding: 26px; margin: 18px 0;
+  padding: 24px; margin: 0 0 4px;
   border: 2px dashed var(--border-strong); border-radius: var(--r-panel);
   text-align: center; color: var(--text-dim);
-  transition: border-color 0.12s, color 0.12s;
+  transition: border-color 0.12s;
 }
-.log-drop:hover, .log-drop.dragover { border-color: var(--primary); color: var(--text); }
-.log-drop input[type=file] { display: block; margin: 12px auto 0; max-width: 100%; color: var(--text-dim); }
+.log-drop:hover, .log-drop.dragover { border-color: var(--primary); }
+.log-drop-hint {
+  display: block; margin: 0 auto 14px; max-width: 460px;
+  padding: 9px 18px; background: var(--raised); border-radius: var(--r-card);
+  font-size: 13px; color: var(--text-dim);
+}
+.log-upload-actions { display: flex; justify-content: center; gap: 12px; }
+.log-upload-actions input[type=file] { display: none; }
 
 .danger-button, .regex-error { color: var(--err); }
 .delete-confirm { margin-top: 12px; padding: 12px 14px; border: 1px solid rgba(255, 107, 107, 0.5); border-radius: var(--r-card); background: rgba(255, 107, 107, 0.05); }
