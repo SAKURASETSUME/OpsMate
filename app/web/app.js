@@ -210,7 +210,8 @@ const App = {
       analysisFocus: "", analysisAbort: null, logReports: [], selectedReportId: "", analysisSaved: false,
       asstSessions: [], asstMessages: [], asstSessionId: null, asstInput: "",
       asstBusy: false, asstAbort: null, asstError: "", pendingDeleteAsstId: null, asstKeySeq: 0,
-      paneWidths: { commands: 320, wb: 300, asst: 260, codegen: 0.5 },
+      paneWidths: { commands: 320, wb: 300, asst: 260, codegen: 0.5, side: 200 },
+      themePref: "auto",
     };
   },
   computed: {
@@ -749,7 +750,13 @@ const App = {
       } catch (err) { /* 统一提示 */ }
       finally { this.wbBusy = false; }
     },
-    /* ============ 可拖拽分割条 ============ */
+    /* ============ 主题与可拖拽分割条 ============ */
+    applyTheme() {
+      try { localStorage.setItem("opsmate-theme", this.themePref); } catch (err) { /* 忽略持久化失败 */ }
+      const preferDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme =
+        this.themePref === "auto" ? (preferDark ? "dark" : "light") : this.themePref;
+    },
     gridPaneStyle(key) {
       if (key === "codegen") {
         const left = Math.min(0.75, Math.max(0.25, this.paneWidths.codegen));
@@ -760,7 +767,7 @@ const App = {
     startPaneDrag(event, key) {
       if (event.button !== 0) return;
       event.preventDefault();
-      const limits = { commands: [180, 640], wb: [200, 720], asst: [200, 520] }[key];
+      const limits = { commands: [180, 640], wb: [200, 720], asst: [200, 520], side: [160, 320] }[key];
       const startX = event.clientX;
       const startWidth = this.paneWidths[key];
       const totalPx = Math.max(event.currentTarget.parentElement.clientWidth - 6, 1);
@@ -969,6 +976,13 @@ const App = {
     },
   },
   created() {
+    try { this.themePref = localStorage.getItem("opsmate-theme") || "auto"; } catch (err) { /* 默认跟随系统 */ }
+    this.applyTheme();
+    if (window.matchMedia) {
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+        if (this.themePref === "auto") this.applyTheme();
+      });
+    }
     try {
       const saved = JSON.parse(localStorage.getItem("opsmate-pane-widths") || "{}");
       Object.assign(this.paneWidths, saved);
@@ -996,7 +1010,7 @@ const App = {
   },
   template: [
     '<div class="layout">',
-    '  <aside class="sidebar">',
+    '  <aside class="sidebar" :style="{ width: paneWidths.side + \'px\' }">',
     '    <div class="logo">OpsMate</div>',
     '    <p class="logo-sub">运维提效智能体</p>',
     '    <nav>',
@@ -1005,6 +1019,7 @@ const App = {
     "    </nav>",
     '    <div class="side-status"><span class="status-dot"></span><span>{{ backendHost }}</span></div>',
     "  </aside>",
+    '  <div class="pane-splitter pane-splitter-side" title="拖拽调整宽度" @mousedown="startPaneDrag($event, \'side\')"></div>',
     '  <main class="content">',
     '    <section v-if="page === \'commands\'" class="commands-page">',
     '      <header class="page-header">',
@@ -1303,8 +1318,11 @@ const App = {
     "      </div>",
     "    </section>",
     '    <section v-else-if="page === \'settings\'" class="settings-page">',
-    '      <h1>模型设置</h1>',
-    '      <p class="placeholder dim">配置 OpenAI 兼容模型服务，保存后再测试连通。</p>',
+    "      <h1>设置</h1>",
+    '      <p class="placeholder dim">主题与外观在本机保存；下方配置 OpenAI 兼容模型服务，保存后再测试连通。</p>',
+    '      <div class="settings-form"><label>界面主题<select v-model="themePref" @change="applyTheme">',
+    '        <option value="auto">跟随系统</option><option value="dark">暗色</option><option value="light">亮色</option></select></label></div>',
+    '      <h2>模型设置</h2>',
     '      <div class="settings-form"><label>本机配置<select v-model="selectedProfileId" @change="selectModelProfile" :disabled="settingsBusy || settingsTesting">',
     '        <option v-if="!selectedProfileId" value="">新配置（尚未保存）</option>',
     '        <option v-for="p in modelProfiles" :key="p.id" :value="p.id">{{ p.name }}{{ p.id === activeProfileId ? "（已启用）" : "" }}</option>',
