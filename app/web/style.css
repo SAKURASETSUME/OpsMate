@@ -317,6 +317,17 @@ a.copy-button, label.copy-button { text-decoration: none; }
   color: var(--text-dim);
 }
 
+/* markdown 表格（助手回答/分析报告/命令文档通用，亮暗主题经变量适配） */
+.markdown-body table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+.markdown-body th, .markdown-body td {
+  border: 1px solid var(--border);
+  padding: 7px 12px; text-align: left; vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.markdown-body thead th { background: var(--raised); font-weight: 600; }
+.markdown-body tbody tr:nth-child(even) { background: var(--inset); }
+.markdown-body tbody tr:hover { background: var(--raised); }
+
 /* ============ Phase 2/7：配置速查与工坊 ============ */
 
 .kb-page { display: flex; flex-direction: column; min-height: 520px; }
