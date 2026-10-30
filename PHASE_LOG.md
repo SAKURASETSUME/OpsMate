@@ -960,3 +960,44 @@
 ### Phase 状态
 
 **需求变更完成，随 `feat(assistant): 助手支持通用问题按模型默认行为回答` 提交。Phase 9 仍待用户确认后开工。**
+
+## 2026-10-30 · 需求变更四项：脚本工坊流式 / 日志按钮 / 可拖拽分割条 / 推荐模板（用户提出）
+
+用户测试桌面程序后提出四项：脚本工坊智能体化、日志中心按钮位置修正、UI 可拖拽调宽、知识库推荐配置模板。
+
+### 1. 脚本工坊智能体化（SSE 流式）
+
+- `/api/codegen/generate` 从阻塞 JSON 改为 SSE：过程事件（工具轨迹 {"tool","args","result"} 与阶段 {"phase":"final"/"retry"/"direct"}）实时推送 → {"result": payload} → {"done":true}；错误转 error 事件；120 秒预算、双轮校验重试、成稿才落库的语义全部保留。
+- 引擎 `run_agent` 增加可选 `on_event` 回调（预检 search_history、工具步、final/retry/direct 阶段）；不传时行为不变。前端生成中实时渲染轨迹卡 + 阶段文案（检索中/生成最终脚本/重试/直接生成），可停止。
+- 自查修复一个事件键撞名 bug：工具事件的 result 字段与最终结果事件的 result 键冲突，前端与验收脚本均加 `!event.tool` 守卫。
+- verify_codegen 改为 SSE 断言（含"预检+模型检索两事件实时推送、phase=final、result.steps、done"顺序）；回归全绿。
+
+决策：generate 端点原地改 SSE 而非新增端点。（理由：同一路径避免双契约并存；施工文档 §6 已同步改写，Phase 4 验收标准逐字未动且全部仍成立——真实复验生成 nginx 备份脚本成稿，实时轨迹 9 步可见、8 段解读、6 条 warnings、历史入库。）
+
+### 2. 日志中心按钮位置修正
+
+- 详情页工具栏操作行原为 space-between 两端分离（按钮组最左、历史报告最右、中间大片空白）→ 合并为单一流式行：过滤控件自然排列、操作按钮组 margin-left:auto 收于右端，自然换行。
+- 列表页日志卡片操作按钮（查看/分析、删除）改右对齐。
+
+### 3. 可拖拽分割条（UI 不再锁死宽度）
+
+- 四个双栏视图（命令列表|详情、我的配置列表|编辑器、助手会话|对话、脚本|解读）全部加 6px 分割条：hover/拖拽时高亮主色，拖拽实时改列宽并写入 localStorage（`opsmate-pane-widths`），刷新恢复；宽度上下限防拖没（如命令列 180–640）。
+- 脚本|解读两栏按比例拖（0.25–0.75）；窄窗（<900px）自动回退单列并隐藏分割条（!important 覆盖内联样式）。
+
+决策：分割条用原生 mousemove 实现，不引入任何依赖。（理由：Never 规则禁组件库；桌面 WebView2 鼠标场景足够。）
+
+### 4. 知识库推荐配置模板
+
+- kb YAML schema 扩展：顶层可选 `templates: [{name, desc, content}]`（六软件齐备：nginx 反代模板、zabbix server+agent2 双模板、keepalived 主备、kafka KRaft、redis 生产、docker daemon.json）；地址/口令均为文档保留地址或占位符，不硬编码真实凭据。四新软件入生成器 TEMPLATES 常量，nginx/zabbix 用一次性脚本追加（safe_dump 重排但内容不变）。
+- UI：软件详情第三个 Tab「推荐模板」（cli/conf 两 Tab 原样保留，隔离不受影响）；条目展开显示完整模板 + 一键复制（Clipboard API + execCommand 降级，同指令速查复制实现）。
+- 决策：模板作为第三 Tab 而非混入 conf Tab。（理由：用户核心诉求是 cli 与 conf 不合并；模板是整文件级别内容，与逐参数条目性质不同。）
+
+### 验收
+
+- 全量回归：verify_codegen（SSE 新断言）/ verify_assistant / verify_workbench / verify_logs / verify_analysis 全 PASS；compileall、node --check 通过。
+- 浏览器实测：日志工具栏聚拢、列表按钮右对齐；Redis 模板展开/复制、requirepass+maxmemory 完整；命令列分割条拖拽 320→440 且 localStorage 持久化；codegen 真实生成实时轨迹逐张出现、成稿注释头完整、8 段解读、历史入库。
+- 施工文档同步：§6 codegen/generate 改 SSE 契约、§4.3 增 templates 扩展、§7 kb 三 Tab 与 codegen 实时轨迹描述。
+
+### Phase 状态
+
+**四项需求变更完成，分四个提交（fix(web)/feat(web)/feat(kb)/feat(codegen)）。Phase 9 仍待用户确认后开工。**

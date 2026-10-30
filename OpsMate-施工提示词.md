@@ -227,6 +227,8 @@ categories:
 
 条目字段约束：`name` 唯一；`danger ∈ {false, low, medium, high}`；conf 条目必须有 `section`；`example` 必填（cli 类）；`notes` 可选。**同一软件内 cli 与 conf 是两个 category，UI 永远分 Tab 展示——这是用户明确的核心诉求。** zabbix 的 `section` 取值口径：zabbix-server.conf 分组内的 conf 条目统一为 `server`；zabbix_agent2.conf 分组内的统一为 `agent`。
 
+模板扩展（2026-10-30 用户需求）：每个软件 YAML 可带顶层 `templates: [{name, desc, content}]`——可直接复制使用的推荐配置模板（地址/口令均为占位符，需替换后使用）；UI 在软件详情内以第三 Tab「推荐模板」展示（cli 与 conf 两个 Tab 的隔离不受影响），支持一键复制。
+
 首批收录范围（数据由你按官方文档知识生成，条目清单见 §11）：nginx（cli ≥ 12 条、conf ≥ 55 条）、zabbix（cli ≥ 10 条、conf 拆两文件：`zabbix.yaml` 内 server 与 agent2 各为 category，conf 合计 ≥ 55 条）。
 
 ### 4.4 SQLite DDL（app/logs/store.py 启动时建表）
@@ -355,7 +357,7 @@ CREATE TABLE IF NOT EXISTS user_configs (
 | GET | `/api/settings` | - | `{"provider","base_url","model","api_key_set"}` |
 | PUT | `/api/settings` | body 同上 + `api_key`(可空，空=不改) | `{"ok": true}` |
 | POST | `/api/llm/test` | - | `{"ok","latency_ms","model","error"?}` |
-| POST | `/api/codegen/generate` | `{"requirement", "distro"?, "notes"?}` | 二选一：`{"need_clarification":true,"questions":[...]}` 或 `{"need_clarification":false,"script","explanation":[{lines,title,detail}],"warnings":[],"usage","steps":[{tool,args,result_summary}]}`（steps=智能体工具轨迹，单轮降级时为空数组）；同时写 codegen_history 与 FTS |
+| POST | `/api/codegen/generate` | `{"requirement", "distro"?, "notes"?}` | **SSE 流**（2026-10-30 智能体化改版）：过程事件 `data: {"tool","args","result"}`（实时工具轨迹）与阶段 `data: {"phase":"final"/"retry"/"direct"}` → `data: {"result": 二选一 payload}`（`{"need_clarification":true,"questions":[...]}` 或 `{"need_clarification":false,"script","explanation":[{lines,title,detail}],"warnings":[],"usage","steps":[{tool,args,result_summary}]}`，单轮降级时 steps 为空数组）→ `data: {"done":true}`；错误 `data: {"error":"..."}`；成功成稿才写 codegen_history 与 FTS |
 | GET | `/api/codegen/history` | `limit=50` | `{"items":[{id,requirement,created_at,model}]}` |
 | GET | `/api/codegen/history/{id}` | - | 完整记录 |
 | POST | `/api/logs` | multipart `file` **或** json `{"title","content"}` | `{"id","title","line_count","size_bytes","format_guess","level_stats":{"ERROR":n,...}}` |
@@ -390,8 +392,8 @@ CREATE TABLE IF NOT EXISTS user_configs (
 **hash 路由与视图**：
 
 - `#/commands`：顶部搜索框（防抖 300ms）→ 左列结果列表（name 加粗 + title 灰字）→ 点击右栏 marked 渲染 md；右上"复制 md"按钮；空关键词显示全部字母序。
-- `#/kb`：顶部视图 Tab **【知识库 | 我的配置】**。知识库视图：软件卡片（6 软件）→ 进入后 **Tab：`启停与运行命令` | `配置参数`**（用户核心诉求，永不合并）；列表项显示 name/syntax/desc/danger 标记（medium+ 红字 ⚠）；点击展开详情（example/notes）；顶部跨软件搜索框。我的配置视图（Phase 7）：左侧配置列表（名称/格式/shared 徽标/更新时间）+ 右侧编辑器（格式下拉 yaml/nginx/keepalived/properties/json/text + 内容 textarea + 上传按钮）；"校验"按钮 → 错误/警告按行号列示（可点击跳行）；"正则测试"折叠面板（输入正则+示例文本 → 实时高亮匹配与分组表）；"共享给智能体"开关（旁有醒目提示文案）；保存/删除。
-- `#/codegen`：表单（需求 textarea 必填、发行版下拉 [不指定/CentOS/Ubuntu/Debian/其他]、补充说明 textarea）→ 生成按钮（loading 态，可 60–120s，按钮显示"生成中…"并禁用）→ **智能体轨迹卡片**（可折叠：每步"工具名 + 参数 + 结果摘要"，默认展开，可整体收起；单轮降级时显示"直接生成"提示）→ 结果区左右布局：左=脚本（`<pre>` 等宽显示 + 复制 + 下载 .sh 按钮），右=逐段解读卡片（lines 徽标 + title + detail）+ warnings 红块 + usage 灰块；底部历史记录列表（点击回看）。若返回 `need_clarification`：把 questions 以对话形式展示，用户回答后自动拼进 requirement 重新生成。
+- `#/kb`：顶部视图 Tab **【知识库 | 我的配置】**。知识库视图：软件卡片（6 软件）→ 进入后 **Tab：`启停与运行命令` | `配置参数` | `推荐模板`（有模板时）**（用户核心诉求，命令与配置永不合并）；模板 Tab 提供可复制直接使用的推荐配置；列表项显示 name/syntax/desc/danger 标记（medium+ 红字 ⚠）；点击展开详情（example/notes）；顶部跨软件搜索框。我的配置视图（Phase 7）：左侧配置列表（名称/格式/shared 徽标/更新时间）+ 右侧编辑器（格式下拉 yaml/nginx/keepalived/properties/json/text + 内容 textarea + 上传按钮）；"校验"按钮 → 错误/警告按行号列示（可点击跳行）；"正则测试"折叠面板（输入正则+示例文本 → 实时高亮匹配与分组表）；"共享给智能体"开关（旁有醒目提示文案）；保存/删除。
+- `#/codegen`：表单（需求 textarea 必填、发行版下拉 [不指定/CentOS/Ubuntu/Debian/其他]、补充说明 textarea）→ 生成按钮（loading 态，可 60–120s，按钮显示"生成中…"并禁用，可停止）→ **智能体轨迹卡片**（SSE 实时推送：每步"工具名 + 参数 + 结果摘要"生成中即逐张出现，阶段文案提示检索/成稿/重试/直接生成；完成后可折叠回看，单轮降级时显示"直接生成"提示）→ 结果区左右布局：左=脚本（`<pre>` 等宽显示 + 复制 + 下载 .sh 按钮），右=逐段解读卡片（lines 徽标 + title + detail）+ warnings 红块 + usage 灰块；底部历史记录列表（点击回看）。若返回 `need_clarification`：把 questions 以对话形式展示，用户回答后自动拼进 requirement 重新生成。
 - `#/logs`：上部"新建"区（拖拽/点击上传 + 或粘贴文本框，粘贴时 title 必填）→ 下部日志列表（title/行数/大小/格式/level 统计小徽章/时间），行内"分析"和"删除"按钮。
 - `#/logs/:id`：顶部元信息条（标题、行数、格式、level 徽章）；工具栏（level 多选过滤、关键词、正则开关 + **正则测试**小按钮——弹出与配置工坊同款正则预览组件（Phase 5 先落地该组件）、排序、导出按钮、**AI 分析**按钮、历史报告下拉）；主体行列表（行号灰、level 着色：ERROR 红/WARN 橙/INFO 蓝/DEBUG 灰/未知默认色，长行截断+hover 展开）；分页"加载更多"（每次 +500）；点击 AI 分析 → 右侧抽屉先流式显示诊断下钻步骤（工具调用小卡片：工具名+参数+结果摘要），再流式渲染 markdown 报告，完成后提示"已存历史"。
 - `#/assistant`：左侧会话列表（标题+更新时间，可删除）+ 右侧消息流；用户消息右对齐气泡、助手消息左侧 markdown 渲染（marked）；智能体工具调用渲染为灰色小卡片（工具名+参数+结果摘要，SSE 过程事件实时插入）；输入框 + 发送按钮（SSE 流式追加回复）；回答中的来源引用（命中的命令名/配置参数名）渲染为可点击链接，跳转到 `#/commands` 或 `#/kb` 对应详情。
