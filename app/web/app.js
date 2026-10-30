@@ -103,6 +103,11 @@ const App = {
       kbSearchItems: null,
       kbSearchLoading: false,
       kbSearchTimer: null,
+      settings: { provider: "zhipu", base_url: "", model: "", api_key: "", api_key_set: false },
+      settingsLoaded: false,
+      settingsBusy: false,
+      settingsTesting: false,
+      settingsTestResult: "",
     };
   },
   computed: {
@@ -136,9 +141,53 @@ const App = {
       if (nextPage === "kb" && this.kbSoftwares.length === 0) {
         this.loadKbList();
       }
+      if (nextPage === "settings" && !this.settingsLoaded) this.loadSettings();
     },
   },
   methods: {
+    async loadSettings() {
+      this.settingsBusy = true;
+      try {
+        this.settings = { ...(await apiFetch("/api/settings")), api_key: "" };
+        this.settingsLoaded = true;
+      } catch (err) { /* apiFetch 已展示错误 */ }
+      finally { this.settingsBusy = false; }
+    },
+    applyProviderPreset() {
+      const presets = {
+        zhipu: ["https://open.bigmodel.cn/api/paas/v4", "glm-4-flash"],
+        siliconflow: ["https://api.siliconflow.cn/v1", "Qwen/Qwen3-8B"],
+        deepseek: ["https://api.deepseek.com/v1", "deepseek-chat"],
+        custom: ["", ""],
+      };
+      [this.settings.base_url, this.settings.model] = presets[this.settings.provider];
+      this.settingsTestResult = "";
+    },
+    async saveSettings() {
+      this.settingsBusy = true;
+      try {
+        const { provider, base_url, model, api_key } = this.settings;
+        await apiFetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider, base_url, model, api_key }) });
+        this.settings.api_key = "";
+        await this.loadSettings();
+        this.settingsTestResult = "";
+        showToast("设置已保存");
+      } catch (err) { /* apiFetch 已展示错误 */ }
+      finally { this.settingsBusy = false; }
+    },
+    async testSettings() {
+      this.settingsTesting = true;
+      this.settingsTestResult = "";
+      try {
+        const data = await apiFetch("/api/llm/test", { method: "POST" }, 60000);
+        this.settingsTestResult = data.ok
+          ? "连接成功：" + data.model + " · " + data.latency_ms + " ms"
+          : data.error;
+        showToast(this.settingsTestResult, data.ok ? "ok" : "err");
+      } catch (err) { /* apiFetch 已展示错误 */ }
+      finally { this.settingsTesting = false; }
+    },
     queueKbSearch() {
       clearTimeout(this.kbSearchTimer);
       this.kbSearchTimer = setTimeout(() => this.runKbSearch(), 300);
@@ -269,6 +318,7 @@ const App = {
     },
   },
   created() {
+    if (this.page === "settings") this.loadSettings();
     window.addEventListener("hashchange", () => {
       this.page = parseRoute();
     });
@@ -382,6 +432,25 @@ const App = {
     "        </div>",
     "      </div>",
     "    </section>",
+    '    <section v-else-if="page === \'settings\'" class="settings-page">',
+    '      <h1>模型设置</h1>',
+    '      <p class="placeholder dim">配置 OpenAI 兼容模型服务，保存后再测试连通。</p>',
+    '      <form class="settings-form" @submit.prevent="saveSettings">',
+    '        <label>服务预设<select v-model="settings.provider" @change="applyProviderPreset" :disabled="settingsBusy || settingsTesting">',
+    '          <option value="zhipu">智谱 BigModel（默认）</option><option value="siliconflow">硅基流动</option>',
+    '          <option value="deepseek">DeepSeek</option><option value="custom">自定义（OpenAI 兼容）</option>',
+    '        </select></label>',
+    '        <label>base_url<input v-model="settings.base_url" required type="url" :disabled="settingsBusy || settingsTesting"></label>',
+    '        <label>模型名称<input v-model="settings.model" required :disabled="settingsBusy || settingsTesting"></label>',
+    '        <label>API key<input v-model="settings.api_key" type="password" autocomplete="off"',
+    '          :placeholder="settings.api_key_set ? \'••••已保存，留空不修改\' : \'请输入 API key\'" :disabled="settingsBusy || settingsTesting"></label>',
+    '        <div class="settings-actions"><button class="copy-button" type="submit" :disabled="settingsBusy || settingsTesting">{{ settingsBusy ? "保存中…" : "保存设置" }}</button>',
+    '          <button class="copy-button" type="button" @click="testSettings" :disabled="settingsBusy || settingsTesting || !settingsLoaded">{{ settingsTesting ? "测试中…" : "测试已保存的配置" }}</button></div>',
+    '      </form>',
+    '      <p v-if="settingsTestResult" role="status">{{ settingsTestResult }}</p>',
+    '      <p class="placeholder dim">密钥仅存本机 data/config.json，不会通过设置接口回传。</p>',
+    '      <p class="placeholder dim">推荐预设：智谱 GLM-4-Flash。可在 <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer">智谱平台</a> 注册并获取 API key；模型供应与计费以平台为准。</p>',
+    '    </section>',
     '    <section v-else class="placeholder-page">',
     '      <h1 class="ready-title">OpsMate 已就绪</h1>',
     '      <p class="placeholder">当前模块：{{ activeLabel }}</p>',
