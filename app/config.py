@@ -25,6 +25,8 @@ WEB_DIR = APP_DIR / "web"
 COMMANDS_DIR = DATA_DIR / "commands"
 KB_DIR = DATA_DIR / "kb"
 LOGS_DIR = DATA_DIR / "logs"
+ASSISTANT_FILES_DIR = DATA_DIR / "assistant_files"   # 会话附件原始文件
+AGENT_FILES_DIR = DATA_DIR / "agent_files"           # 智能体经确认生成/修改的文件
 DB_PATH = DATA_DIR / "opsmate.db"
 CONFIG_JSON = DATA_DIR / "config.json"
 PROFILES_JSON = DATA_DIR / "model_profiles.json"
@@ -32,7 +34,8 @@ PROFILES_JSON = DATA_DIR / "model_profiles.json"
 
 def ensure_dirs() -> None:
     """确保运行期可写目录存在（frozen 首启动在 exe 旁创建 data/）。"""
-    for directory in (DATA_DIR, COMMANDS_DIR, KB_DIR, LOGS_DIR):
+    for directory in (DATA_DIR, COMMANDS_DIR, KB_DIR, LOGS_DIR,
+                      ASSISTANT_FILES_DIR, AGENT_FILES_DIR):
         Path(directory).mkdir(parents=True, exist_ok=True)
 
 

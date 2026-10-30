@@ -634,6 +634,40 @@ a.copy-button, label.copy-button { text-decoration: none; }
 }
 .asst-queued { opacity: 0.65; border-style: dashed; }
 
+/* 附件与文件提案（2026-10-30 智能体扩展） */
+.asst-chat { position: relative; }
+.asst-drop-overlay {
+  position: absolute; inset: 10px; z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px dashed var(--primary); border-radius: var(--r-panel);
+  background: var(--primary-soft); color: var(--primary-bright); font-size: 15px;
+  pointer-events: none;
+}
+.asst-attach-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.asst-draft-row { margin-bottom: 8px; }
+.asst-attach-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 280px;
+  padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: var(--r-chip);
+  background: var(--card); font-size: 12px; color: var(--text-dim);
+}
+.asst-attach-thumb { width: 32px; height: 32px; flex: none; object-fit: cover; border-radius: 4px; }
+.asst-attach-icon { opacity: 0.7; }
+.asst-attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asst-attach-remove { border: 0; background: none; color: var(--text-faint); cursor: pointer; font-size: 15px; padding: 0 2px; line-height: 1; }
+.asst-attach-remove:hover { color: var(--err); }
+.asst-attach-btn { padding: 0 12px; }
+.asst-attach-btn input[type=file] { display: none; }
+.file-proposal {
+  border: 1px solid var(--border-strong); border-left: 3px solid var(--warn);
+  border-radius: var(--r-card); padding: 10px 14px; background: var(--card);
+}
+.file-proposal-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.file-proposal-head strong { font-family: var(--mono); font-size: 13px; color: var(--text); }
+.file-proposal .kb-entry-desc { margin: 6px 0 0; font-size: 12.5px; }
+.file-proposal details { margin-top: 8px; }
+.file-proposal summary { cursor: pointer; font-size: 12px; color: var(--text-dim); user-select: none; }
+.file-proposal .settings-actions { margin-top: 10px; }
+
 /* 智能体正文一律可选中复制（拖拽锁全局选择时的例外保障） */
 .markdown-body, .script-source, .asst-bubble-user, .asst-bubble-bot,
 .trace-card, .kb-tpl-content, .log-line-text { user-select: text; }

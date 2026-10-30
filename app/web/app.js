@@ -157,8 +157,44 @@ const RegexPreview = {
   </section>`,
 };
 
+/** 文件提案卡：write_file 提案展示与确认/取消（助手消息内复用）。 */
+const FileProposalCard = {
+  props: { proposal: { type: Object, required: true } },
+  emits: ["apply", "cancel"],
+  computed: {
+    status() {
+      if (this.proposal.status) return this.proposal.status;
+      const result = String(this.proposal.result || "");
+      if (result.includes("已写入")) return "written";
+      if (result.includes("已取消")) return "cancelled";
+      return "pending";
+    },
+    outcome() {
+      if (this.proposal.outcome) return this.proposal.outcome;
+      return this.status === "written" ? "agent_files/" + this.proposal.filename : "";
+    },
+  },
+  template: [
+    '<div class="file-proposal">',
+    '  <div class="file-proposal-head">',
+    '    <span class="asst-tool-name">write_file</span>',
+    "    <strong>{{ proposal.filename }}</strong>",
+    '    <span v-if="status === \'pending\'" class="kb-danger">待确认</span>',
+    '    <span v-else-if="status === \'written\'" class="wb-ok">已写入 {{ outcome }}</span>',
+    '    <span v-else class="placeholder dim">已取消</span>',
+    "  </div>",
+    '  <p v-if="proposal.note" class="kb-entry-desc">{{ proposal.note }}</p>',
+    '  <details><summary>查看完整内容（写入 data/agent_files/，确认后生效）</summary><pre class="kb-tpl-content">{{ proposal.content }}</pre></details>',
+    '  <div v-if="status === \'pending\'" class="settings-actions">',
+    '    <button class="copy-button" type="button" @click="$emit(\'apply\')">确认写入</button>',
+    '    <button class="copy-button danger-button" type="button" @click="$emit(\'cancel\')">取消</button>',
+    "  </div>",
+    "</div>",
+  ].join("\n"),
+};
+
 const App = {
-  components: { RegexPreview },
+  components: { RegexPreview, FileProposalCard },
   data() {
     return {
       page: parseRoute(),
@@ -212,6 +248,7 @@ const App = {
       analysisFocus: "", analysisAbort: null, logReports: [], selectedReportId: "", analysisSaved: false,
       asstSessions: [], asstMessages: [], asstSessionId: null, asstInput: "", asstQueue: [],
       asstBusy: false, asstAbort: null, asstError: "", pendingDeleteAsstId: null, asstKeySeq: 0,
+      asstDraftFiles: [], asstDragOver: false,
       analysisThinking: "",
       paneWidths: { commands: 320, wb: 300, asst: 260, codegen: 0.5, side: 200 },
       themePref: "auto",
@@ -811,6 +848,11 @@ const App = {
       this.asstSessionId = null; this.asstMessages = []; this.asstError = ""; this.pendingDeleteAsstId = null;
     },
     parseAsstRow(row) {
+      if (row.role === "user") {
+        return { key: "u" + row.id, role: "user", content: row.content,
+          attachments: (row.attachments || []).map((a) => Object.assign({}, a, {
+            url: a.kind === "image" ? "/api/assistant/files/" + a.id + "/content" : "" })) };
+      }
       if (row.role !== "tool") {
         return { key: row.role[0] + row.id, role: row.role, content: row.content, tools: [] };
       }
@@ -844,29 +886,69 @@ const App = {
       if (event.isComposing) return; // 中文输入法选词回车不发送
       this.trySendAsst();
     },
+    async addAsstFiles(fileList) {
+      const files = Array.from(fileList || []);
+      for (const file of files) {
+        if (this.asstDraftFiles.length >= 5) { showToast("单轮最多 5 个附件", "err"); break; }
+        if (file.size > 5 * 1024 * 1024) { showToast(file.name + " 超过 5MB 上限", "err"); continue; }
+        const form = new FormData(); form.append("file", file);
+        try {
+          const meta = await apiFetch("/api/assistant/files", { method: "POST", body: form }, 60000);
+          this.asstDraftFiles.push(Object.assign({}, meta, {
+            url: meta.kind === "image" ? "/api/assistant/files/" + meta.id + "/content" : "" }));
+          showToast("已添加附件：" + meta.name);
+        } catch (err) { /* apiFetch 统一提示 */ }
+      }
+    },
+    dropAsstFiles(event) {
+      this.asstDragOver = false;
+      this.addAsstFiles(event.dataTransfer && event.dataTransfer.files);
+    },
+    pasteAsstFiles(event) {
+      const files = event.clipboardData && event.clipboardData.files;
+      if (files && files.length) { event.preventDefault(); this.addAsstFiles(files); }
+    },
+    chooseAsstFile(event) { this.addAsstFiles(event.target.files); event.target.value = ""; },
+    removeAsstDraft(index) { this.asstDraftFiles.splice(index, 1); },
+    async resolveAsstProposal(proposal, accept) {
+      if (!this.asstSessionId || this.asstBusy) return;
+      try {
+        const data = await apiFetch("/api/assistant/files/" + (accept ? "apply" : "cancel"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: this.asstSessionId, filename: proposal.filename }),
+        });
+        showToast(data.outcome);
+        await this.openAsstSession({ id: this.asstSessionId });
+      } catch (err) { /* apiFetch 统一提示 */ }
+    },
     trySendAsst() {
       const text = this.asstInput.trim();
-      if (!text) return;
+      const drafts = this.asstDraftFiles.slice();
+      if (!text && !drafts.length) return;
       this.asstInput = "";
+      this.asstDraftFiles = [];
+      const message = text || "（见附件）";
       if (this.asstBusy) {
-        this.asstQueue.push(text);
+        this.asstQueue.push({ message: message, attachments: drafts });
         showToast("已加入队列，当前回答完成后自动发送");
         return;
       }
-      this.dispatchAsst(text);
+      this.dispatchAsst(message, drafts);
     },
-    async dispatchAsst(message) {
+    async dispatchAsst(message, drafts = []) {
       if (this.asstBusy) return;
       this.asstError = "";
-      this.asstMessages.push({ key: "u" + (++this.asstKeySeq), role: "user", content: message, tools: [] });
-      const live = { key: "a" + (++this.asstKeySeq), role: "assistant", content: "", thinking: "", tools: [] };
+      this.asstMessages.push({ key: "u" + (++this.asstKeySeq), role: "user", content: message,
+        attachments: drafts.map((d) => ({ name: d.name, kind: d.kind, url: d.url })) });
+      const live = { key: "a" + (++this.asstKeySeq), role: "assistant", content: "", thinking: "", tools: [], proposals: [] };
       this.asstMessages.push(live);
       const controller = new AbortController(); this.asstAbort = controller;
       this.asstBusy = true;
       try {
         await apiFetch("/api/assistant/chat", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, session_id: this.asstSessionId }),
+          body: JSON.stringify({ message: message, session_id: this.asstSessionId,
+            attachments: drafts.map((d) => d.id) }),
           signal: controller.signal,
         }, 305000, async (response) => {
           const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8"); let buffer = ""; let completed = false;
@@ -875,6 +957,8 @@ const App = {
             const event = JSON.parse(line.slice(5).trim());
             if (event.error) throw new Error(event.error);
             if (event.tool) live.tools.push({ tool: event.tool, args: event.args, result: event.result });
+            if (event.proposal) live.proposals.push({ filename: event.proposal.filename, note: event.proposal.note,
+              content: event.proposal.content, status: "pending" });
             if (event.thinking) live.thinking += event.thinking;
             if (event.delta) live.content += event.delta;
             if (event.done) { completed = true; this.asstSessionId = event.session_id; }
@@ -892,10 +976,13 @@ const App = {
         await this.loadAsstSessions();
       } catch (err) {
         if (err.name !== "AbortError") this.asstError = String(err.message || err);
-        if (!live.content && !live.tools.length && !live.thinking) this.asstMessages.pop();
+        if (!live.content && !live.tools.length && !live.thinking && !live.proposals.length) this.asstMessages.pop();
       } finally {
         this.asstBusy = false; this.asstAbort = null;
-        if (this.asstQueue.length) this.dispatchAsst(this.asstQueue.shift());
+        if (this.asstQueue.length) {
+          const next = this.asstQueue.shift();
+          this.dispatchAsst(next.message, next.attachments || []);
+        }
       }
     },
     assistantMarkdown(text) {
@@ -1320,15 +1407,30 @@ const App = {
     "          </div>",
     "        </aside>",
     '        <div class="pane-splitter" title="拖拽调整宽度" @mousedown="startPaneDrag($event, \'asst\')"></div>',
-    '        <section class="asst-chat" aria-label="对话消息流">',
+    '        <section class="asst-chat" aria-label="对话消息流" @dragover.prevent="asstDragOver = true" @dragleave="asstDragOver = false" @drop.prevent="dropAsstFiles">',
+    '          <div v-if="asstDragOver" class="asst-drop-overlay">松开鼠标，把文件添加为附件</div>',
     '          <div class="asst-messages">',
     '            <div v-for="m in asstMessages" :key="m.key" :class="m.role === \'user\' ? \'asst-user\' : \'asst-item\'">',
-    '              <div v-if="m.role === \'tool\'" class="asst-tool">',
-    '                <span class="asst-tool-name">{{ m.tool || "工具" }}</span>',
-    "                <code>{{ JSON.stringify(m.args) }}</code>",
-    "                <p>{{ m.result }}</p>",
+    '              <template v-if="m.role === \'tool\'">',
+    '                <file-proposal-card v-if="m.tool === \'write_file\'"',
+    '                  :proposal="{ filename: m.args.filename || \'\', note: \'\', content: m.args.content || \'\', result: m.result }"',
+    '                  @apply="resolveAsstProposal({ filename: m.args.filename }, true)"',
+    '                  @cancel="resolveAsstProposal({ filename: m.args.filename }, false)"></file-proposal-card>',
+    '                <div v-else class="asst-tool">',
+    '                  <span class="asst-tool-name">{{ m.tool || "工具" }}</span>',
+    "                  <code>{{ JSON.stringify(m.args) }}</code>",
+    "                  <p>{{ m.result }}</p>",
+    "                </div>",
+    "              </template>",
+    '              <div v-else-if="m.role === \'user\'" class="asst-user">',
+    '                <div class="asst-bubble-user">{{ m.content }}</div>',
+    '                <div v-if="m.attachments && m.attachments.length" class="asst-attach-row">',
+    '                  <span v-for="(a,ai) in m.attachments" :key="ai" class="asst-attach-chip" :title="a.name">',
+    '                    <img v-if="a.kind === \'image\' && a.url" :src="a.url" class="asst-attach-thumb" :alt="a.name">',
+    '                    <span v-else class="asst-attach-icon">📄</span><span class="asst-attach-name">{{ a.name }}</span>',
+    "                  </span>",
+    "                </div>",
     "              </div>",
-    '              <div v-else-if="m.role === \'user\'" class="asst-bubble-user">{{ m.content }}</div>',
     '              <template v-else>',
     '                <details v-if="m.thinking" class="agent-thinking" open><summary>思考过程</summary><div class="agent-thinking-body">{{ m.thinking }}</div></details>',
     '                <div v-for="(t,i) in m.tools" :key="\'t\'+i" class="asst-tool">',
@@ -1336,15 +1438,25 @@ const App = {
     "                  <code>{{ JSON.stringify(t.args) }}</code>",
     "                  <p>{{ t.result }}</p>",
     "                </div>",
+    '                <file-proposal-card v-for="(p,pi) in (m.proposals || [])" :key="\'p\'+pi" :proposal="p"',
+    '                  @apply="resolveAsstProposal(p, true)" @cancel="resolveAsstProposal(p, false)"></file-proposal-card>',
     '                <article v-if="m.content" class="markdown-body asst-bubble-bot" v-html="assistantMarkdown(m.content)"></article>',
     "              </template>",
     "            </div>",
     '            <p v-if="!asstMessages.length && !asstQueue.length" class="empty-state">问一个运维问题，例如：nginx 怎么平滑重载？<br>助手只依据本地知识库检索结果回答，检索不到会明说；配置工坊中开启共享的配置可被引用。</p>',
     '            <div v-for="(q,i) in asstQueue" :key="\'q\'+i" class="asst-user"><div class="asst-bubble-user asst-queued">排队中：{{ q }}</div></div>',
     "          </div>",
+    '          <div v-if="asstDraftFiles.length" class="asst-attach-row asst-draft-row">',
+    '            <span v-for="(f,fi) in asstDraftFiles" :key="f.id" class="asst-attach-chip">',
+    '              <img v-if="f.kind === \'image\'" :src="f.url" class="asst-attach-thumb" :alt="f.name">',
+    '              <span v-else class="asst-attach-icon">📄</span><span class="asst-attach-name">{{ f.name }}</span>',
+    '              <button class="asst-attach-remove" type="button" title="移除附件" @click="removeAsstDraft(fi)">×</button>',
+    "            </span>",
+    "          </div>",
     '          <p v-if="asstError" class="regex-error" role="alert">{{ asstError }} <a href="#/settings">前往模型设置</a></p>',
     '          <form class="asst-composer" @submit.prevent="trySendAsst">',
-    '            <textarea v-model="asstInput" rows="2" :placeholder="asstBusy ? \'回答中…可继续输入，回车加入队列\' : \'输入运维问题，Enter 发送\'" @keydown.enter.exact.prevent="askKeydown"></textarea>',
+    '            <label class="copy-button asst-attach-btn" title="添加附件">📎<input type="file" multiple accept=".txt,.md,.log,.conf,.cfg,.ini,.yaml,.yml,.json,.properties,.toml,.csv,.sh,.bash,.py,.pl,.rb,.go,.js,.ts,.java,.sql,.xml,.html,.css,.env,.service,image/png,image/jpeg,image/gif,image/webp,image/bmp" @change="chooseAsstFile"></label>',
+    '            <textarea v-model="asstInput" rows="2" :placeholder="asstBusy ? \'回答中…可继续输入，回车加入队列\' : \'输入运维问题，Enter 发送；可拖入/粘贴文件\'" @keydown.enter.exact.prevent="askKeydown" @paste="pasteAsstFiles"></textarea>',
     '            <button class="copy-button" type="submit" :disabled="!asstInput.trim()">{{ asstBusy ? "排队" : "发送" }}</button>',
     '            <button v-if="asstBusy" class="copy-button" type="button" @click="asstAbort.abort()">停止</button>',
     "          </form>",

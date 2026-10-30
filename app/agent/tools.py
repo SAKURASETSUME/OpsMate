@@ -20,7 +20,15 @@ TOOL_DESCRIPTIONS = {
     "get_stats": "只读当前日志的级别与聚类统计，args={log_id}",
     "get_context": "只读当前日志行附近上下文，args={log_id,line_no,around:0到10}",
     "read_user_config": "读取用户显式开启共享的配置原文，args={name:配置名称}；未共享或不存在时返回失败",
+    "write_file": "提交本地文件生成/修改提案，args={filename:不含路径的文件名, content:完整文件内容, note:一句话用途}；提案需用户在界面确认后才写入 agent_files/ 目录，提交后在回答中说明文件内容",
 }
+
+
+def guard_unconfirmable(name: str) -> dict[str, Any] | None:
+    """需要用户确认/禁止直接执行的工具在此拦截（引擎提案路径之外的第二道防线）。"""
+    if name == "write_file":
+        return {"ok": False, "error": "write_file 需要用户确认，不能直接执行"}
+    return None
 
 
 def search_history(q: str, limit: int = 5) -> list[dict[str, Any]]:
@@ -42,6 +50,9 @@ def execute_tool(name: str, args: dict[str, Any], *, scope_log_id: int | None = 
     """仅分派白名单工具，未知工具/参数错误转为结构化结果。"""
     if name not in TOOL_DESCRIPTIONS:
         return {"ok": False, "error": "工具不存在或未开放"}
+    blocked = guard_unconfirmable(name)
+    if blocked is not None:
+        return blocked
     try:
         if name in {"filter_log", "get_stats", "get_context"}:
             if scope_log_id is None or int(args.get("log_id", -1)) != scope_log_id:

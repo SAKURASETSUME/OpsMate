@@ -142,15 +142,18 @@ async def run_agent(client: LLMClient, system: str, user: str,
     raise AgentFormatError("未生成结果")
 
 
-ASSISTANT_TOOLS = ("search_commands", "search_kb", "search_history", "read_user_config")
+ASSISTANT_TOOLS = ("search_commands", "search_kb", "search_history", "read_user_config", "write_file")
 
 
 async def run_assistant(client: LLMClient, system: str,
-                        conversation: list[dict[str, str]]) -> AsyncIterator[dict[str, Any]]:
+                        conversation: list[dict[str, Any]],
+                        image_parts: list[str] | None = None) -> AsyncIterator[dict[str, Any]]:
     """运维问答：只读工具循环（0.1）→ 流式 markdown 终答（0.5）。
 
-    yield 顺序：{"tool","args","result"} 过程事件（可多条）→ {"delta"} 逐段 →
+    yield 顺序：{"tool","args","result"} 过程事件（可多条）→ {"proposal"} 文件提案
+    （write_file 不直接执行，等待用户确认）→ {"thinking"} 思考分片 → {"delta"} 逐段 →
     {"final": 全文}；错误以 LLMError 抛给调用方转 SSE error 事件。
+    image_parts：本轮用户附件图片的 data URL，只并入终答请求（多模态模型识别）。
     模型在规划轮直接给出完整回答时按单段 delta 原样使用；累计三次协议
     解析失败后退回无工具直答。
     """
@@ -182,6 +185,27 @@ async def run_assistant(client: LLMClient, system: str,
             if (action.get("action") != "tool" or not isinstance(name, str)
                     or name not in allowed or not isinstance(args, dict)):
                 raise AgentFormatError(raw)
+            if name == "write_file":
+                # 文件写入永不自动执行：转为提案事件，由用户在界面确认。
+                filename = str(args.get("filename", "")).strip()
+                content = args.get("content")
+                note = str(args.get("note", "")).strip()
+                if (not filename or len(filename) > 120 or "/" in filename or "\\" in filename
+                        or not isinstance(content, str) or not content or len(content) > 1_000_000):
+                    result = {"ok": False, "error": "write_file 参数无效：filename 不能含路径，content 必须是非空文本"}
+                    steps.append({"tool": "write_file", "args": {"filename": filename},
+                                  "result": result["error"][:300]})
+                    yield {"tool": "write_file", "args": {"filename": filename}, "result": result["error"][:300]}
+                    messages.extend([{"role": "assistant", "content": raw},
+                                     {"role": "user", "content": json.dumps(result, ensure_ascii=False)}])
+                    continue
+                steps.append({"tool": "write_file",
+                              "args": {"filename": filename, "content": content},
+                              "result": "等待用户确认"})
+                yield {"proposal": {"filename": filename, "note": note, "content": content}}
+                messages.extend([{"role": "assistant", "content": raw},
+                                 {"role": "user", "content": '{"ok": false, "error": "write_file 需要用户在界面确认后才会写入 agent_files/；请继续完成回答，说明该文件的内容与用途"}'}])
+                continue
             result = await asyncio.to_thread(execute_tool, name, args)
             summary = json.dumps(result, ensure_ascii=False)
             feedback = ""
@@ -198,9 +222,17 @@ async def run_assistant(client: LLMClient, system: str,
         yield {"delta": direct_answer}
         yield {"final": direct_answer}
         return
-    exchanges = list(conversation) if failures >= 3 else messages[1:]
+    # 终答上下文剔除协议轮 assistant 原文（避免模型模仿 JSON 协议作答），保留检索结果消息
+    exchanges = list(conversation) if failures >= 3 else [
+        item for item in messages[1:] if item.get("role") != "assistant"]
+    if image_parts and exchanges:
+        # 图片只并入终答请求：末条 user 消息转为多模态 parts（文本 + image_url）
+        exchanges = [dict(item) for item in exchanges]
+        target = exchanges[-1]
+        target["content"] = [{"type": "text", "text": str(target["content"])},
+                             *[{"type": "image_url", "image_url": {"url": part}} for part in image_parts]]
     final_messages = [{"role": "system", "content": system}, *exchanges,
-                      {"role": "user", "content": "现在依据以上资料直接输出完整中文 markdown 回答；来源标记规则按 system 执行；本地资料没有的内容如实说明，不要编造。"}]
+                      {"role": "user", "content": "现在依据以上资料直接输出完整中文 markdown 回答；来源标记规则按 system 执行；本地资料没有的内容如实说明，不要编造。禁止输出 JSON 或以 {\"action\" 开头的协议文本，也不要再调用工具。"}]
     parts: list[str] = []
     async for kind, text in stream_with_reasoning(client, final_messages, temperature=0.5, timeout=120):
         if kind == "thinking":

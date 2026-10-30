@@ -10,6 +10,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app import config
+from app.agent.tools import execute_tool
 from app.assistant.routes import ASSISTANT_SYSTEM_PROMPT
 from app.llm.provider import LLMClient
 from app.server import create_app
@@ -39,7 +40,10 @@ def parse_sse(response) -> list[dict]:
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     assert "【命令：" in ASSISTANT_SYSTEM_PROMPT and "【配置：" in ASSISTANT_SYSTEM_PROMPT
-    with tempfile.TemporaryDirectory() as folder, patch.object(config, "DB_PATH", Path(folder) / "test.db"):
+    with tempfile.TemporaryDirectory() as folder, \
+            patch.object(config, "DB_PATH", Path(folder) / "test.db"), \
+            patch.object(config, "ASSISTANT_FILES_DIR", Path(folder) / "asst_files"), \
+            patch.object(config, "AGENT_FILES_DIR", Path(folder) / "agent_files"):
         client = TestClient(create_app())
 
         # A：工具轨迹 + 流式终答 + 原子落库
@@ -116,6 +120,86 @@ def main() -> None:
         assert client.delete("/api/assistant/sessions/1").json() == {"ok": True}
         assert client.get("/api/assistant/sessions/1").status_code == 404
         assert client.delete("/api/assistant/sessions/1").status_code == 404
+
+        # G：附件上传、多模态装配与回显
+        from pathlib import Path as _P
+        agent_dir = _P(folder) / "agent_files"
+        upload = client.post("/api/assistant/files",
+                             files={"file": ("nginx.conf", "server {\n listen 80;\n}\n".encode(), "text/plain")})
+        assert upload.status_code == 200, upload.text
+        text_id = upload.json()["id"]
+        assert upload.json()["kind"] == "text"
+        image_id = client.post("/api/assistant/files",
+                               files={"file": ("shot.png", b"\x89PNG\r\n\x1a\n" + b"0" * 32, "image/png")}).json()["id"]
+        assert client.post("/api/assistant/files", files={"file": ("evil.exe", b"MZ", "application/octet-stream")}).status_code == 415
+        assert client.post("/api/assistant/files", files={"file": ("big.log", b"x" * (5 * 1024 * 1024 + 1), "text/plain")}).status_code == 413
+        captured_stream: list[list[dict]] = []
+        async def capture_stream(self, messages, **kwargs):
+            captured_stream.append(messages)
+            yield "收到"
+        with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
+             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
+             patch.object(LLMClient, "chat_stream", new=capture_stream):
+            events = parse_sse(client.post("/api/assistant/chat",
+                                           json={"message": "看看这两个文件", "attachments": [text_id, image_id]}))
+        done = [e for e in events if e.get("done")][0]
+        attach_session = done["session_id"]
+        multimodal = [m for m in captured_stream[0] if isinstance(m.get("content"), list)]
+        assert multimodal, "图片未并入终答消息"
+        parts = multimodal[0]["content"]
+        assert any(p.get("type") == "image_url" and p["image_url"]["url"].startswith("data:image/png;base64,") for p in parts)
+        assert any(p.get("type") == "text" and "nginx.conf" in p["text"] and "listen 80" in p["text"] for p in parts)
+        rows = client.get(f"/api/assistant/sessions/{attach_session}").json()["messages"]
+        user_rows = [m for m in rows if m["role"] == "user"]
+        assert any(a["name"] == "shot.png" for a in user_rows[-1]["attachments"])
+        assert client.get(f"/api/assistant/files/{image_id}/content").status_code == 200
+        # 已归属附件不可复用
+        assert parse_sse(client.post("/api/assistant/chat",
+                                     json={"message": "again", "attachments": [text_id]}))[0].get("error")
+
+        # H：write_file 提案 → 用户确认落盘 / 取消 / 穿越与直接调用防线
+        with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
+             patch.object(LLMClient, "chat", side_effect=[
+                 result({"action": "tool", "tool": "write_file",
+                         "args": {"filename": "deploy.conf", "content": "key=value\n", "note": "部署配置"}}),
+                 result({"action": "final"})]), \
+             patch.object(LLMClient, "chat_stream", new=stream_of("已提交提案，", "说明用途")):
+            events = parse_sse(client.post("/api/assistant/chat",
+                                           json={"message": "帮我生成部署配置文件", "session_id": attach_session}))
+        proposals = [e for e in events if "proposal" in e]
+        assert proposals and proposals[0]["proposal"]["filename"] == "deploy.conf"
+        assert not agent_dir.joinpath("deploy.conf").exists()  # 未确认绝不写盘
+        applied = client.post("/api/assistant/files/apply",
+                              json={"session_id": attach_session, "filename": "deploy.conf"})
+        assert applied.status_code == 200 and "已写入 agent_files/deploy.conf" in applied.json()["outcome"], applied.text
+        assert agent_dir.joinpath("deploy.conf").read_text(encoding="utf-8") == "key=value\n"
+        assert client.post("/api/assistant/files/apply",
+                           json={"session_id": attach_session, "filename": "deploy.conf"}).status_code == 404
+        assert client.post("/api/assistant/files/apply",
+                           json={"session_id": attach_session, "filename": "../evil"}).status_code == 400
+        with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
+             patch.object(LLMClient, "chat", side_effect=[
+                 result({"action": "tool", "tool": "write_file",
+                         "args": {"filename": "../evil.txt", "content": "x"}}),
+                 result({"action": "final"})]), \
+             patch.object(LLMClient, "chat_stream", new=stream_of("ok")):
+            events = parse_sse(client.post("/api/assistant/chat",
+                                           json={"message": "穿越测试", "session_id": attach_session}))
+        assert not [e for e in events if "proposal" in e] and not agent_dir.parent.joinpath("evil.txt").exists()
+        with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
+             patch.object(LLMClient, "chat", side_effect=[
+                 result({"action": "tool", "tool": "write_file",
+                         "args": {"filename": "tmp.yaml", "content": "a: 1"}}),
+                 result({"action": "final"})]), \
+             patch.object(LLMClient, "chat_stream", new=stream_of("ok")):
+            parse_sse(client.post("/api/assistant/chat",
+                                  json={"message": "再来一个", "session_id": attach_session}))
+        cancelled = client.post("/api/assistant/files/cancel",
+                                json={"session_id": attach_session, "filename": "tmp.yaml"})
+        assert cancelled.status_code == 200 and "已取消" in cancelled.json()["outcome"]
+        assert not agent_dir.joinpath("tmp.yaml").exists()
+        assert execute_tool("write_file", {"filename": "x.conf", "content": "y"})["ok"] is False  # 直接调用防线
+
     print("assistant ok")
 
 

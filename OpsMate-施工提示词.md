@@ -370,10 +370,14 @@ CREATE TABLE IF NOT EXISTS user_configs (
 | POST | `/api/logs/{id}/llm-analyze` | `{"focus"?}` | **SSE 流**：先发过程事件 `data: {"tool":"filter_log","args":{...},"result":"..."}`（可多条，诊断智能体下钻轨迹）→ `data: {"delta":"..."}` 逐段 → 结束 `data: {"done":true,"report_id":N}`；错误发 `data: {"error":"..."}`；完成后报告落 reports 表 |
 | GET | `/api/logs/{id}/reports` | - | `{"items":[{id,model,created_at}]}` |
 | GET | `/api/logs/{id}/reports/{rid}` | - | `{"content":"markdown"}` |
-| POST | `/api/assistant/chat` | `{"message","session_id"?}` | **SSE 流**：过程事件 `data: {"tool","args","result"}`（可多条）→ `data: {"delta":"..."}` → 结束 `data: {"done":true,"session_id":N}`；错误 `data: {"error":"..."}`；消息落 assistant_messages |
+| POST | `/api/assistant/chat` | `{"message","session_id"?,"attachments":[附件id]?}` | **SSE 流**：过程事件 `data: {"tool","args","result"}` / 文件提案 `data: {"proposal":{"filename","note","content"}}`（不落盘，待用户确认）→ `data: {"thinking":"..."}`（思考型模型）→ `data: {"delta":"..."}` → 结束 `data: {"done":true,"session_id":N}`；错误 `data: {"error":"..."}`；消息落 assistant_messages（附件归属用户消息行） |
 | GET | `/api/assistant/sessions` | - | `{"items":[{id,title,updated_at}]}`（倒序） |
 | GET | `/api/assistant/sessions/{id}` | - | `{"messages":[{id,role,content}]}`（tool 行 content 为 JSON 轨迹字符串） |
 | DELETE | `/api/assistant/sessions/{id}` | - | `{"ok":true}`（连带删消息） |
+| POST | `/api/assistant/files` | multipart `file` | `{"id","name","mime","kind","size_bytes"}`（≤5MB；文本 UTF-8 或 PNG/JPG/GIF/WebP/BMP；超限 413/415） |
+| GET | `/api/assistant/files/{id}/content` | - | 附件原始内容（图片回显缩略图用） |
+| POST | `/api/assistant/files/apply` | `{"session_id","filename"}` | `{"ok":true,"outcome":"…已写入 agent_files/<name>"}`；以服务端存档内容写入 `data/agent_files/`；无待确认提案 404、文件名非法 400 |
+| POST | `/api/assistant/files/cancel` | `{"session_id","filename"}` | `{"ok":true,"outcome":"用户已取消，未写入"}` |
 | GET | `/api/kb/workbench/configs` | - | `{"items":[{id,name,format,shared,size_bytes,updated_at}]}`（倒序） |
 | POST | `/api/kb/workbench/configs` | `{"name","format","content"}` | `{"id","name","format"}`；content >2MB 返回 413 |
 | PUT | `/api/kb/workbench/configs/{id}` | body 同上 | `{"ok":true}` |
@@ -542,7 +546,7 @@ user 模板：日志材料组装（§8 Phase 6）+ 可选 `重点关注：{focus
 - **步数上限 6**：达到上限后追加 user 消息"工具调用次数已用完，请基于已有信息直接给出最终结果"，不再接受 tool 动作。
 - **解析容错**：复用统一顺序——剥 ``` 围栏 → 取首个 `{` 到末个 `}` 子串 → `json.loads`；失败重试请求 1 次；**累计 3 轮失败 → 整体退回单轮直接生成模式**（`steps=[]`，UI 显示"直接生成"）。
 - **工具注册表（全部只读，永不执行任何 shell）**：`search_commands(q, limit=5)`、`search_kb(q, software?, limit=5)`、`search_history(q, limit=5)`（FTS5）、`filter_log(log_id, q?, level?, regex?, limit=50)`、`get_stats(log_id)`、`get_context(log_id, line_no, around=10)`、`read_user_config(name)`（仅返回 user_configs 中 shared=1 的记录，内容截断 ~4000 字符；未共享/不存在返回 `{"ok":false}`；Phase 7 接入）。工具实现直接复用各模块 service 层函数，注册表集中放在 `app/agent/tools.py`。
-- **安全边界（硬性）**：智能体只生成、只解释、只检索；任何工具不得写数据库、不得执行命令、不得访问网络；产出物的执行权永远在用户手中。
+- **安全边界（2026-10-30 用户授权扩展后口径）**：智能体只生成、只解释、只检索；工具不执行命令、不联网、不读取任意路径。用户授权的两项例外：①运维助手可读取**用户显式提供的附件**（拖入/粘贴/选择上传，≤5MB×5，文本 UTF-8 或常见图片格式；图片以 data URL 并入终答请求，供支持视觉的模型识别）；②运维助手可经 `write_file` 工具提交**文件生成/修改提案**，提案以 SSE 事件返回界面，**必须用户逐条确认**后才写入固定目录 `data/agent_files/`（文件名白名单校验、禁路径分隔；取消即不落盘；execute_tool 直调被防线拒绝）。产出物的执行权永远在用户手中。
 - **温度**：工具循环轮 temperature=0.1；最终生成轮按场景取值（codegen 0.3 / 日志分析 0.3 / 运维问答 0.5）。
 - **轨迹落盘**：每步 `{tool, args, result_summary}`（result 截断 300 字符）随场景入库（codegen_history.steps / SSE 过程事件），前端渲染为轨迹卡片。
 
