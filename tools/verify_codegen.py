@@ -31,6 +31,11 @@ def result(value: dict | str) -> dict:
     return {"content": value if isinstance(value, str) else json.dumps(value, ensure_ascii=False), "model": "mock"}
 
 
+def sse_events(response) -> list[dict]:
+    """解析 SSE 响应的全部事件。"""
+    return [json.loads(line[5:].strip()) for line in response.text.splitlines() if line.startswith("data:")]
+
+
 def main() -> None:
     """运行隔离验证，任一失败直接退出。"""
     assert parse_object('```json\n{"ok":true}\n```')["ok"]
@@ -54,8 +59,14 @@ def main() -> None:
                    result({"action": "final", "payload": payload()}), result(payload())]
         with patch("app.codegen.routes.effective_settings", return_value=settings), patch.object(LLMClient, "chat", new=AsyncMock(side_effect=replies)):
             response = client.post("/api/codegen/generate", json={"requirement": "nginx tar backup"})
-            assert response.status_code == 200, response.text
-            assert len(response.json()["steps"]) == 2
+            assert response.status_code == 200 and "text/event-stream" in response.headers["content-type"], response.text
+            events = sse_events(response)
+            streamed_tools = [e["tool"] for e in events if "tool" in e]
+            assert streamed_tools == ["search_history", "search_commands"], streamed_tools  # 预检 + 模型检索实时推送
+            assert any(e.get("phase") == "final" for e in events)
+            payload_event = [e for e in events if "result" in e and "tool" not in e][0]
+            assert len(payload_event["result"]["steps"]) == 2
+            assert events[-1].get("done") is True
         history = client.get("/api/codegen/history").json()["items"]
         assert len(history) == 1
         detail = client.get(f"/api/codegen/history/{history[0]['id']}").json()
@@ -67,7 +78,9 @@ def main() -> None:
         replies = [result({"action": "final", "payload": clarification}), result(clarification)]
         with patch("app.codegen.routes.effective_settings", return_value=settings), patch.object(LLMClient, "chat", new=AsyncMock(side_effect=replies)):
             response = client.post("/api/codegen/generate", json={"requirement": "cleanup"})
-            assert response.json()["need_clarification"]
+            events = sse_events(response)
+            final = [e for e in events if "result" in e and "tool" not in e][0]
+            assert final["result"]["need_clarification"]
         assert len(client.get("/api/codegen/history").json()["items"]) == 1
         replies = [result("bad")] * 3 + [result(payload())]
         with patch.object(LLMClient, "chat", new=AsyncMock(side_effect=replies)):
@@ -86,9 +99,11 @@ def main() -> None:
         except AgentFormatError:
             pass
         with patch("app.codegen.routes.effective_settings", return_value=settings), patch.object(LLMClient, "chat", new=AsyncMock(return_value=result("bad"))):
-            assert client.post("/api/codegen/generate", json={"requirement": "test"}).status_code == 502
+            events = sse_events(client.post("/api/codegen/generate", json={"requirement": "test"}))
+            assert events[-1].get("error", "").startswith("模型输出格式无效"), events[-1]
         with patch("app.codegen.routes.effective_settings", return_value={**settings, "api_key": ""}):
-            assert client.post("/api/codegen/generate", json={"requirement": "test"}).status_code == 502
+            events = sse_events(client.post("/api/codegen/generate", json={"requirement": "test"}))
+            assert "设置" in events[0].get("error", ""), events[0]
         assert client.get("/api/codegen/history/99999").status_code == 404
     print("PASS: JSON recovery, tool loop, atomic history/FTS, recall, clarification, fallback, invalid output, no key")
 

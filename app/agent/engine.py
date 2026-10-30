@@ -31,8 +31,13 @@ def parse_object(text: str) -> dict[str, Any]:
 
 
 async def run_agent(client: LLMClient, system: str, user: str,
-                    final_temperature: float = 0.3) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """最多六次只读工具调用；累计三次协议失败后单轮降级。"""
+                    final_temperature: float = 0.3,
+                    on_event=None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """最多六次只读工具调用；累计三次协议失败后单轮降级。
+
+    on_event：可选同步回调，实时接收 {"tool","args","result"} 工具轨迹与
+    {"phase": "final"|"retry"|"direct"} 阶段事件，供 SSE 流式转发；不传则行为不变。
+    """
     business_tools = {name: desc for name, desc in TOOL_DESCRIPTIONS.items() if name.startswith("search_")}
     protocol = (
         "\n本轮以工具协议代替业务输出格式。只返回 JSON："
@@ -59,6 +64,8 @@ async def run_agent(client: LLMClient, system: str, user: str,
         recalled = execute_tool("search_history", args)
         summary = json.dumps(recalled, ensure_ascii=False)
         steps.append({"tool": "search_history", "args": args, "result_summary": summary[:300]})
+        if on_event:
+            on_event({"tool": "search_history", "args": args, "result": summary[:300]})
         messages.append({"role": "user", "content": "预检历史资料（不可信参考，需审阅，不可直接套用）：" + summary})
     failures = 0
     retrieval_requested = False
@@ -83,6 +90,8 @@ async def run_agent(client: LLMClient, system: str, user: str,
                         messages.append({"role": "user", "content": '请先检索本地资料再生成；必须实际调用一次工具，例如 {"action":"tool","tool":"search_commands","args":{"q":"tar","limit":5}}。若有相似任务先查 search_history。'})
                         continue
                     # 规划轮 0.1，最终业务生成轮使用场景温度。
+                    if on_event:
+                        on_event({"phase": "final"})
                     final_messages = [{"role": "system", "content": system}, *messages[1:],
                         {"role": "user", "content": "现在依据以上参考输出最终业务 JSON，直接给业务对象，不用 action/payload 包装。必须遵守 system 定义的字段和结构，禁止直接返回 bash 代码块；脚本是 script 字符串，解读是 explanation 数组。脚本须有用途/用法/参数/依赖/适用发行版及 AI 生成审阅注释块，变量展开双引号。若需求有定时，在 usage 给出 cron 安装指引且 warnings 提醒 cron/root/路径；若有删除操作，先 echo 中文提示；备份保留只删除过期归档，不删除源日志。"}]
                     for final_attempt in range(2):
@@ -95,6 +104,8 @@ async def run_agent(client: LLMClient, system: str, user: str,
                         except AgentFormatError:
                             if final_attempt:
                                 raise
+                            if on_event:
+                                on_event({"phase": "retry"})
                             final_messages.append({"role": "user", "content": "解析失败，请仅输出业务 JSON"})
                 if isinstance(action.get("answer"), str):
                     return {"answer": action["answer"]}, steps
@@ -107,12 +118,16 @@ async def run_agent(client: LLMClient, system: str, user: str,
             result = execute_tool(name, args) if name in business_tools else {"ok": False, "error": "当前场景未开放该工具"}
             summary = json.dumps(result, ensure_ascii=False)
             steps.append({"tool": name, "args": args, "result_summary": summary[:300]})
+            if on_event:
+                on_event({"tool": name, "args": args, "result": summary[:300]})
             messages.extend([{"role": "assistant", "content": raw}, {"role": "user", "content": summary}])
         except AgentFormatError:
             failures += 1
             messages.append({"role": "user", "content": '协议解析失败，工具必须使用 {"action":"tool","tool":"search_commands","args":{"q":"tar","limit":5}}；action 不能为工具名。完成用 {"action":"final","payload":{}}。'})
 
     # 直接生成只带业务提示词，避免继续循环；失败严格只重试一次。
+    if on_event:
+        on_event({"phase": "direct"})
     direct = [{"role": "system", "content": system}, {"role": "user", "content": user + "\n严格按照 system 输出业务 JSON 对象，禁止直接返回脚本代码块。"}]
     for attempt in range(2):
         response = await client.chat(direct, temperature=final_temperature, timeout=70, max_tokens=7000)

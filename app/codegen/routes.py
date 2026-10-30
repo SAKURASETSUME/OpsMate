@@ -5,10 +5,12 @@ import asyncio
 import json
 import re
 import sqlite3
+from collections.abc import AsyncIterator, Iterator
 from contextlib import closing
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app import config
@@ -18,6 +20,11 @@ from app.llm.provider import LLMClient, LLMError
 from app.llm.routes import effective_settings
 
 router = APIRouter(prefix="/api/codegen", tags=["codegen"])
+
+
+def _sse(payload: dict[str, Any]) -> str:
+    """统一 SSE 事件行。"""
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 class GenerateInput(BaseModel):
@@ -128,22 +135,35 @@ def save_result(body: GenerateInput, payload: dict[str, Any], model: str) -> Non
 
 
 @router.post("/generate")
-async def generate(body: GenerateInput) -> dict[str, Any]:
-    """限时生成；不执行生成的脚本，成功成稿才入库。"""
-    if not body.requirement.strip():
-        raise HTTPException(400, "请填写脚本需求")
+async def generate(body: GenerateInput) -> StreamingResponse:
+    """SSE 流式生成：过程事件（工具轨迹/阶段）实时推送 → result → done。
+
+    成功成稿才入库；失败/超时发 error 事件，不写历史。
+    """
     settings = effective_settings()
+
+    async def error_stream(message: str) -> AsyncIterator[str]:
+        yield _sse({"error": message})
+
+    if not body.requirement.strip():
+        return StreamingResponse(error_stream("请填写脚本需求"), media_type="text/event-stream")
+    if not settings.get("api_key"):
+        return StreamingResponse(error_stream("未配置模型密钥，请先前往设置页保存并启用"),
+                                 media_type="text/event-stream")
     ensure_history()
     user = f"需求：{body.requirement}\n发行版：{body.distro or '未指定'}\n补充：{body.notes or '无'}"
+    events: asyncio.Queue = asyncio.Queue()
+
     async def produce() -> dict[str, Any]:
         for attempt in range(2):
             raw, steps = await run_agent(LLMClient(settings), CODEGEN_SYSTEM_PROMPT, user + (
-                "\n上次业务输出未通过校验。必须是业务 JSON；所有变量展开必须双引号包裹；脚本不含解读/分析字样；至少三段解读。顶部注释必须写全用途/用法/参数/依赖命令/AI生成请审阅/适用发行版，删除前必须 echo 中文提示。若需求是日志归档备份，应 tar -czf 归档，保留策略只针对归档文件，禁止删除源日志，定时任务提供 cron 安装指引。" if attempt else ""))
+                "\n上次业务输出未通过校验。必须是业务 JSON；所有变量展开必须双引号包裹；脚本不含解读/分析字样；至少三段解读。顶部注释必须写全用途/用法/参数/依赖命令/AI生成请审阅/适用发行版，删除前必须 echo 中文提示。若需求是日志归档备份，应 tar -czf 归档，保留策略只针对归档文件，禁止删除源日志，定时任务提供 cron 安装指引。" if attempt else ""),
+                on_event=lambda event: events.put_nowait(event))
             try:
                 result = validate_payload(raw)
                 if not result["need_clarification"]:
                     if ("每天" in body.requirement or "凌晨" in body.requirement) and "cron" not in (
-                        result["usage"] + " ".join(result["warnings"])).lower():
+                            result["usage"] + " ".join(result["warnings"])).lower():
                         raise AgentFormatError("定时需求缺少 cron 用法与风险指引：" + json.dumps(raw, ensure_ascii=False))
                     result["steps"] = steps
                     save_result(body, result, settings["model"])
@@ -152,18 +172,45 @@ async def generate(body: GenerateInput) -> dict[str, Any]:
                 if attempt:
                     raise
         raise AgentFormatError("未生成结果")
-    try:
+
+    async def produce_bounded() -> dict[str, Any]:
         return await asyncio.wait_for(produce(), timeout=120)
-    except asyncio.TimeoutError:
-        raise HTTPException(504, "生成超时，请缩短需求后重试") from None
-    except LLMError as exc:
-        raise HTTPException(502, str(exc)) from None
-    except AgentFormatError as exc:
-        summary = str(exc)
-        key = str(settings.get("api_key", ""))
-        if key:
-            summary = summary.replace(key, "[密钥已隐藏]")
-        raise HTTPException(502, "模型输出格式无效：" + summary[:500]) from None
+
+    async def stream() -> AsyncIterator[str]:
+        task = asyncio.create_task(produce_bounded())
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(events.get(), timeout=0.25)
+                    yield _sse(event)
+                except asyncio.TimeoutError:
+                    pass
+                if task.done():
+                    while not events.empty():
+                        yield _sse(events.get_nowait())
+                    break
+        finally:
+            if not task.done():
+                task.cancel()  # 客户端断开时不留后台生成任务
+        try:
+            result = task.result()
+        except asyncio.TimeoutError:
+            yield _sse({"error": "生成超时，请缩短需求后重试"})
+            return
+        except LLMError as exc:
+            yield _sse({"error": str(exc)})
+            return
+        except AgentFormatError as exc:
+            summary = str(exc)
+            key = str(settings.get("api_key", ""))
+            if key:
+                summary = summary.replace(key, "[密钥已隐藏]")
+            yield _sse({"error": "模型输出格式无效：" + summary[:500]})
+            return
+        yield _sse({"result": result})
+        yield _sse({"done": True})
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 @router.get("/history")
