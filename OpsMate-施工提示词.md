@@ -36,7 +36,7 @@
 | 3 | **脚本工坊** | 智能体循环（ReAct）：模型自主检索命令库/配置库/脚本历史后生成带完整中文注释的 bash 脚本 + 右侧逐段解读与工具轨迹卡片（解读绝不混入脚本本体） |
 | 4 | **日志中心** | 上传/粘贴日志 → level 着色、关键词/正则/level 过滤、统计、导出（对标 mclo.gs 的核心体验，本地化） |
 | 5 | **日志 AI 分析** | L1 规则引擎免费提炼"问题日志"并聚类；L2 诊断智能体调用过滤/统计/上下文工具下钻日志，产出"假设-证据-建议"根因报告 |
-| 6 | **运维助手** | 对话式问答智能体：检索本地知识（命令/配置/脚本历史）回答运维问题，答案带可跳转的来源引用，会话持久化 |
+| 6 | **运维助手** | 对话式问答智能体：运维问题检索本地知识（命令/配置/脚本历史）作答并带可跳转的来源引用，非运维问题按接入模型的默认能力正常回答；会话持久化 |
 
 **最终交付形态（硬性要求）**：免安装的 `OpsMate.exe`——双击即弹出应用窗口使用全部功能。目标机器**无需安装 Python、无需启动或连接任何外部中间件、无需手动打开浏览器**：uvicorn/FastAPI 以库的形式嵌在同一进程内，监听随机分配的 127.0.0.1 端口（进程内通信，用户无感知）；SQLite 为单文件库；知识数据随 exe 一起打包。除调用 LLM 的在线 API 外全部离线可用。
 
@@ -439,7 +439,7 @@ CREATE TABLE IF NOT EXISTS user_configs (
 **做**：编写 `data/kb/keepalived.yaml`、`kafka.yaml`、`redis.yaml`、`docker.yaml`（§4.3 schema + §11 清单，cli/conf 数量达标）；`kb/workbench.py`（user_configs 存取 + §4.6 多格式静态校验）与 `/api/kb/workbench/*` 路由；agent 工具注册表接入 `read_user_config`（仅 shared=1）；前端 `#/kb` 顶部【知识库 | 我的配置】视图切换，工坊视图完整落地（列表/编辑/校验/正则测试复用 Phase 5 组件/共享开关）。
 **验收**：`/api/kb` 返回 6 个软件且新软件 cli/conf 计数达标；四个新软件的"启停命令"Tab 看不到配置参数、反之亦然（抽验 keepalived 与 kafka）；上传一份故意写错的 YAML（缩进错 + 重复键）→ 校验返回行号级错误与重复键警告；keepalived 风格配置少写 `}` → 报括号不配对及所在行；正则 `(\w+)@(\w+\.\w+)` 测试 → 高亮全部邮箱并显示两列分组；保存配置 → 列表可回看、刷新后仍在；开启共享 → 智能体工具 `read_user_config` 能读到内容，关闭后读到"不存在或未共享"；2MB 超限被拒提示。
 ### Phase 8 · 运维助手（对话智能体）
-**做**：`assistant/service.py`（assistant_sessions/assistant_messages 持久化）；`assistant/routes.py`（`/api/assistant/chat` SSE 等 §6 契约）；前端 `#/assistant`（会话列表+消息流+工具轨迹卡片+来源跳转）；侧边栏从 5 项扩为 6 项（"运维助手"插入日志中心与设置之间，hash 路由 `#/assistant`）。复用 `agent/engine.py`，工具集 = `search_commands` + `search_kb` + `search_history` + `read_user_config`（若用户已共享配置）；系统提示词要求：只依据工具检索结果回答、来源以"【命令：tar】【配置：nginx/worker_processes】"式标记嵌入正文（前端渲染为跳转链接）、检索不到就明说。
+**做**：`assistant/service.py`（assistant_sessions/assistant_messages 持久化）；`assistant/routes.py`（`/api/assistant/chat` SSE 等 §6 契约）；前端 `#/assistant`（会话列表+消息流+工具轨迹卡片+来源跳转）；侧边栏从 5 项扩为 6 项（"运维助手"插入日志中心与设置之间，hash 路由 `#/assistant`）。复用 `agent/engine.py`，工具集 = `search_commands` + `search_kb` + `search_history` + `read_user_config`（若用户已共享配置）；系统提示词要求：本地知识库覆盖的内容只依据工具检索结果回答、来源以"【命令：tar】【配置：nginx/worker_processes】"式标记嵌入正文（前端渲染为跳转链接）、检索不到就明说；与本地知识库无关的通用问题不检索、按接入模型的默认能力正常回答（2026-10-30 用户确认的双模式口径）。
 **验收**：问"nginx 怎么平滑重载"→ 回答包含 `nginx -s reload` 且带可跳转来源（跳到配置速查 nginx 分组）；问"磁盘占用排查用什么命令"→ 引用 df/du 文档来源；连续追问能理解上下文（"那它和 du 的区别呢"无需重复背景）；会话列表可回看历史、可删除；无 key 时明确引导去设置页；SSE 流式渲染 markdown 正常。
 
 ### Phase 9 · 打磨与打包
