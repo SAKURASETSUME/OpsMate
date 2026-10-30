@@ -5,6 +5,20 @@ generated: AI 整理，使用前请核对官方文档
 sources:
 - https://www.keepalived.org/documentation/keepalived-conf/
 - https://keepalived.org/documentation/user-guide/configuration-synopsis/
+templates:
+- name: 主备双节点模板（MASTER/BACKUP）
+  desc: VRRP 主备 + 后端健康检查脚本；备节点只需改 state/priority 两处。
+  content: "global_defs {\n    router_id LB_01\n    vrrp_skip_check_adv_addr\n   \
+    \ enable_script_security\n    script_user keepalived_script\n}\n\nvrrp_script\
+    \ chk_service {\n    script \"/usr/local/bin/check_service.sh\"\n    interval\
+    \ 2\n    timeout 1\n    weight -30\n    fall 2\n    rise 2\n}\n\nvrrp_instance\
+    \ VI_1 {\n    # 主节点 state MASTER / priority 100；备节点改为 state BACKUP / priority\
+    \ 90\n    state MASTER\n    interface eth0\n    virtual_router_id 51\n    priority\
+    \ 100\n    advert_int 1\n    authentication {\n        auth_type PASS\n      \
+    \  auth_pass example\n    }\n    virtual_ipaddress {\n        192.0.2.100/24 dev\
+    \ eth0\n    }\n    track_script {\n        chk_service\n    }\n    notify_master\
+    \ \"/usr/local/bin/notify.sh master\"\n    notify_backup \"/usr/local/bin/notify.sh\
+    \ backup\"\n}\n"
 categories:
 - id: cli
   label: 启停与运行命令

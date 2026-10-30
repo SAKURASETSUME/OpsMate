@@ -5,6 +5,69 @@ generated: AI 整理，使用前请核对官方文档
 sources:
 - https://kafka.apache.org/38/configuration/broker-configs/
 - https://kafka.apache.org/38/operations/basic-kafka-operations/
+templates:
+- name: KRaft 单机起步模板（server.properties）
+  desc: Kafka 3.x KRaft 模式单节点；正式集群需先初始化存储并调整副本相关参数。
+  content: 'process.roles=broker,controller
+
+    node.id=1
+
+    controller.quorum.voters=1@192.0.2.30:9093
+
+    listeners=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+
+    advertised.listeners=PLAINTEXT://192.0.2.30:9092
+
+    controller.listener.names=CONTROLLER
+
+    listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+
+    inter.broker.listener.name=PLAINTEXT
+
+
+    log.dirs=/var/lib/kafka/data
+
+    num.partitions=6
+
+    num.network.threads=8
+
+    num.io.threads=16
+
+    socket.send.buffer.bytes=102400
+
+    socket.receive.buffer.bytes=102400
+
+    socket.request.max.bytes=104857600
+
+
+    # 单机部署把以下副本参数改为 1；三节点集群保持现值
+
+    default.replication.factor=3
+
+    offsets.topic.replication.factor=3
+
+    transaction.state.log.replication.factor=3
+
+    transaction.state.log.min.isr=2
+
+    min.insync.replicas=2
+
+
+    log.retention.hours=168
+
+    log.retention.bytes=107374182400
+
+    log.segment.bytes=1073741824
+
+    log.retention.check.interval.ms=300000
+
+    auto.create.topics.enable=false
+
+    delete.topic.enable=true
+
+    group.initial.rebalance.delay.ms=3000
+
+    '
 categories:
 - id: cli
   label: 启停与运行命令

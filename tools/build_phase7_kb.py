@@ -4,6 +4,153 @@ import json
 from pathlib import Path
 import yaml
 
+# 推荐配置模板：可直接复制使用的起步配置；保留地址与口令均为占位符，需替换后使用。
+TEMPLATES: dict[str, list[dict]] = {
+    "keepalived": [{
+        "name": "主备双节点模板（MASTER/BACKUP）",
+        "desc": "VRRP 主备 + 后端健康检查脚本；备节点只需改 state/priority 两处。",
+        "content": """global_defs {
+    router_id LB_01
+    vrrp_skip_check_adv_addr
+    enable_script_security
+    script_user keepalived_script
+}
+
+vrrp_script chk_service {
+    script "/usr/local/bin/check_service.sh"
+    interval 2
+    timeout 1
+    weight -30
+    fall 2
+    rise 2
+}
+
+vrrp_instance VI_1 {
+    # 主节点 state MASTER / priority 100；备节点改为 state BACKUP / priority 90
+    state MASTER
+    interface eth0
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass example
+    }
+    virtual_ipaddress {
+        192.0.2.100/24 dev eth0
+    }
+    track_script {
+        chk_service
+    }
+    notify_master "/usr/local/bin/notify.sh master"
+    notify_backup "/usr/local/bin/notify.sh backup"
+}
+"""}],
+    "kafka": [{
+        "name": "KRaft 单机起步模板（server.properties）",
+        "desc": "Kafka 3.x KRaft 模式单节点；正式集群需先初始化存储并调整副本相关参数。",
+        "content": """process.roles=broker,controller
+node.id=1
+controller.quorum.voters=1@192.0.2.30:9093
+listeners=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+advertised.listeners=PLAINTEXT://192.0.2.30:9092
+controller.listener.names=CONTROLLER
+listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+inter.broker.listener.name=PLAINTEXT
+
+log.dirs=/var/lib/kafka/data
+num.partitions=6
+num.network.threads=8
+num.io.threads=16
+socket.send.buffer.bytes=102400
+socket.receive.buffer.bytes=102400
+socket.request.max.bytes=104857600
+
+# 单机部署把以下副本参数改为 1；三节点集群保持现值
+default.replication.factor=3
+offsets.topic.replication.factor=3
+transaction.state.log.replication.factor=3
+transaction.state.log.min.isr=2
+min.insync.replicas=2
+
+log.retention.hours=168
+log.retention.bytes=107374182400
+log.segment.bytes=1073741824
+log.retention.check.interval.ms=300000
+auto.create.topics.enable=false
+delete.topic.enable=true
+group.initial.rebalance.delay.ms=3000
+"""}],
+    "redis": [{
+        "name": "生产单机模板（redis.conf）",
+        "desc": "绑定内网 + 口令 + RDB/AOF 双持久化 + 内存上限与 LRU；口令为占位符。",
+        "content": """bind 127.0.0.1 192.0.2.40
+protected-mode yes
+port 6379
+tcp-backlog 1024
+timeout 300
+tcp-keepalive 300
+daemonize no
+supervised systemd
+pidfile /run/redis/redis-server.pid
+loglevel notice
+logfile /var/log/redis/redis-server.log
+databases 16
+
+# RDB 快照
+save 900 100
+save 300 1000
+save 60 10000
+stop-writes-on-bgsave-error yes
+rdbcompression yes
+rdbchecksum yes
+dbfilename dump.rdb
+dir /var/lib/redis
+
+# AOF
+appendonly yes
+appendfilename "appendonly.aof"
+appendfsync everysec
+no-appendfsync-on-rewrite no
+auto-aof-rewrite-percentage 100
+auto-aof-rewrite-min-size 4gb
+aof-load-truncated yes
+
+# 内存与淘汰
+maxmemory 4gb
+maxmemory-policy allkeys-lru
+maxclients 10000
+lazyfree-lazy-eviction yes
+
+# 安全（占位口令必须替换；FLUSHALL 已禁用）
+requirepass REPLACE_WITH_LOCAL_SECRET
+rename-command FLUSHALL ""
+
+slowlog-log-slower-than 10000
+slowlog-max-len 256
+latency-monitor-threshold 100
+"""}],
+    "docker": [{
+        "name": "生产 daemon.json 模板",
+        "desc": "日志轮转 + live-restore + 下载并发限制；镜像加速地址需替换为你自己的。",
+        "content": """{
+  "data-root": "/var/lib/docker",
+  "registry-mirrors": ["https://REPLACE_WITH_YOUR_MIRROR"],
+  "insecure-registries": [],
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "20m", "max-file": "5" },
+  "live-restore": true,
+  "max-concurrent-downloads": 6,
+  "max-concurrent-uploads": 4,
+  "max-download-attempts": 5,
+  "storage-driver": "overlay2",
+  "default-address-pools": [{ "base": "172.30.0.0/16", "size": 24 }],
+  "metrics-addr": "127.0.0.1:9323",
+  "experimental": false
+}
+"""}],
+}
+
 
 def entries(spec: str, section: str, style: str, notes: str, danger_map: dict[str, str]) -> list[dict]:
     """紧凑维护配置资料，输出完整字段；默认值与建议示例分开。"""
@@ -359,6 +506,7 @@ oom-score-adjust|-500|-500|调整守护进程 OOM 优先级。|错误配置可�
     for name, data in software.items():
         payload = {"software":name, "label":data["label"], "version_ref":data["version_ref"],
                    "generated":"AI 整理，使用前请核对官方文档", "sources":data["sources"],
+                   "templates":TEMPLATES[name],
                    "categories":[{"id":"cli","label":"启停与运行命令","entries":data["cli"]},
                                  {"id":"conf","label":"配置参数","entries":data["conf"]}]}
         if name == "keepalived":

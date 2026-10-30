@@ -5,6 +5,16 @@ generated: AI 整理，使用前请核对官方文档
 sources:
 - https://docs.docker.com/reference/cli/dockerd/
 - https://docs.docker.com/reference/cli/docker/
+templates:
+- name: 生产 daemon.json 模板
+  desc: 日志轮转 + live-restore + 下载并发限制；镜像加速地址需替换为你自己的。
+  content: "{\n  \"data-root\": \"/var/lib/docker\",\n  \"registry-mirrors\": [\"\
+    https://REPLACE_WITH_YOUR_MIRROR\"],\n  \"insecure-registries\": [],\n  \"log-driver\"\
+    : \"json-file\",\n  \"log-opts\": { \"max-size\": \"20m\", \"max-file\": \"5\"\
+    \ },\n  \"live-restore\": true,\n  \"max-concurrent-downloads\": 6,\n  \"max-concurrent-uploads\"\
+    : 4,\n  \"max-download-attempts\": 5,\n  \"storage-driver\": \"overlay2\",\n \
+    \ \"default-address-pools\": [{ \"base\": \"172.30.0.0/16\", \"size\": 24 }],\n\
+    \  \"metrics-addr\": \"127.0.0.1:9323\",\n  \"experimental\": false\n}\n"
 categories:
 - id: cli
   label: 启停与运行命令
