@@ -28,3 +28,5 @@ data/commands/
 Thumbs.db
 .trae-html-share-packages/
 .screenshots/
+data/assistant_files/
+data/agent_files/
