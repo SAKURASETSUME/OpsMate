@@ -159,6 +159,7 @@ const App = {
     return {
       page: parseRoute(),
       navItems: NAV_ITEMS,
+      backendHost: location.host,
       commandQuery: "",
       commandItems: [],
       commandTotal: 0,
@@ -235,6 +236,11 @@ const App = {
     },
   },
   watch: {
+    wbForm: {
+      // 内容或格式一旦改动，上一次的校验结果即过期
+      handler() { this.wbValidation = null; },
+      deep: true,
+    },
     page(nextPage) {
       if (nextPage === "commands" && this.commandItems.length === 0) {
         this.loadCommands();
@@ -755,10 +761,12 @@ const App = {
     '<div class="layout">',
     '  <aside class="sidebar">',
     '    <div class="logo">OpsMate</div>',
+    '    <p class="logo-sub">运维提效智能体</p>',
     '    <nav>',
     '      <a v-for="item in navItems" :key="item.hash" :href="item.hash"',
     '         :class="{ active: page === item.page }">{{ item.label }}</a>',
     "    </nav>",
+    '    <div class="side-status"><span class="status-dot"></span><span>{{ backendHost }}</span></div>',
     "  </aside>",
     '  <main class="content">',
     '    <section v-if="page === \'commands\'" class="commands-page">',
@@ -825,7 +833,7 @@ const App = {
     '      <div v-else-if="!kbSelected" class="kb-cards">',
     '        <button v-for="s in kbSoftwares" :key="s.software" type="button" class="kb-card" @click="openKbSoftware(s.software)">',
     "          <h2>{{ s.label }}</h2>",
-    "          <p>{{ s.cli_count }} 条启停命令 · {{ s.conf_count }} 条配置参数</p>",
+    '          <div class="kb-card-stats"><span><b>{{ s.cli_count }}</b>启停命令</span><span><b>{{ s.conf_count }}</b>配置参数</span></div>',
     "        </button>",
     '        <p v-if="kbDetailLoading" class="empty-state">加载中…</p>',
     '        <p v-else-if="!kbLoading && kbSoftwares.length === 0" class="empty-state">知识库为空</p>',

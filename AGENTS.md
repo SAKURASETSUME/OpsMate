@@ -51,7 +51,7 @@ OpsMate/                    # 本目录即项目根（含中文路径，注意 s
 **前端（app/web/，原生 ES module + Vue3 全局构建）**
 
 - hash 路由：`#/commands`、`#/kb`（含"我的配置"工坊视图，Phase 7 起）、`#/codegen`、`#/logs`、`#/logs/:id`、`#/assistant`（Phase 8 起生效）、`#/settings`；单 `app.js` 内组织，组件用模板字符串/`template` 选项。
-- 暗色主题 CSS 变量：背景 `#1e1f24`、卡片 `#26272e`、主色 `#4f8cff`、文字 `#d5d7de`；手写 CSS，交互反馈统一右上角 toast（成功绿/失败红，3s 消失）。
+- 暗色主题（2026-10-30 用户要求重构为"控制台夜航"风）：冷蓝分层 CSS 变量——页面 `#0e121c`、侧栏 `#121724`、卡片 `#161c2c`、内衬 `#0a0e16`、主色 `#4f8cff`（仅焦点/激活/链接）、文字 `#dbe3f3`；数据用等宽字体（Cascadia/Consolas）、说明用中文黑体；手写 CSS，交互反馈统一右上角 toast（成功绿/失败红，3s 消失）。
 - 所有 fetch 走统一封装（超时、错误 toast、JSON 解析）。
 - SSE 一律 `fetch POST` + `ReadableStream` 逐 chunk 按 `data: ` 行解析（**EventSource 不支持 POST，禁用**）。
 - markdown 渲染前用正则 `<!--rehype:[^>]*-->` 剥离网站样式注释；代码块只做等宽+底色+横向滚动，**不做语法高亮**。
