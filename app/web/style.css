@@ -1,23 +1,23 @@
 /* ============================================================
-   OpsMate 前端样式 · 控制台夜航风（2026-10-30 重构）
+   OpsMate 前端样式 · 控制台夜航风（2026-10-30 重构，同日按用户要求改中性黑）
    设计约定：
-   · 冷蓝分层暗色：页面 → 侧栏 → 卡片 → 内衬，四层表面递进
+   · 中性黑分层：页面 → 侧栏 → 卡片 → 内衬，四层表面递进（蓝色仅作交互点缀）
    · 等宽字体承载终端原生数据（命令/语法/日志/计数），黑体承载说明
    · 主色蓝只用于焦点/激活/链接，语义色只用于语义
    · 圆角按层级三档：面板 12 / 卡片输入 8 / 徽标 6
    ============================================================ */
 
 :root {
-  --bg: #0e121c;            /* 页面底色 */
-  --rail: #121724;          /* 侧栏轨道 */
-  --card: #161c2c;          /* 卡片/面板 */
-  --raised: #1b2336;        /* 悬浮层：列表头、hover、工具栏 */
-  --inset: #0a0e16;         /* 内衬：代码块、日志、代码输入 */
-  --border: #263048;
-  --border-strong: #34405f;
-  --text: #dbe3f3;
-  --text-dim: #8e99b3;
-  --text-faint: #5d6880;
+  --bg: #0e0e11;            /* 页面底色 */
+  --rail: #131316;          /* 侧栏轨道 */
+  --card: #17171b;          /* 卡片/面板 */
+  --raised: #1d1d22;        /* 悬浮层：列表头、hover、工具栏 */
+  --inset: #09090b;         /* 内衬：代码块、日志、代码输入 */
+  --border: #26262d;
+  --border-strong: #35353e;
+  --text: #dcdce1;
+  --text-dim: #8f8f9a;
+  --text-faint: #5e5e69;
   --primary: #4f8cff;
   --primary-bright: #7ab3ff;
   --primary-soft: rgba(79, 140, 255, 0.14);
@@ -48,7 +48,7 @@ body {
 :focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-radius: 4px; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #27304a; border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb { background: #2b2b33; border-radius: 6px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -473,7 +473,7 @@ body {
 }
 .log-line {
   display: grid; grid-template-columns: 62px 68px minmax(0, 1fr); gap: 10px;
-  padding: 4px 14px; border-bottom: 1px solid #151a28;
+  padding: 4px 14px; border-bottom: 1px solid #17171c;
   font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
 }
 .log-line:hover { background: var(--raised); }
