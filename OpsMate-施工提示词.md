@@ -299,6 +299,8 @@ CREATE TABLE IF NOT EXISTS user_configs (
 ### 4.5 设置存储与 vendored 前端库
 
 - `data/config.json`：`{"provider": "zhipu", "base_url": "...", "model": "...", "api_key": "..."}`。**任何 API 不得回传 api_key 明文**（回传 `api_key_set: true/false`）。目录权限即可（单用户桌面工具）。
+- 2026-10-30 用户确认新增本机命名配置：`data/model_profiles.json` 保存 `{active_id, items:[{id,name,provider,base_url,model,api_key}]}`；未迁移时既有 config.json 作为 current 配置。新增或保存配置不自动启用，显式启用后更新 config.json 活动快照。两个配置文件及临时写入文件仅存本机，严禁 Git 提交、项目分享或 PyInstaller 打包；打包只白名单 app、data/commands、data/kb，不可整目录打包 data。
+- 命名配置 API（新增，不更改原 settings 契约）：`GET /api/settings/profiles` 返回 `{active_id,items:[{id,name,provider,base_url,model,api_key_set}]}`；`POST /api/settings/profiles` 创建，`PUT /api/settings/profiles/{id}` 更新（body=原 settings 字段加 name，空 key 保留该配置原 key）；`POST /api/settings/profiles/{id}/activate` 显式启用。任何响应不含密钥。用户已允许付费模型验收，实际模型由用户填写与启用。
 - `app/web/vendor/vue.global.prod.js`（Vue 3.4.x）与 `marked.min.js`（12.x）获取来源（按序尝试，任一成功即止）：
   1. `https://registry.npmmirror.com/vue/3.4.38/files/dist/vue.global.prod.js`；`https://registry.npmmirror.com/marked/12.0.2/files/marked.min.js`
   2. `https://cdn.bootcdn.net/ajax/libs/vue/3.4.38/vue.global.prod.js`；`https://cdn.bootcdn.net/ajax/libs/marked/12.0.2/marked.min.js`
@@ -336,7 +338,7 @@ CREATE TABLE IF NOT EXISTS user_configs (
 - `chat(messages, temperature, timeout=120)` → 非流式，返回 `{"content": str, "model": str}`；用于脚本生成。
 - `chat_stream(messages, temperature, timeout=300)` → 生成器，逐段 yield 文本 delta；用于日志分析。
 - 错误处理：连接失败/超时 → 返回结构化错误 `{ok: false, error: "..."}`（HTTP 状态码 + 响应体前 500 字符），前端 toast 显示"检查网络/密钥/模型名"。429 重试 1 次（退避 2s），其余不重试。
-- `/api/llm/test`：发送单条 user 消息 `"回复 pong"`（max_tokens=8）测连通，返回 `{ok, latency_ms, model, error?}`。
+- `/api/llm/test`：发送单条 user 消息 `"回复 pong"`（普通模型 max_tokens=8）测连通，返回 `{ok, latency_ms, model, error?}`。GLM-5.3 等强制思考模型的官方适配使用 enabled+reasoning_effort=low，并预留至少 4096 tokens 总输出预算（包含思考）；非空正文才算成功，总时间预算仍不超过 55 秒。依据 2026-10-30 官方模型规范兼容修正，密钥始终仅本机保存。
 
 ---
 

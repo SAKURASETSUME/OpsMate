@@ -22,6 +22,17 @@
 .settings-actions { display: flex; gap: 12px; }
 button:disabled { opacity: .5; cursor: wait; }
 .settings-page a { color: var(--primary); }
+.settings-form textarea { resize: vertical; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); font: inherit; }
+.codegen-output { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; margin: 24px 0; }
+.script-source { overflow-x: auto; padding: 16px; background: #18191e; border-radius: 6px; font-family: Consolas, monospace; }
+.trace-card { padding: 14px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; margin: 10px 0; overflow-wrap: anywhere; }
+.trace-card h3 { margin: 0; }
+.trace-card pre { white-space: pre-wrap; }
+.line-badge { font-size: 12px; color: var(--primary); }
+.script-warnings { padding: 12px; color: var(--err); border-left: 3px solid var(--err); }
+.script-usage { color: var(--text-dim); overflow-wrap: anywhere; }
+.history-item { display: block; width: 100%; text-align: left; background: var(--card); color: var(--text); border: 1px solid var(--border); padding: 12px; margin: 6px 0; cursor: pointer; }
+@media (max-width: 1050px) { .codegen-output { grid-template-columns: 1fr; } }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }

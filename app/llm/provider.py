@@ -5,6 +5,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -34,6 +35,14 @@ class LLMClient:
             text = text.replace(self._key, "[密钥已隐藏]")
         return text[:500] + "；请检查网络/密钥/模型名"
 
+    def _adapt_request(self, body: dict[str, Any]) -> dict[str, Any]:
+        """官方 GLM-5.3 始终思考，使用轻量推理并保留正文预算。"""
+        if (urlsplit(self.base_url).hostname == "open.bigmodel.cn"
+                and self.model.casefold().startswith("glm-5.3")):
+            body.update(thinking={"type": "enabled"}, reasoning_effort="low")
+            body["max_tokens"] = max(int(body.get("max_tokens", 4096)), 4096)
+        return body
+
     def _client(self, timeout: float) -> httpx.AsyncClient:
         if not self._key:
             raise LLMError("尚未配置 API key，请前往设置页保存密钥")
@@ -51,6 +60,7 @@ class LLMClient:
                                 "temperature": temperature, "stream": False}
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
+        self._adapt_request(body)
         try:
             async with self._client(timeout) as client:
                 for attempt in range(2):
@@ -62,7 +72,7 @@ class LLMClient:
                         raise LLMError(self._safe_error(f"HTTP {response.status_code}：{response.text}"))
                     payload = response.json()
                     content = payload["choices"][0]["message"]["content"]
-                    if not isinstance(content, str):
+                    if not isinstance(content, str) or not content.strip():
                         raise ValueError("content 不是文本")
                     return {"content": content, "model": payload.get("model", self.model)}
         except LLMError as exc:
@@ -79,6 +89,7 @@ class LLMClient:
                           timeout: float = 300) -> AsyncIterator[str]:
         """逐段返回文本，失败抛出可脱敏的 LLMError（供 SSE 层捕获）。"""
         body = {"model": self.model, "messages": messages, "temperature": temperature, "stream": True}
+        self._adapt_request(body)
         try:
             async with self._client(timeout) as client:
                 for attempt in range(2):

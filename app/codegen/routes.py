@@ -1,1 +1,192 @@
-"""脚本工坊路由（Phase 4 施工）：/api/codegen/generate、/api/codegen/history。"""
+"""脚本生成、历史持久化及 FTS5 同步。"""
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+import sqlite3
+from contextlib import closing
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
+
+from app import config
+from app.agent.engine import AgentFormatError, run_agent
+from app.codegen.prompts import CODEGEN_SYSTEM_PROMPT
+from app.llm.provider import LLMClient, LLMError
+from app.llm.routes import effective_settings
+
+router = APIRouter(prefix="/api/codegen", tags=["codegen"])
+
+
+class GenerateInput(BaseModel):
+    requirement: str = Field(min_length=1, max_length=12000)
+    distro: str = Field(default="", max_length=100)
+    notes: str = Field(default="", max_length=12000)
+
+
+def ensure_history() -> None:
+    """建表与兼容早期 steps 列，DDL 统一通过代码执行。"""
+    config.ensure_dirs()
+    with closing(sqlite3.connect(config.DB_PATH, check_same_thread=False)) as connection:
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("""CREATE TABLE IF NOT EXISTS codegen_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, requirement TEXT NOT NULL,
+            params TEXT, script TEXT NOT NULL, explanation TEXT, warnings TEXT, usage TEXT,
+            model TEXT, steps TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')))""")
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(codegen_history)")}
+        if "steps" not in columns:
+            connection.execute("ALTER TABLE codegen_history ADD COLUMN steps TEXT")
+        exists = connection.execute("SELECT 1 FROM sqlite_master WHERE name='codegen_history_fts'").fetchone()
+        connection.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS codegen_history_fts USING fts5(
+            requirement, script, content='codegen_history', content_rowid='id', tokenize='unicode61')""")
+        if not exists:
+            connection.execute("INSERT INTO codegen_history_fts(codegen_history_fts) VALUES ('rebuild')")
+        connection.commit()
+
+
+def validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """拒绝畸形或不满足脚本/解读分离约定的模型输出。"""
+    if payload.get("need_clarification") is True:
+        questions = payload.get("questions")
+        if isinstance(questions, list):
+            questions = [
+                q["question"] + (f"（建议：{q['default']}）" if q.get("default") is not None else "")
+                if isinstance(q, dict) and isinstance(q.get("question"), str) else q
+                for q in questions]
+            # 一轮最多三个问题；其余信息可在用户补答后的下一轮继续澄清。
+            questions = questions[:3]
+        if not isinstance(questions, list) or not 1 <= len(questions) <= 3 or not all(isinstance(q, str) and q.strip() for q in questions):
+            raise AgentFormatError(json.dumps(payload, ensure_ascii=False))
+        return {"need_clarification": True, "questions": questions}
+    script = payload.get("script")
+    if isinstance(script, str):
+        # EUID 为 bash 内建整数，仅对常见数值判断做等价引号补齐。
+        script = re.sub(r'\[\s+\$EUID\s+(-(?:eq|ne|lt|le|gt|ge)\s+\d+\s*\])', r'[ "$EUID" \1', script)
+    explanation = payload.get("explanation")
+    warnings = payload.get("warnings")
+    # 拒绝明显未引用的变量展开；不把注释和单引号字面量当作变量。
+    unsafe_expansion = False
+    if isinstance(script, str):
+        quote = ""
+        for line in script.splitlines():
+            escaped = False
+            for char_index, char in enumerate(line):
+                if escaped:
+                    escaped = False
+                    continue
+                if char == "\\" and quote != "'":
+                    escaped = True
+                elif char == "#" and not quote:
+                    break
+                elif char in ('"', "'"):
+                    if quote == char:
+                        quote = ""
+                    elif not quote:
+                        quote = char
+                elif char == "$" and not quote and re.match(r"\$(?:[A-Za-z_]|\{|[0-9@*])", line[char_index:]):
+                    unsafe_expansion = True
+    if (payload.get("need_clarification") is not False or not isinstance(script, str)
+        or not script.startswith("#!/usr/bin/env bash") or "set -euo pipefail" not in script
+        or len(script.splitlines()) < 3 or unsafe_expansion
+        or "解读" in script or "分析" in script
+        or not isinstance(explanation, list) or len(explanation) < 3
+        or not all(isinstance(item, dict) and all(isinstance(item.get(k), str) and item[k].strip()
+                   for k in ("lines", "title", "detail")) for item in explanation)
+        or not isinstance(warnings, list) or not all(isinstance(w, str) for w in warnings)
+        or not isinstance(payload.get("usage"), str)):
+        raise AgentFormatError(json.dumps(payload, ensure_ascii=False))
+    header = "\n".join(script.splitlines()[:20])
+    if not all(marker in header for marker in ("用途", "用法", "参数", "依赖", "适用")) or "AI" not in header:
+        raise AgentFormatError("缺少用途/用法/参数/依赖/AI审阅/适用发行版注释块：" + json.dumps(payload, ensure_ascii=False))
+    previous: list[str] = []
+    for line in script.splitlines():
+        code = line.strip()
+        if not code or code.startswith("#"):
+            continue
+        if re.search(r"(?:^|[;|&\s])(?:rm|kill|iptables)\s|systemctl\s+(?:stop|restart)\b|\s-delete\b", code):
+            if not any("echo " in earlier for earlier in previous[-3:]):
+                raise AgentFormatError("影响业务操作前缺少中文 echo 提示：" + json.dumps(payload, ensure_ascii=False))
+        previous.append(code)
+    return {"need_clarification": False, "script": script, "explanation": explanation,
+            "warnings": warnings, "usage": payload["usage"]}
+
+
+def save_result(body: GenerateInput, payload: dict[str, Any], model: str) -> None:
+    """历史与 FTS 行在同一事务写入。"""
+    with closing(sqlite3.connect(config.DB_PATH, check_same_thread=False)) as connection:
+        with connection:
+            cursor = connection.execute(
+                "INSERT INTO codegen_history(requirement,params,script,explanation,warnings,usage,model,steps) VALUES (?,?,?,?,?,?,?,?)",
+                (body.requirement, json.dumps({"distro": body.distro, "notes": body.notes}, ensure_ascii=False),
+                 payload["script"], json.dumps(payload["explanation"], ensure_ascii=False),
+                 json.dumps(payload["warnings"], ensure_ascii=False), payload["usage"], model,
+                 json.dumps(payload["steps"], ensure_ascii=False)))
+            connection.execute("INSERT INTO codegen_history_fts(rowid,requirement,script) VALUES (?,?,?)",
+                               (cursor.lastrowid, body.requirement, payload["script"]))
+
+
+@router.post("/generate")
+async def generate(body: GenerateInput) -> dict[str, Any]:
+    """限时生成；不执行生成的脚本，成功成稿才入库。"""
+    if not body.requirement.strip():
+        raise HTTPException(400, "请填写脚本需求")
+    settings = effective_settings()
+    ensure_history()
+    user = f"需求：{body.requirement}\n发行版：{body.distro or '未指定'}\n补充：{body.notes or '无'}"
+    async def produce() -> dict[str, Any]:
+        for attempt in range(2):
+            raw, steps = await run_agent(LLMClient(settings), CODEGEN_SYSTEM_PROMPT, user + (
+                "\n上次业务输出未通过校验。必须是业务 JSON；所有变量展开必须双引号包裹；脚本不含解读/分析字样；至少三段解读。顶部注释必须写全用途/用法/参数/依赖命令/AI生成请审阅/适用发行版，删除前必须 echo 中文提示。若需求是日志归档备份，应 tar -czf 归档，保留策略只针对归档文件，禁止删除源日志，定时任务提供 cron 安装指引。" if attempt else ""))
+            try:
+                result = validate_payload(raw)
+                if not result["need_clarification"]:
+                    if ("每天" in body.requirement or "凌晨" in body.requirement) and "cron" not in (
+                        result["usage"] + " ".join(result["warnings"])).lower():
+                        raise AgentFormatError("定时需求缺少 cron 用法与风险指引：" + json.dumps(raw, ensure_ascii=False))
+                    result["steps"] = steps
+                    save_result(body, result, settings["model"])
+                return result
+            except AgentFormatError:
+                if attempt:
+                    raise
+        raise AgentFormatError("未生成结果")
+    try:
+        return await asyncio.wait_for(produce(), timeout=120)
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "生成超时，请缩短需求后重试") from None
+    except LLMError as exc:
+        raise HTTPException(502, str(exc)) from None
+    except AgentFormatError as exc:
+        summary = str(exc)
+        key = str(settings.get("api_key", ""))
+        if key:
+            summary = summary.replace(key, "[密钥已隐藏]")
+        raise HTTPException(502, "模型输出格式无效：" + summary[:500]) from None
+
+
+@router.get("/history")
+def history(limit: int = Query(default=50, ge=1, le=2000)) -> dict[str, Any]:
+    """倒序列出脚本历史。"""
+    ensure_history()
+    with closing(sqlite3.connect(config.DB_PATH, check_same_thread=False)) as connection:
+        connection.row_factory = sqlite3.Row
+        return {"items": [dict(row) for row in connection.execute(
+            "SELECT id,requirement,created_at,model FROM codegen_history ORDER BY id DESC LIMIT ?", (limit,))]}
+
+
+@router.get("/history/{id}")
+def history_detail(id: int) -> dict[str, Any]:
+    """返回可回看的完整记录，JSON 列还原成对象。"""
+    ensure_history()
+    with closing(sqlite3.connect(config.DB_PATH, check_same_thread=False)) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute("SELECT * FROM codegen_history WHERE id=?", (id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "脚本记录不存在")
+    result = dict(row)
+    for field, default in (("params", {}), ("explanation", []), ("warnings", []), ("steps", [])):
+        result[field] = json.loads(result[field]) if result[field] else default
+    result["need_clarification"] = False
+    return result

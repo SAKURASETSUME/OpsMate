@@ -85,6 +85,7 @@ pyinstaller --noconsole --name OpsMate --add-data "app:app" --add-data "data/com
 - **Never 引入清单外依赖**：Node/npm/Vite/webpack 等前端构建链、Docker、LangChain、ORM、Redis、UI 组件库、highlight.js 一律禁止；修改依赖清单属设计变更，必须先记 PHASE_LOG.md 并征求用户同意。
 - **Never 擅改契约**：API 路径、JSON 字段名、表结构、目录文件名、Phase 验收标准。
 - **Never 泄露密钥**：任何 API 响应/日志/打印不得出现 `api_key` 明文，只回传 `api_key_set: true/false`。
+- **模型配置仅本机保存**（2026-10-30 用户确认）：`data/config.json`、`data/model_profiles.json` 及其临时文件严禁提交 Git、项目分享或打入安装包；打包仅白名单 app、data/commands、data/kb，禁止整目录打包 data。付费模型须由用户填写并显式启用。
 - **Never 把解读写进脚本**：codegen 的 `script` 字段内只有代码与代码注释，解读只存在于 `explanation` 数组——验收标准包含"script 内搜索不到'解读''分析'字样"。
 - **Never 整库克隆 linux-command**（仓库含截图约 4GB；只要 `command/*.md`，走 sparse clone / contents API / 手动 zip 三级降级）；Never 在缺数据时不走降级路径直接报失败——用占位数据过验收并在 PHASE_LOG 标注"待补数据"。
 - **Never 写死端口**（`socket().bind(("127.0.0.1", 0))` 取空闲端口）。

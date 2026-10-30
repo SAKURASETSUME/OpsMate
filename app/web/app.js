@@ -108,9 +108,23 @@ const App = {
       settingsBusy: false,
       settingsTesting: false,
       settingsTestResult: "",
+      modelProfiles: [],
+      selectedProfileId: "current",
+      activeProfileId: "current",
+      profileName: "原有配置",
+      codegenForm: { requirement: "", distro: "", notes: "" },
+      codegenBusy: false,
+      codegenResult: null,
+      codegenHistory: [],
+      clarificationAnswers: [],
     };
   },
   computed: {
+    profileHasChanges() {
+      const profile = this.modelProfiles.find((p) => p.id === this.selectedProfileId);
+      return !profile || this.profileName !== profile.name || Boolean(this.settings.api_key)
+        || ["provider", "base_url", "model"].some((field) => this.settings[field] !== profile[field]);
+    },
     kbSearchActive() {
       return this.kbSearchItems !== null;
     },
@@ -142,15 +156,90 @@ const App = {
         this.loadKbList();
       }
       if (nextPage === "settings" && !this.settingsLoaded) this.loadSettings();
+      if (nextPage === "codegen") this.loadCodegenHistory();
     },
   },
   methods: {
+    async loadCodegenHistory() {
+      try { this.codegenHistory = (await apiFetch("/api/codegen/history")).items; }
+      catch (err) { /* 统一错误反馈 */ }
+    },
+    async generateScript(answering = false) {
+      if (this.codegenBusy || !this.codegenForm.requirement.trim()) return;
+      if (answering) {
+        if (this.clarificationAnswers.some((a) => !a.trim())) {
+          showToast("请回答全部追问", "err"); return;
+        }
+        this.codegenForm.requirement += "\n补充回答：\n" + this.codegenResult.questions.map(
+          (q, i) => q + "：" + this.clarificationAnswers[i]).join("\n");
+      }
+      this.codegenBusy = true;
+      this.codegenResult = null;
+      try {
+        this.codegenResult = await apiFetch("/api/codegen/generate", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(this.codegenForm),
+        }, 125000);
+        if (this.codegenResult.need_clarification) {
+          this.clarificationAnswers = this.codegenResult.questions.map(() => "");
+        } else {
+          await this.loadCodegenHistory();
+          showToast("脚本已生成并保存，执行前请审阅");
+        }
+      } catch (err) { /* apiFetch 统一反馈 */ }
+      finally { this.codegenBusy = false; }
+    },
+    async openCodegenHistory(item) {
+      if (this.codegenBusy) return;
+      try {
+        this.codegenResult = await apiFetch("/api/codegen/history/" + item.id);
+        this.codegenForm = { requirement: this.codegenResult.requirement,
+          distro: this.codegenResult.params.distro || "", notes: this.codegenResult.params.notes || "" };
+      } catch (err) { /* apiFetch 统一反馈 */ }
+    },
+    async copyScript() {
+      try { await navigator.clipboard.writeText(this.codegenResult.script); showToast("已复制脚本"); }
+      catch (err) { showToast("复制失败，请手动选择脚本复制", "err"); }
+    },
+    downloadScript() {
+      const url = URL.createObjectURL(new Blob([this.codegenResult.script], {type: "text/plain;charset=utf-8"}));
+      const link = document.createElement("a"); link.href = url; link.download = "opsmate-script.sh";
+      link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
     async loadSettings() {
       this.settingsBusy = true;
       try {
-        this.settings = { ...(await apiFetch("/api/settings")), api_key: "" };
+        const data = await apiFetch("/api/settings/profiles");
+        this.modelProfiles = data.items;
+        this.activeProfileId = data.active_id;
+        this.selectedProfileId = data.active_id;
+        this.selectModelProfile();
         this.settingsLoaded = true;
       } catch (err) { /* apiFetch 已展示错误 */ }
+      finally { this.settingsBusy = false; }
+    },
+    selectModelProfile() {
+      const profile = this.modelProfiles.find((p) => p.id === this.selectedProfileId);
+      if (!profile) return;
+      this.profileName = profile.name;
+      this.settings = { provider: profile.provider, base_url: profile.base_url, model: profile.model,
+        api_key_set: profile.api_key_set, api_key: "" };
+      this.settingsTestResult = "";
+    },
+    newModelProfile() {
+      this.selectedProfileId = "";
+      this.profileName = "GLM 付费";
+      this.settings = { provider: "zhipu", base_url: "https://open.bigmodel.cn/api/paas/v4",
+        model: "", api_key: "", api_key_set: false };
+      this.settingsTestResult = "";
+    },
+    async activateModelProfile() {
+      this.settingsBusy = true;
+      try {
+        await apiFetch("/api/settings/profiles/" + this.selectedProfileId + "/activate", {method: "POST"});
+        this.activeProfileId = this.selectedProfileId;
+        showToast("已启用该配置，尚未发起模型调用");
+      } catch (err) { /* 统一反馈 */ }
       finally { this.settingsBusy = false; }
     },
     applyProviderPreset() {
@@ -167,12 +256,18 @@ const App = {
       this.settingsBusy = true;
       try {
         const { provider, base_url, model, api_key } = this.settings;
-        await apiFetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, base_url, model, api_key }) });
+        const creating = !this.selectedProfileId;
+        const saved = await apiFetch("/api/settings/profiles" + (creating ? "" : "/" + this.selectedProfileId),
+          { method: creating ? "POST" : "PUT", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: this.profileName, provider, base_url, model, api_key }) });
+        if (creating) this.selectedProfileId = saved.id;
         this.settings.api_key = "";
-        await this.loadSettings();
+        const data = await apiFetch("/api/settings/profiles");
+        this.modelProfiles = data.items;
+        this.activeProfileId = data.active_id;
+        this.selectModelProfile();
         this.settingsTestResult = "";
-        showToast("设置已保存");
+        showToast("配置已保存到本机" + (this.selectedProfileId === this.activeProfileId ? "" : "，请启用后再测试"));
       } catch (err) { /* apiFetch 已展示错误 */ }
       finally { this.settingsBusy = false; }
     },
@@ -318,6 +413,7 @@ const App = {
     },
   },
   created() {
+    if (this.page === "codegen") this.loadCodegenHistory();
     if (this.page === "settings") this.loadSettings();
     window.addEventListener("hashchange", () => {
       this.page = parseRoute();
@@ -432,23 +528,54 @@ const App = {
     "        </div>",
     "      </div>",
     "    </section>",
+    '    <section v-else-if="page === \'codegen\'" class="codegen-page">',
+    '      <h1>脚本工坊</h1><p class="placeholder dim">检索本地知识生成脚本；执行前请审阅并在测试环境验证。</p>',
+    '      <form class="settings-form" @submit.prevent="generateScript(false)">',
+    '        <label>脚本需求<textarea v-model="codegenForm.requirement" required :disabled="codegenBusy" rows="3" placeholder="例如：每天凌晨 2 点打包 /var/log/nginx 目录为 tgz，保留最近 7 天"></textarea></label>',
+    '        <label>发行版<select v-model="codegenForm.distro" :disabled="codegenBusy"><option value="">不指定</option><option>CentOS</option><option>Ubuntu</option><option>Debian</option><option>其他</option></select></label>',
+    '        <label>补充说明<textarea v-model="codegenForm.notes" :disabled="codegenBusy" rows="2"></textarea></label>',
+    '        <button class="copy-button" :disabled="codegenBusy" type="submit">{{ codegenBusy ? "生成中…" : "生成脚本" }}</button>',
+    '      </form>',
+    '      <section v-if="codegenResult && codegenResult.need_clarification" class="clarification">',
+    '        <h2>需要补充信息</h2><form class="settings-form" @submit.prevent="generateScript(true)">',
+    '          <label v-for="(q,i) in codegenResult.questions" :key="i">{{ q }}<input required v-model="clarificationAnswers[i]" :disabled="codegenBusy"></label>',
+    '          <button class="copy-button" type="submit" :disabled="codegenBusy">补充并重新生成</button>',
+    '        </form>',
+    '      </section>',
+    '      <section v-else-if="codegenResult">',
+    '        <h2>生成过程</h2><p v-if="!codegenResult.steps || !codegenResult.steps.length" class="placeholder dim">直接生成</p>',
+    '        <details v-for="(step,i) in codegenResult.steps" :key="i" class="trace-card"><summary>{{ i + 1 }} · {{ step.tool }}</summary><pre>{{ JSON.stringify(step.args) }}</pre><p>{{ step.result_summary }}</p></details>',
+    '        <div class="codegen-output"><section><div class="settings-actions"><button class="copy-button" @click="copyScript">复制脚本</button><button class="copy-button" @click="downloadScript">下载 .sh</button></div><pre class="script-source">{{ codegenResult.script }}</pre></section>',
+    '          <section><h2>逐段解读</h2><article v-for="(part,i) in codegenResult.explanation" :key="i" class="trace-card"><h3><span class="line-badge">{{ part.lines }}</span> {{ part.title }}</h3><p>{{ part.detail }}</p></article>',
+    '            <div class="script-warnings"><p v-for="(warning,i) in codegenResult.warnings" :key="i">⚠ {{ warning }}</p></div><p class="script-usage">{{ codegenResult.usage }}</p>',
+    '          </section></div>',
+    '      </section>',
+    '      <h2>生成历史</h2><p v-if="!codegenHistory.length" class="placeholder dim">暂无生成记录</p>',
+    '      <button v-for="item in codegenHistory" :key="item.id" class="history-item" :disabled="codegenBusy" @click="openCodegenHistory(item)">{{ item.requirement }} · {{ item.model }} · {{ item.created_at }}</button>',
+    '    </section>',
     '    <section v-else-if="page === \'settings\'" class="settings-page">',
     '      <h1>模型设置</h1>',
     '      <p class="placeholder dim">配置 OpenAI 兼容模型服务，保存后再测试连通。</p>',
+    '      <div class="settings-form"><label>本机配置<select v-model="selectedProfileId" @change="selectModelProfile" :disabled="settingsBusy || settingsTesting">',
+    '        <option v-if="!selectedProfileId" value="">新配置（尚未保存）</option>',
+    '        <option v-for="p in modelProfiles" :key="p.id" :value="p.id">{{ p.name }}{{ p.id === activeProfileId ? "（已启用）" : "" }}</option>',
+    '      </select></label><button class="copy-button" type="button" @click="newModelProfile" :disabled="settingsBusy || settingsTesting">新增独立配置</button></div>',
     '      <form class="settings-form" @submit.prevent="saveSettings">',
+    '        <label>配置名称<input v-model="profileName" required maxlength="80" :disabled="settingsBusy || settingsTesting"></label>',
     '        <label>服务预设<select v-model="settings.provider" @change="applyProviderPreset" :disabled="settingsBusy || settingsTesting">',
     '          <option value="zhipu">智谱 BigModel（默认）</option><option value="siliconflow">硅基流动</option>',
     '          <option value="deepseek">DeepSeek</option><option value="custom">自定义（OpenAI 兼容）</option>',
     '        </select></label>',
     '        <label>base_url<input v-model="settings.base_url" required type="url" :disabled="settingsBusy || settingsTesting"></label>',
-    '        <label>模型名称<input v-model="settings.model" required :disabled="settingsBusy || settingsTesting"></label>',
+    '        <label>模型名称<input v-model="settings.model" required placeholder="填写你账号可调用的完整模型编码" :disabled="settingsBusy || settingsTesting"></label>',
     '        <label>API key<input v-model="settings.api_key" type="password" autocomplete="off"',
     '          :placeholder="settings.api_key_set ? \'••••已保存，留空不修改\' : \'请输入 API key\'" :disabled="settingsBusy || settingsTesting"></label>',
     '        <div class="settings-actions"><button class="copy-button" type="submit" :disabled="settingsBusy || settingsTesting">{{ settingsBusy ? "保存中…" : "保存设置" }}</button>',
-    '          <button class="copy-button" type="button" @click="testSettings" :disabled="settingsBusy || settingsTesting || !settingsLoaded">{{ settingsTesting ? "测试中…" : "测试已保存的配置" }}</button></div>',
+    '          <button class="copy-button" type="button" @click="activateModelProfile" :disabled="settingsBusy || settingsTesting || profileHasChanges || selectedProfileId === activeProfileId">启用该配置</button>',
+    '          <button class="copy-button" type="button" @click="testSettings" :disabled="settingsBusy || settingsTesting || !settingsLoaded || profileHasChanges || selectedProfileId !== activeProfileId">{{ settingsTesting ? "测试中…" : "测试已启用的配置" }}</button></div>',
     '      </form>',
     '      <p v-if="settingsTestResult" role="status">{{ settingsTestResult }}</p>',
-    '      <p class="placeholder dim">密钥仅存本机 data/config.json，不会通过设置接口回传。</p>',
+    '      <p class="placeholder dim">配置和密钥仅存本机，不进入 Git、项目分享或安装包。保存与启用不会调用模型；点击测试或生成功能后才会调用，付费模型按平台计费。</p>',
     '      <p class="placeholder dim">推荐预设：智谱 GLM-4-Flash。可在 <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer">智谱平台</a> 注册并获取 API key；模型供应与计费以平台为准。</p>',
     '    </section>',
     '    <section v-else class="placeholder-page">',

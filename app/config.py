@@ -27,6 +27,7 @@ KB_DIR = DATA_DIR / "kb"
 LOGS_DIR = DATA_DIR / "logs"
 DB_PATH = DATA_DIR / "opsmate.db"
 CONFIG_JSON = DATA_DIR / "config.json"
+PROFILES_JSON = DATA_DIR / "model_profiles.json"
 
 
 def ensure_dirs() -> None:
@@ -49,5 +50,27 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict) -> None:
     """写入 data/config.json（utf-8，缩进 2，ensure_ascii=False）。"""
-    with open(CONFIG_JSON, "w", encoding="utf-8") as handle:
+    temporary = CONFIG_JSON.with_name(CONFIG_JSON.name + ".tmp")
+    with open(temporary, "w", encoding="utf-8") as handle:
         json.dump(settings, handle, ensure_ascii=False, indent=2)
+    temporary.replace(CONFIG_JSON)
+
+
+def load_model_profiles() -> dict:
+    """读取本机命名配置，不向调用方以外输出内容。"""
+    if not PROFILES_JSON.exists():
+        return {"active_id": "current", "items": []}
+    with open(PROFILES_JSON, encoding="utf-8") as handle:
+        value = json.load(handle)
+    if not isinstance(value, dict) or not isinstance(value.get("items"), list):
+        raise ValueError("本机配置文件格式无效")
+    return value
+
+
+def save_model_profiles(profiles: dict) -> None:
+    """原子写入本机配置，所有临时文件同样必须忽略与排除打包。"""
+    ensure_dirs()
+    temporary = PROFILES_JSON.with_name(PROFILES_JSON.name + ".tmp")
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(profiles, handle, ensure_ascii=False, indent=2)
+    temporary.replace(PROFILES_JSON)

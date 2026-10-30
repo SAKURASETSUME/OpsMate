@@ -14,6 +14,9 @@ data/opsmate.db
 data/opsmate.db-shm
 data/opsmate.db-wal
 data/config.json
+data/config.json.*
+data/model_profiles.json
+data/model_profiles.json.*
 data/logs/
 
 # 外部仓库导入产物（约 10MB，可由 tools/import_commands.py 随时再生）
