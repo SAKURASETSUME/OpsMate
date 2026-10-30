@@ -1,0 +1,599 @@
+software: docker
+label: Docker
+version_ref: Docker Engine 24+/26+；部分功能依平台与版本
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://docs.docker.com/reference/cli/dockerd/
+- https://docs.docker.com/reference/cli/docker/
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: docker run
+    syntax: docker run
+    example: docker run -d --name web -p 127.0.0.1:8080:80 --restart unless-stopped
+      nginx:1.26
+    desc: 创建并启动容器。
+    notes: 镜像需事先导入；需要下载时使用用户配置的华为镜像，检查端口/挂载/网络。
+    danger: medium
+    tags:
+    - 运行命令
+  - name: docker ps
+    syntax: docker ps
+    example: docker ps -a
+    desc: 列出容器。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker images
+    syntax: docker images
+    example: docker images
+    desc: 列出本地镜像。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker pull
+    syntax: docker pull
+    example: docker pull swr.cn-north-4.myhuaweicloud.com/REPLACE_NAMESPACE/REPLACE_IMAGE:REPLACE_TAG
+    desc: 从华为 SWR 拉取镜像。
+    notes: 占位地址必须换成有权限的真实仓库，私有仓库先登录。
+    danger: low
+    tags:
+    - 运行命令
+  - name: docker push
+    syntax: docker push
+    example: docker push swr.cn-north-4.myhuaweicloud.com/REPLACE_NAMESPACE/REPLACE_IMAGE:REPLACE_TAG
+    desc: 推送镜像到华为 SWR。
+    notes: 会上传镜像内容，先确认目标和敏感信息。
+    danger: medium
+    tags:
+    - 运行命令
+  - name: docker start
+    syntax: docker start
+    example: docker start web
+    desc: 启动已有容器。
+    notes: 确认端口与挂载。
+    danger: medium
+    tags:
+    - 运行命令
+  - name: docker stop
+    syntax: docker stop
+    example: docker stop --time 30 web
+    desc: 优雅停止容器。
+    notes: 影响业务，超时后会强制终止。
+    danger: high
+    tags:
+    - 运行命令
+  - name: docker restart
+    syntax: docker restart
+    example: docker restart --time 30 web
+    desc: 重启容器。
+    notes: 在维护窗口操作。
+    danger: high
+    tags:
+    - 运行命令
+  - name: docker rm
+    syntax: docker rm
+    example: docker rm web
+    desc: 删除已停止的容器。
+    notes: -f 强制停止后删除；可写层数据会丢失。
+    danger: high
+    tags:
+    - 运行命令
+  - name: docker rmi
+    syntax: docker rmi
+    example: docker rmi example/app:test
+    desc: 删除本地镜像。
+    notes: 确认没有需要保留的标签或依赖。
+    danger: high
+    tags:
+    - 运行命令
+  - name: docker logs
+    syntax: docker logs
+    example: docker logs --tail 100 -f web
+    desc: 跟踪容器日志。
+    notes: 只读，避免暴露业务敏感内容。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker exec
+    syntax: docker exec
+    example: docker exec -it web sh
+    desc: 进入容器执行 shell。
+    notes: shell 中的后续命令会修改容器，需人工审阅。
+    danger: medium
+    tags:
+    - 运行命令
+  - name: docker inspect
+    syntax: docker inspect
+    example: docker inspect web
+    desc: 查看容器元数据。
+    notes: 输出可能包含环境变量口令。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker stats
+    syntax: docker stats
+    example: docker stats --no-stream
+    desc: 查看资源使用。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker cp
+    syntax: docker cp
+    example: docker cp web:/etc/nginx/nginx.conf ./nginx.conf
+    desc: 复制容器文件到本机。
+    notes: 确认目标文件不会被覆盖。
+    danger: low
+    tags:
+    - 运行命令
+  - name: docker top
+    syntax: docker top
+    example: docker top web
+    desc: 查看容器进程。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker build
+    syntax: docker build
+    example: docker build --pull=false -t example/app:test .
+    desc: 从 Dockerfile 构建镜像。
+    notes: 基础镜像先从华为镜像拉取并按需改 FROM，审阅构建上下文及脚本。
+    danger: medium
+    tags:
+    - 运行命令
+  - name: docker tag
+    syntax: docker tag
+    example: docker tag example/app:test example/app:reviewed
+    desc: 添加本地镜像标签。
+    notes: 不会上传镜像。
+    danger: low
+    tags:
+    - 运行命令
+  - name: docker network
+    syntax: docker network
+    example: docker network ls
+    desc: 列出网络。
+    notes: create/inspect 子命令分别用于创建/查看，先规划网段。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker volume
+    syntax: docker volume
+    example: docker volume ls
+    desc: 列出数据卷。
+    notes: inspect 查看详情；不要未经确认删除卷。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker compose
+    syntax: docker compose
+    example: docker compose ps
+    desc: 查看 Compose 服务。
+    notes: up -d 会启动，down 会停服务，down -v 会删除卷；logs 用于查看。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker system df
+    syntax: docker system df
+    example: docker system df
+    desc: 查看 Docker 空间占用。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker system prune
+    syntax: docker system prune
+    example: docker system prune
+    desc: 清理未使用对象。
+    notes: 先确认交互提示；--volumes/-a 扩大删除范围，不可恢复。
+    danger: high
+    tags:
+    - 运行命令
+  - name: docker info
+    syntax: docker info
+    example: docker info
+    desc: 查看引擎状态。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker version
+    syntax: docker version
+    example: docker version
+    desc: 查看客户端和引擎版本。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: docker login
+    syntax: docker login
+    example: docker login swr.cn-north-4.myhuaweicloud.com
+    desc: 登录华为镜像仓库。
+    notes: 交互输入，不把口令写入命令行或项目。
+    danger: medium
+    tags:
+    - 运行命令
+- id: conf
+  label: 配置参数
+  entries:
+  - name: data-root
+    default: /var/lib/docker
+    section: daemon
+    syntax: '{"data-root": "/var/lib/docker"}'
+    example: '{"data-root": "/var/lib/docker"}'
+    desc: 设置引擎持久数据目录。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；更换路径需要停服务并迁移数据。
+    danger: medium
+    tags:
+    - daemon
+  - name: registry-mirrors
+    default: '[]'
+    section: daemon
+    syntax: '{"registry-mirrors": []}'
+    example: '{"registry-mirrors": []}'
+    desc: 设置兼容镜像加速器。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；华为个人加速地址由控制台获取后填入数组，不编造可用地址。
+    danger: medium
+    tags:
+    - daemon
+  - name: insecure-registries
+    default: '[]'
+    section: daemon
+    syntax: '{"insecure-registries": []}'
+    example: '{"insecure-registries": []}'
+    desc: 允许指定的不安全仓库。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；优先配置可信 TLS，避免扩大明文访问。
+    danger: medium
+    tags:
+    - daemon
+  - name: log-driver
+    default: json-file
+    section: daemon
+    syntax: '{"log-driver": "local"}'
+    example: '{"log-driver": "local"}'
+    desc: 设置新容器默认日志驱动。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；已有容器需重建才能应用默认值。
+    danger: medium
+    tags:
+    - daemon
+  - name: log-opts
+    default: '{}'
+    section: daemon
+    syntax: '{"log-opts": {"max-size": "10m", "max-file": "3"}}'
+    example: '{"log-opts": {"max-size": "10m", "max-file": "3"}}'
+    desc: 设置日志轮转选项。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；max-size/max-file 取字符串，仅用于支持它们的日志驱动。
+    danger: medium
+    tags:
+    - daemon
+  - name: storage-driver
+    default: 平台自动选择
+    section: daemon
+    syntax: '{"storage-driver": "overlay2"}'
+    example: '{"storage-driver": "overlay2"}'
+    desc: 设置存储驱动。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；Linux 前提是受支持的文件系统；切换可能使旧镜像不可见。
+    danger: medium
+    tags:
+    - daemon
+  - name: live-restore
+    default: 'false'
+    section: daemon
+    syntax: '{"live-restore": true}'
+    example: '{"live-restore": true}'
+    desc: 守护进程短暂不可用时保留容器。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；不适用于所有升级与集群场景。
+    danger: medium
+    tags:
+    - daemon
+  - name: max-concurrent-downloads
+    default: '3'
+    section: daemon
+    syntax: '{"max-concurrent-downloads": 3}'
+    example: '{"max-concurrent-downloads": 3}'
+    desc: 设置每次拉取并行下载层数。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；按网络带宽评估。
+    danger: low
+    tags:
+    - daemon
+  - name: max-concurrent-uploads
+    default: '5'
+    section: daemon
+    syntax: '{"max-concurrent-uploads": 5}'
+    example: '{"max-concurrent-uploads": 5}'
+    desc: 设置并行上传层数。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；按网络带宽评估。
+    danger: low
+    tags:
+    - daemon
+  - name: default-shm-size
+    default: 64MiB
+    section: daemon
+    syntax: '{"default-shm-size": "64M"}'
+    example: '{"default-shm-size": "64M"}'
+    desc: 设置容器默认共享内存大小。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；通常只对新容器生效。
+    danger: low
+    tags:
+    - daemon
+  - name: max-download-attempts
+    default: '5'
+    section: daemon
+    syntax: '{"max-download-attempts": 5}'
+    example: '{"max-download-attempts": 5}'
+    desc: 设置镜像层下载重试数。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；排查镜像源与代理，勿仅增加重试。
+    danger: low
+    tags:
+    - daemon
+  - name: dns
+    default: 主机解析配置
+    section: daemon
+    syntax: '{"dns": ["192.0.2.53"]}'
+    example: '{"dns": ["192.0.2.53"]}'
+    desc: 设置容器默认 DNS。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；示例保留地址需替换为可达 DNS。
+    danger: medium
+    tags:
+    - daemon
+  - name: dns-search
+    default: 主机配置
+    section: daemon
+    syntax: '{"dns-search": ["example.test"]}'
+    example: '{"dns-search": ["example.test"]}'
+    desc: 设置 DNS 搜索域。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；使用自有域。
+    danger: low
+    tags:
+    - daemon
+  - name: hosts
+    default: unix:///var/run/docker.sock
+    section: daemon
+    syntax: '{"hosts": ["unix:///var/run/docker.sock"]}'
+    example: '{"hosts": ["unix:///var/run/docker.sock"]}'
+    desc: 指定守护进程监听。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；与 systemd -H 参数冲突会启动失败；不要裸露远程 API。
+    danger: medium
+    tags:
+    - daemon
+  - name: tls
+    default: 'false'
+    section: daemon
+    syntax: '{"tls": false}'
+    example: '{"tls": false}'
+    desc: 控制 TLS 传输。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；生产远程访问应设置 tlsverify 与证书，tls 本身不等于客户端认证。
+    danger: medium
+    tags:
+    - daemon
+  - name: tlsverify
+    default: 'false'
+    section: daemon
+    syntax: '{"tlsverify": true}'
+    example: '{"tlsverify": true}'
+    desc: 校验远程客户端证书。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；必须配套 CA、服务端证书和私钥。
+    danger: medium
+    tags:
+    - daemon
+  - name: tlscacert
+    default: 用户目录 .docker/ca.pem
+    section: daemon
+    syntax: '{"tlscacert": "/etc/docker/tls/ca.pem"}'
+    example: '{"tlscacert": "/etc/docker/tls/ca.pem"}'
+    desc: 设置信任 CA 路径。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；与 TLS 配套。
+    danger: medium
+    tags:
+    - daemon
+  - name: tlscert
+    default: 用户目录 .docker/cert.pem
+    section: daemon
+    syntax: '{"tlscert": "/etc/docker/tls/server-cert.pem"}'
+    example: '{"tlscert": "/etc/docker/tls/server-cert.pem"}'
+    desc: 设置服务端证书。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；证书 SAN 应包含连接地址。
+    danger: medium
+    tags:
+    - daemon
+  - name: tlskey
+    default: 用户目录 .docker/key.pem
+    section: daemon
+    syntax: '{"tlskey": "/etc/docker/tls/server-key.pem"}'
+    example: '{"tlskey": "/etc/docker/tls/server-key.pem"}'
+    desc: 设置私钥文件。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；限制读取权限，不上传私钥。
+    danger: medium
+    tags:
+    - daemon
+  - name: debug
+    default: 'false'
+    section: daemon
+    syntax: '{"debug": false}'
+    example: '{"debug": false}'
+    desc: 控制调试日志。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；开启会增加日志量与敏感信息暴露面。
+    danger: low
+    tags:
+    - daemon
+  - name: experimental
+    default: 'false'
+    section: daemon
+    syntax: '{"experimental": false}'
+    example: '{"experimental": false}'
+    desc: 启用实验特性。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；依版本确认，不用于未经验证的生产变更。
+    danger: low
+    tags:
+    - daemon
+  - name: metrics-addr
+    default: 未启用
+    section: daemon
+    syntax: '{"metrics-addr": "127.0.0.1:9323"}'
+    example: '{"metrics-addr": "127.0.0.1:9323"}'
+    desc: 开放 Prometheus 指标。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；绑定回环或受控网络。
+    danger: medium
+    tags:
+    - daemon
+  - name: default-address-pools
+    default: 引擎自动选择
+    section: daemon
+    syntax: '{"default-address-pools": [{"base": "172.30.0.0/16", "size": 24}]}'
+    example: '{"default-address-pools": [{"base": "172.30.0.0/16", "size": 24}]}'
+    desc: 为新网络规划默认地址池。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；避免与现有路由、VPN 冲突。
+    danger: medium
+    tags:
+    - daemon
+  - name: default-ulimits
+    default: '{}'
+    section: daemon
+    syntax: '{"default-ulimits": {"nofile": {"Name": "nofile", "Hard": 65536, "Soft":
+      65536}}}'
+    example: '{"default-ulimits": {"nofile": {"Name": "nofile", "Hard": 65536, "Soft":
+      65536}}}'
+    desc: 配置容器默认资源限制。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；根据服务实际需求评估。
+    danger: low
+    tags:
+    - daemon
+  - name: ipv6
+    default: 'false'
+    section: daemon
+    syntax: '{"ipv6": false}'
+    example: '{"ipv6": false}'
+    desc: 控制默认 bridge 的 IPv6。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；需配合 IPv6 网段和路由。
+    danger: medium
+    tags:
+    - daemon
+  - name: fixed-cidr-v6
+    default: 未设置
+    section: daemon
+    syntax: '{"fixed-cidr-v6": "2001:db8:1::/64"}'
+    example: '{"fixed-cidr-v6": "2001:db8:1::/64"}'
+    desc: 设置默认 bridge 的 IPv6 子网。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；文档保留网段，替换后使用。
+    danger: medium
+    tags:
+    - daemon
+  - name: userland-proxy
+    default: 'true'
+    section: daemon
+    syntax: '{"userland-proxy": true}'
+    example: '{"userland-proxy": true}'
+    desc: 控制用户态端口代理。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；行为与防火墙和网络模式有关。
+    danger: medium
+    tags:
+    - daemon
+  - name: seccomp-profile
+    default: 内置默认策略
+    section: daemon
+    syntax: '{"seccomp-profile": "/etc/docker/seccomp.json"}'
+    example: '{"seccomp-profile": "/etc/docker/seccomp.json"}'
+    desc: 指定默认 seccomp 策略。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；需存在的有效策略文件，不应使用 unconfined 绕过隔离。
+    danger: medium
+    tags:
+    - daemon
+  - name: exec-opts
+    default: 依平台
+    section: daemon
+    syntax: '{"exec-opts": ["native.cgroupdriver=systemd"]}'
+    example: '{"exec-opts": ["native.cgroupdriver=systemd"]}'
+    desc: 设置引擎执行选项。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；与宿主机 cgroup 管理方式一致。
+    danger: medium
+    tags:
+    - daemon
+  - name: features
+    default: 依版本
+    section: daemon
+    syntax: '{"features": {"buildkit": true}}'
+    example: '{"features": {"buildkit": true}}'
+    desc: 设置特性开关。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；24/26 可用性以本机版本为准，Buildx/BuildKit 行为也取决于客户端。
+    danger: low
+    tags:
+    - daemon
+  - name: containerd
+    default: 自动管理
+    section: daemon
+    syntax: '{"containerd": "/run/containerd/containerd.sock"}'
+    example: '{"containerd": "/run/containerd/containerd.sock"}'
+    desc: 指定外部 containerd socket。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；命名空间另用 containerd-namespace，不能把命名空间当此字段值。
+    danger: medium
+    tags:
+    - daemon
+  - name: containerd-namespace
+    default: moby
+    section: daemon
+    syntax: '{"containerd-namespace": "moby"}'
+    example: '{"containerd-namespace": "moby"}'
+    desc: 指定容器使用的 containerd 命名空间。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；与现有运行时部署保持一致。
+    danger: medium
+    tags:
+    - daemon
+  - name: cgroup-parent
+    default: 依平台
+    section: daemon
+    syntax: '{"cgroup-parent": "docker.slice"}'
+    example: '{"cgroup-parent": "docker.slice"}'
+    desc: 设置容器默认父 cgroup。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；示例适用于 systemd driver。
+    danger: medium
+    tags:
+    - daemon
+  - name: oom-score-adjust
+    default: '-500'
+    section: daemon
+    syntax: '{"oom-score-adjust": -500}'
+    example: '{"oom-score-adjust": -500}'
+    desc: 调整守护进程 OOM 优先级。
+    notes: daemon.json 先 dockerd --validate --config-file /etc/docker/daemon.json；部分项支持
+      reload，其余维护窗口重启；错误配置可能导致引擎或宿主关键进程被杀。
+    danger: medium
+    tags:
+    - daemon

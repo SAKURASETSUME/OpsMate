@@ -1,0 +1,684 @@
+software: redis
+label: Redis
+version_ref: Redis OSS 7.x（7.2 示例配置参考）
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://github.com/redis/redis/blob/7.2/redis.conf
+- https://redis.io/docs/latest/commands/
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: systemctl start redis
+    syntax: systemctl start redis
+    example: systemctl start redis
+    desc: 启动 Redis 服务。
+    notes: 发行版服务名可能是 redis-server。
+    danger: medium
+    tags:
+    - 运行命令
+  - name: systemctl stop redis
+    syntax: systemctl stop redis
+    example: systemctl stop redis
+    desc: 停止 Redis 服务。
+    notes: 先确认持久化与主从切换。
+    danger: high
+    tags:
+    - 运行命令
+  - name: systemctl restart redis
+    syntax: systemctl restart redis
+    example: systemctl restart redis
+    desc: 重启服务。
+    notes: 在维护窗口执行。
+    danger: high
+    tags:
+    - 运行命令
+  - name: systemctl status redis
+    syntax: systemctl status redis
+    example: systemctl status redis
+    desc: 查看服务状态。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: redis-cli ping
+    syntax: redis-cli ping
+    example: redis-cli ping
+    desc: 测试响应。
+    notes: 正常返回 PONG。
+    danger: false
+    tags:
+    - 运行命令
+  - name: redis-cli -h -p -a
+    syntax: redis-cli -h -p -a
+    example: redis-cli -h 127.0.0.1 -p 6379 --askpass
+    desc: 指定连接并交互输入口令。
+    notes: -a 会将口令暴露在进程参数，推荐 --askpass 或受控环境变量。
+    danger: low
+    tags:
+    - 运行命令
+  - name: redis-cli info
+    syntax: redis-cli info
+    example: redis-cli info memory
+    desc: 查看运行指标。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: redis-cli config get
+    syntax: redis-cli config get
+    example: redis-cli config get maxmemory
+    desc: 查看配置。
+    notes: 访问需 ACL 授权。
+    danger: false
+    tags:
+    - 运行命令
+  - name: redis-cli config set
+    syntax: redis-cli config set
+    example: redis-cli config set maxmemory 256mb
+    desc: 动态设置内存上限。
+    notes: 可能触发淘汰；CONFIG REWRITE 或文件持久化另行确认。
+    danger: high
+    tags:
+    - 运行命令
+  - name: redis-cli bgsave
+    syntax: redis-cli bgsave
+    example: redis-cli bgsave
+    desc: 后台生成 RDB。
+    notes: 评估 fork 内存和磁盘空间。
+    danger: medium
+    tags:
+    - 运行命令
+  - name: redis-cli save
+    syntax: redis-cli save
+    example: redis-cli save
+    desc: 同步生成 RDB，期间阻塞请求。
+    notes: 生产优先评估 BGSAVE。
+    danger: high
+    tags:
+    - 运行命令
+  - name: redis-cli lastsave
+    syntax: redis-cli lastsave
+    example: redis-cli lastsave
+    desc: 查看最近 RDB 成功保存时间戳。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: redis-cli dbsize
+    syntax: redis-cli dbsize
+    example: redis-cli dbsize
+    desc: 查看当前库键数量。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: redis-cli --scan
+    syntax: redis-cli --scan
+    example: redis-cli --scan --pattern 'session:*'
+    desc: 增量遍历匹配键。
+    notes: 避免生产 KEYS *；SCAN 可能重复且不是一致快照。
+    danger: low
+    tags:
+    - 运行命令
+  - name: redis-cli slowlog get
+    syntax: redis-cli slowlog get
+    example: redis-cli slowlog get 10
+    desc: 查看慢命令。
+    notes: 可能包含业务参数，注意本机展示范围。
+    danger: false
+    tags:
+    - 运行命令
+  - name: redis-cli client list
+    syntax: redis-cli client list
+    example: redis-cli client list
+    desc: 查看客户端。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: redis-cli client kill
+    syntax: redis-cli client kill
+    example: redis-cli client kill ID 12345
+    desc: 断开指定客户端。
+    notes: 先从 CLIENT LIST 确认 ID。
+    danger: high
+    tags:
+    - 运行命令
+  - name: redis-benchmark
+    syntax: redis-benchmark
+    example: redis-benchmark -h 127.0.0.1 -p 6379 -n 1000 -c 5 -t ping
+    desc: 执行小规模 PING 基准。
+    notes: 仅测试环境，压测仍消耗资源。
+    danger: medium
+    tags:
+    - 运行命令
+  - name: redis-check-rdb
+    syntax: redis-check-rdb
+    example: redis-check-rdb /var/lib/redis/dump.rdb
+    desc: 检查 RDB 文件。
+    notes: 对副本文件检查，避免与写入并发。
+    danger: false
+    tags:
+    - 运行命令
+  - name: redis-cli --latency
+    syntax: redis-cli --latency
+    example: redis-cli --latency
+    desc: 采样连接延迟。
+    notes: Ctrl+C 停止。
+    danger: low
+    tags:
+    - 运行命令
+- id: conf
+  label: 配置参数
+  entries:
+  - name: bind
+    default: 未指定时所有接口；示例文件为回环
+    section: server
+    syntax: bind 127.0.0.1 -::1
+    example: bind 127.0.0.1 -::1
+    desc: 限制监听地址。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；生产不要无认证暴露公网。
+    danger: medium
+    tags:
+    - server
+  - name: protected-mode
+    default: 'yes'
+    section: server
+    syntax: protected-mode yes
+    example: protected-mode yes
+    desc: 启用保护模式。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；不替代防火墙与 ACL。
+    danger: medium
+    tags:
+    - server
+  - name: port
+    default: '6379'
+    section: server
+    syntax: port 6379
+    example: port 6379
+    desc: 指定 TCP 端口。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；0 禁用普通 TCP。
+    danger: medium
+    tags:
+    - server
+  - name: tcp-backlog
+    default: '511'
+    section: server
+    syntax: tcp-backlog 511
+    example: tcp-backlog 511
+    desc: 设置监听队列长度。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；受系统 somaxconn 限制。
+    danger: low
+    tags:
+    - server
+  - name: timeout
+    default: '0'
+    section: server
+    syntax: timeout 0
+    example: timeout 0
+    desc: 空闲客户端超时秒数。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；0 不主动因空闲关闭。
+    danger: low
+    tags:
+    - server
+  - name: tcp-keepalive
+    default: '300'
+    section: server
+    syntax: tcp-keepalive 300
+    example: tcp-keepalive 300
+    desc: 设置 TCP keepalive 秒数。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；与网络设备超时协调。
+    danger: low
+    tags:
+    - server
+  - name: daemonize
+    default: 'no'
+    section: server
+    syntax: daemonize no
+    example: daemonize no
+    desc: 是否后台化。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；systemd 通常使用 no。
+    danger: medium
+    tags:
+    - server
+  - name: supervised
+    default: 'no'
+    section: server
+    syntax: supervised systemd
+    example: supervised systemd
+    desc: 设置进程监督方式。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；以发行版单元配置为准。
+    danger: medium
+    tags:
+    - server
+  - name: pidfile
+    default: /var/run/redis.pid
+    section: server
+    syntax: pidfile /run/redis/redis-server.pid
+    example: pidfile /run/redis/redis-server.pid
+    desc: 指定 PID 文件。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；目录需可写。
+    danger: low
+    tags:
+    - server
+  - name: loglevel
+    default: notice
+    section: server
+    syntax: loglevel notice
+    example: loglevel notice
+    desc: 设置日志级别。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；debug 会增加日志量。
+    danger: low
+    tags:
+    - server
+  - name: logfile
+    default: 空（标准输出）
+    section: server
+    syntax: logfile ""
+    example: logfile ""
+    desc: 指定日志文件。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；空字符串配合 systemd journal。
+    danger: low
+    tags:
+    - server
+  - name: databases
+    default: '16'
+    section: server
+    syntax: databases 16
+    example: databases 16
+    desc: 设置逻辑数据库数量。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；集群模式只支持 DB 0。
+    danger: low
+    tags:
+    - server
+  - name: save
+    default: 3600 1 300 100 60 10000
+    section: server
+    syntax: save 900 1
+    example: save 900 1
+    desc: 设置 RDB 快照触发规则。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；可多行；save "" 禁用自动快照，须评估恢复目标。
+    danger: medium
+    tags:
+    - server
+  - name: stop-writes-on-bgsave-error
+    default: 'yes'
+    section: server
+    syntax: stop-writes-on-bgsave-error yes
+    example: stop-writes-on-bgsave-error yes
+    desc: RDB 后台保存失败时停止写入。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；排查磁盘与权限，不应仅关闭保护。
+    danger: medium
+    tags:
+    - server
+  - name: rdbcompression
+    default: 'yes'
+    section: server
+    syntax: rdbcompression yes
+    example: rdbcompression yes
+    desc: 启用 RDB 压缩。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；影响 CPU 与文件大小。
+    danger: low
+    tags:
+    - server
+  - name: rdbchecksum
+    default: 'yes'
+    section: server
+    syntax: rdbchecksum yes
+    example: rdbchecksum yes
+    desc: 启用 RDB 校验和。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；有少量计算开销。
+    danger: low
+    tags:
+    - server
+  - name: dbfilename
+    default: dump.rdb
+    section: server
+    syntax: dbfilename dump.rdb
+    example: dbfilename dump.rdb
+    desc: 指定 RDB 文件名。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；配合 dir。
+    danger: low
+    tags:
+    - server
+  - name: dir
+    default: ./
+    section: server
+    syntax: dir /var/lib/redis
+    example: dir /var/lib/redis
+    desc: 持久化文件目录。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；目录权限与容量需确认。
+    danger: medium
+    tags:
+    - server
+  - name: appendonly
+    default: 'no'
+    section: server
+    syntax: appendonly yes
+    example: appendonly yes
+    desc: 启用 AOF。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；切换前评估当前持久化及磁盘。
+    danger: medium
+    tags:
+    - server
+  - name: appendfilename
+    default: appendonly.aof
+    section: server
+    syntax: appendfilename "appendonly.aof"
+    example: appendfilename "appendonly.aof"
+    desc: 指定 AOF 基础名称。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；7.x 多部分 AOF 使用 appenddirname 子目录。
+    danger: low
+    tags:
+    - server
+  - name: appendfsync
+    default: everysec
+    section: server
+    syntax: appendfsync everysec
+    example: appendfsync everysec
+    desc: 设置 AOF 同步策略。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；always/everysec/no 的性能和丢失窗口不同。
+    danger: medium
+    tags:
+    - server
+  - name: no-appendfsync-on-rewrite
+    default: 'no'
+    section: server
+    syntax: no-appendfsync-on-rewrite no
+    example: no-appendfsync-on-rewrite no
+    desc: 重写期间是否跳过 fsync。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；yes 可能扩大数据丢失窗口。
+    danger: medium
+    tags:
+    - server
+  - name: auto-aof-rewrite-percentage
+    default: '100'
+    section: server
+    syntax: auto-aof-rewrite-percentage 100
+    example: auto-aof-rewrite-percentage 100
+    desc: AOF 自动重写增长百分比。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；0 禁用自动重写。
+    danger: low
+    tags:
+    - server
+  - name: auto-aof-rewrite-min-size
+    default: 64mb
+    section: server
+    syntax: auto-aof-rewrite-min-size 64mb
+    example: auto-aof-rewrite-min-size 64mb
+    desc: 自动重写最低大小。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；与百分比条件共同生效。
+    danger: low
+    tags:
+    - server
+  - name: aof-load-truncated
+    default: 'yes'
+    section: server
+    syntax: aof-load-truncated yes
+    example: aof-load-truncated yes
+    desc: 是否接受尾部截断的 AOF。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；排查前保留损坏文件副本。
+    danger: low
+    tags:
+    - server
+  - name: maxmemory
+    default: '0'
+    section: server
+    syntax: maxmemory 256mb
+    example: maxmemory 256mb
+    desc: 设置最大内存。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；0 通常表示不设限；预留 fork 和系统内存。
+    danger: medium
+    tags:
+    - server
+  - name: maxmemory-policy
+    default: noeviction
+    section: server
+    syntax: maxmemory-policy allkeys-lru
+    example: maxmemory-policy allkeys-lru
+    desc: 设置达到上限后的处理策略。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；会淘汰数据，按缓存或存储语义选择。
+    danger: medium
+    tags:
+    - server
+  - name: maxmemory-samples
+    default: '5'
+    section: server
+    syntax: maxmemory-samples 5
+    example: maxmemory-samples 5
+    desc: 设置近似淘汰采样数。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；样本增多提高 CPU 开销。
+    danger: low
+    tags:
+    - server
+  - name: lazyfree-lazy-eviction
+    default: 'no'
+    section: server
+    syntax: lazyfree-lazy-eviction yes
+    example: lazyfree-lazy-eviction yes
+    desc: 异步释放淘汰键内存。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；减少主线程释放开销。
+    danger: low
+    tags:
+    - server
+  - name: replicaof
+    default: 未设置
+    section: server
+    syntax: replicaof 192.0.2.10 6379
+    example: replicaof 192.0.2.10 6379
+    desc: 配置复制上游。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；旧名 slaveof；切换角色需备份并确认数据覆盖。
+    danger: medium
+    tags:
+    - server
+  - name: masterauth
+    default: 未设置
+    section: server
+    syntax: masterauth "REPLACE_WITH_LOCAL_SECRET"
+    example: masterauth "REPLACE_WITH_LOCAL_SECRET"
+    desc: 设置上游认证口令。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；占位符必须在本机替换，不在知识库填写真实口令。
+    danger: medium
+    tags:
+    - server
+  - name: replica-read-only
+    default: 'yes'
+    section: server
+    syntax: replica-read-only yes
+    example: replica-read-only yes
+    desc: 限制副本写入。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；不提供网络访问控制。
+    danger: low
+    tags:
+    - server
+  - name: repl-backlog-size
+    default: 1mb
+    section: server
+    syntax: repl-backlog-size 1mb
+    example: repl-backlog-size 1mb
+    desc: 复制积压缓冲区大小。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；按断连时间与写入速率估算。
+    danger: low
+    tags:
+    - server
+  - name: repl-backlog-ttl
+    default: '3600'
+    section: server
+    syntax: repl-backlog-ttl 3600
+    example: repl-backlog-ttl 3600
+    desc: 无副本时保留积压缓冲的秒数。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；0 表示一直保留。
+    danger: low
+    tags:
+    - server
+  - name: min-replicas-to-write
+    default: '0'
+    section: server
+    syntax: min-replicas-to-write 1
+    example: min-replicas-to-write 1
+    desc: 限制写入所需健康副本数。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；可能降低可用性，配合 max-lag。
+    danger: medium
+    tags:
+    - server
+  - name: min-replicas-max-lag
+    default: '10'
+    section: server
+    syntax: min-replicas-max-lag 10
+    example: min-replicas-max-lag 10
+    desc: 健康副本最大延迟秒数。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；与 min-replicas-to-write 配合。
+    danger: low
+    tags:
+    - server
+  - name: requirepass
+    default: 未设置
+    section: server
+    syntax: requirepass "REPLACE_WITH_LOCAL_SECRET"
+    example: requirepass "REPLACE_WITH_LOCAL_SECRET"
+    desc: 设置默认用户口令。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；7.x 推荐 ACL；不得以知识库示例口令上线。
+    danger: medium
+    tags:
+    - server
+  - name: rename-command
+    default: 未设置
+    section: server
+    syntax: rename-command CONFIG ""
+    example: rename-command CONFIG ""
+    desc: 历史方式禁用命令。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；已不推荐，优先 ACL；禁用 CONFIG 影响运维。
+    danger: medium
+    tags:
+    - server
+  - name: maxclients
+    default: '10000'
+    section: server
+    syntax: maxclients 10000
+    example: maxclients 10000
+    desc: 设置最大客户端数。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；受文件描述符限制。
+    danger: low
+    tags:
+    - server
+  - name: io-threads
+    default: '1'
+    section: server
+    syntax: io-threads 4
+    example: io-threads 4
+    desc: 设置 I/O 线程数。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；按核数与负载测试，不能假定命令执行并行。
+    danger: low
+    tags:
+    - server
+  - name: slowlog-log-slower-than
+    default: '10000'
+    section: server
+    syntax: slowlog-log-slower-than 10000
+    example: slowlog-log-slower-than 10000
+    desc: 慢日志阈值微秒。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；0 记录所有，负值禁用。
+    danger: low
+    tags:
+    - server
+  - name: slowlog-max-len
+    default: '128'
+    section: server
+    syntax: slowlog-max-len 128
+    example: slowlog-max-len 128
+    desc: 慢日志最大条数。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；按排障窗口规划。
+    danger: low
+    tags:
+    - server
+  - name: latency-monitor-threshold
+    default: '0'
+    section: server
+    syntax: latency-monitor-threshold 100
+    example: latency-monitor-threshold 100
+    desc: 延迟事件阈值毫秒。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；0 禁用延迟监控。
+    danger: low
+    tags:
+    - server
+  - name: notify-keyspace-events
+    default: 空
+    section: server
+    syntax: notify-keyspace-events "Ex"
+    example: notify-keyspace-events "Ex"
+    desc: 启用键空间事件通知。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；Ex 表示键事件过期通知，注意额外开销。
+    danger: low
+    tags:
+    - server
+  - name: cluster-enabled
+    default: 'no'
+    section: server
+    syntax: cluster-enabled no
+    example: cluster-enabled no
+    desc: 控制 Redis Cluster 模式。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；更改需要完整集群规划。
+    danger: medium
+    tags:
+    - server
+  - name: cluster-config-file
+    default: nodes.conf
+    section: server
+    syntax: cluster-config-file nodes.conf
+    example: cluster-config-file nodes.conf
+    desc: 集群自动维护的状态文件。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；不要手工改写该文件。
+    danger: low
+    tags:
+    - server
+  - name: cluster-node-timeout
+    default: '15000'
+    section: server
+    syntax: cluster-node-timeout 15000
+    example: cluster-node-timeout 15000
+    desc: 集群节点超时毫秒。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；需与网络和故障切换目标协调。
+    danger: medium
+    tags:
+    - server
+  - name: hz
+    default: '10'
+    section: server
+    syntax: hz 10
+    example: hz 10
+    desc: 后台周期任务基准频率。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；过高会增加 CPU。
+    danger: low
+    tags:
+    - server
+  - name: activedefrag
+    default: 'no'
+    section: server
+    syntax: activedefrag no
+    example: activedefrag no
+    desc: 启用主动碎片整理。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；要求支持的分配器构建，按内存与 CPU 评估。
+    danger: low
+    tags:
+    - server
+  - name: lfu-log-factor
+    default: '10'
+    section: server
+    syntax: lfu-log-factor 10
+    example: lfu-log-factor 10
+    desc: LFU 计数对数增长因子。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；仅 LFU 淘汰策略相关。
+    danger: low
+    tags:
+    - server
+  - name: lfu-decay-time
+    default: '1'
+    section: server
+    syntax: lfu-decay-time 1
+    example: lfu-decay-time 1
+    desc: LFU 计数衰减分钟数。
+    notes: 改文件后维护窗口重启；支持的参数可 CONFIG SET 热改，持久化需另行确认；配合 LFU 策略评估。
+    danger: low
+    tags:
+    - server

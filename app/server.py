@@ -14,6 +14,7 @@ from app.llm.routes import router as llm_router
 from app.codegen.routes import router as codegen_router
 from app.logs.routes import router as logs_router
 from app.logs.store import init_store
+from app.kb.workbench import init_workbench
 
 VERSION = "1.0.0"
 
@@ -22,6 +23,7 @@ def create_app() -> FastAPI:
     """构建 FastAPI 应用实例（Phase 0：health + 静态托管）。"""
     config.ensure_dirs()
     init_store()
+    init_workbench()
     app = FastAPI(title="OpsMate", version=VERSION)
 
     @app.exception_handler(RequestValidationError)

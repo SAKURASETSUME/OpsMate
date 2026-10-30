@@ -1,0 +1,550 @@
+software: kafka
+label: Kafka
+version_ref: Apache Kafka 3.x（3.8 参考），标明 ZK/KRaft 区别
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://kafka.apache.org/38/configuration/broker-configs/
+- https://kafka.apache.org/38/operations/basic-kafka-operations/
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: kafka-server-start.sh
+    syntax: kafka-server-start.sh
+    example: bin/kafka-server-start.sh -daemon config/server.properties
+    desc: 启动 broker。
+    notes: 确认 KRaft 存储已按部署流程初始化，或 ZK 集群可用。
+    danger: medium
+    tags:
+    - 运行命令
+  - name: systemctl status kafka
+    syntax: systemctl status kafka
+    example: systemctl status kafka
+    desc: 查看发行版 Kafka 服务。
+    notes: systemd 单元需自行部署。
+    danger: false
+    tags:
+    - 运行命令
+  - name: systemctl stop kafka
+    syntax: systemctl stop kafka
+    example: systemctl stop kafka
+    desc: 停止 broker。
+    notes: 逐台维护并确认 ISR。
+    danger: high
+    tags:
+    - 运行命令
+  - name: systemctl restart kafka
+    syntax: systemctl restart kafka
+    example: systemctl restart kafka
+    desc: 重启 broker。
+    notes: 使用滚动重启，避免同时停多数副本。
+    danger: high
+    tags:
+    - 运行命令
+  - name: kafka-topics.sh --create
+    syntax: kafka-topics.sh --create
+    example: bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic
+      demo --partitions 3 --replication-factor 1
+    desc: 创建主题。
+    notes: 副本数 1 仅用于单机演示，生产评估副本与 ISR。
+    danger: medium
+    tags:
+    - 运行命令
+  - name: kafka-topics.sh --list
+    syntax: kafka-topics.sh --list
+    example: bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+    desc: 列出主题。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: kafka-topics.sh --describe
+    syntax: kafka-topics.sh --describe
+    example: bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic
+      demo
+    desc: 查看分区与副本。
+    notes: 关注 leader 和 ISR。
+    danger: false
+    tags:
+    - 运行命令
+  - name: kafka-topics.sh --alter
+    syntax: kafka-topics.sh --alter
+    example: bin/kafka-topics.sh --bootstrap-server localhost:9092 --alter --topic
+      demo --partitions 6
+    desc: 增加主题分区。
+    notes: 不能通过此命令减少分区，可能改变键分区映射。
+    danger: high
+    tags:
+    - 运行命令
+  - name: kafka-topics.sh --delete
+    syntax: kafka-topics.sh --delete
+    example: bin/kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic
+      demo
+    desc: 删除主题及数据。
+    notes: 不可恢复，先确认主题和备份。
+    danger: high
+    tags:
+    - 运行命令
+  - name: kafka-console-producer.sh
+    syntax: kafka-console-producer.sh
+    example: bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic
+      demo
+    desc: 交互发送消息。
+    notes: 输入内容会写入目标主题。
+    danger: medium
+    tags:
+    - 运行命令
+  - name: kafka-console-consumer.sh
+    syntax: kafka-console-consumer.sh
+    example: bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic
+      demo --from-beginning --group demo-reader
+    desc: 从头读取消息。
+    notes: 使用独立测试组，避免影响生产消费进度。
+    danger: low
+    tags:
+    - 运行命令
+  - name: kafka-consumer-groups.sh --list
+    syntax: kafka-consumer-groups.sh --list
+    example: bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --list
+    desc: 列出消费者组。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: kafka-consumer-groups.sh --describe
+    syntax: kafka-consumer-groups.sh --describe
+    example: bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe
+      --group demo-reader
+    desc: 查看消费位点和积压。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: kafka-consumer-groups.sh --reset-offsets
+    syntax: kafka-consumer-groups.sh --reset-offsets
+    example: bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --reset-offsets
+      --group demo-reader --topic demo --to-earliest --dry-run
+    desc: 预览重置消费位点。
+    notes: 先停止组消费者；dry-run 不写入，确认后才考虑 --execute，可能重复消费。
+    danger: high
+    tags:
+    - 运行命令
+  - name: kafka-configs.sh --describe
+    syntax: kafka-configs.sh --describe
+    example: bin/kafka-configs.sh --bootstrap-server localhost:9092 --entity-type
+      topics --entity-name demo --describe
+    desc: 查看动态配置。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: kafka-configs.sh --alter
+    syntax: kafka-configs.sh --alter
+    example: bin/kafka-configs.sh --bootstrap-server localhost:9092 --entity-type
+      topics --entity-name demo --alter --add-config retention.ms=86400000
+    desc: 修改主题保留时间。
+    notes: 缩短保留期会清理数据；仅动态配置直接生效。
+    danger: high
+    tags:
+    - 运行命令
+  - name: kafka-log-dirs.sh --describe
+    syntax: kafka-log-dirs.sh --describe
+    example: bin/kafka-log-dirs.sh --bootstrap-server localhost:9092 --describe
+    desc: 查看副本目录占用。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: kafka-cluster.sh cluster-id
+    syntax: kafka-cluster.sh cluster-id
+    example: bin/kafka-cluster.sh cluster-id --bootstrap-server localhost:9092
+    desc: 查询集群 ID。
+    notes: 以本机脚本 --help 为准。
+    danger: false
+    tags:
+    - 运行命令
+  - name: kafka-broker-api-versions.sh
+    syntax: kafka-broker-api-versions.sh
+    example: bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+    desc: 查看 broker 支持的协议版本。
+    notes: 只读。
+    danger: false
+    tags:
+    - 运行命令
+  - name: kafka-acls.sh
+    syntax: kafka-acls.sh
+    example: bin/kafka-acls.sh --bootstrap-server localhost:9092 --list
+    desc: 列出访问控制规则。
+    notes: 添加或删除 ACL 需先评估生产权限。
+    danger: false
+    tags:
+    - 运行命令
+- id: conf
+  label: 配置参数
+  entries:
+  - name: broker.id
+    default: '-1'
+    section: broker
+    syntax: broker.id=1
+    example: broker.id=1
+    desc: ZK 模式 broker 唯一标识。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；KRaft 使用 node.id。
+    danger: medium
+    tags:
+    - broker
+  - name: listeners
+    default: PLAINTEXT://:9092
+    section: broker
+    syntax: listeners=PLAINTEXT://127.0.0.1:9092
+    example: listeners=PLAINTEXT://127.0.0.1:9092
+    desc: 设置监听端点。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；不要将不认证的端口暴露公网。
+    danger: medium
+    tags:
+    - broker
+  - name: advertised.listeners
+    default: 取 listeners
+    section: broker
+    syntax: advertised.listeners=PLAINTEXT://localhost:9092
+    example: advertised.listeners=PLAINTEXT://localhost:9092
+    desc: 设置客户端可访问的通告地址。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；多机环境不能填写 localhost。
+    danger: medium
+    tags:
+    - broker
+  - name: listener.security.protocol.map
+    default: 内置名称映射
+    section: broker
+    syntax: listener.security.protocol.map=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+    example: listener.security.protocol.map=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+    desc: 映射监听名称与协议。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；生产评估 SSL/SASL。
+    danger: medium
+    tags:
+    - broker
+  - name: inter.broker.listener.name
+    default: 未设置
+    section: broker
+    syntax: inter.broker.listener.name=PLAINTEXT
+    example: inter.broker.listener.name=PLAINTEXT
+    desc: 指定 broker 间监听名称。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；与 security.inter.broker.protocol
+      不要冲突。
+    danger: medium
+    tags:
+    - broker
+  - name: controller.listener.names
+    default: 未设置
+    section: broker
+    syntax: controller.listener.names=CONTROLLER
+    example: controller.listener.names=CONTROLLER
+    desc: 指定 KRaft controller 监听名称。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；仅 KRaft；必须与 listeners/map
+      配套。
+    danger: medium
+    tags:
+    - broker
+  - name: num.network.threads
+    default: '3'
+    section: broker
+    syntax: num.network.threads=3
+    example: num.network.threads=3
+    desc: 网络请求处理线程数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；按连接负载调优。
+    danger: low
+    tags:
+    - broker
+  - name: num.io.threads
+    default: '8'
+    section: broker
+    syntax: num.io.threads=8
+    example: num.io.threads=8
+    desc: 请求及磁盘处理线程数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；按 CPU/磁盘评估。
+    danger: low
+    tags:
+    - broker
+  - name: socket.send.buffer.bytes
+    default: '102400'
+    section: broker
+    syntax: socket.send.buffer.bytes=102400
+    example: socket.send.buffer.bytes=102400
+    desc: 发送缓冲区字节数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；与操作系统限制配合。
+    danger: low
+    tags:
+    - broker
+  - name: socket.receive.buffer.bytes
+    default: '102400'
+    section: broker
+    syntax: socket.receive.buffer.bytes=102400
+    example: socket.receive.buffer.bytes=102400
+    desc: 接收缓冲区字节数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；与操作系统限制配合。
+    danger: low
+    tags:
+    - broker
+  - name: socket.request.max.bytes
+    default: '104857600'
+    section: broker
+    syntax: socket.request.max.bytes=104857600
+    example: socket.request.max.bytes=104857600
+    desc: 限制单次请求大小。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；防止过大请求占用内存。
+    danger: low
+    tags:
+    - broker
+  - name: log.dirs
+    default: 取 log.dir
+    section: broker
+    syntax: log.dirs=/var/lib/kafka/data
+    example: log.dirs=/var/lib/kafka/data
+    desc: 设置数据日志目录。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；不要放临时目录，变更须迁移数据。
+    danger: medium
+    tags:
+    - broker
+  - name: num.partitions
+    default: '1'
+    section: broker
+    syntax: num.partitions=3
+    example: num.partitions=3
+    desc: 自动建主题的默认分区数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；不改变已存在主题。
+    danger: low
+    tags:
+    - broker
+  - name: num.recovery.threads.per.data.dir
+    default: '1'
+    section: broker
+    syntax: num.recovery.threads.per.data.dir=1
+    example: num.recovery.threads.per.data.dir=1
+    desc: 每目录恢复与刷盘线程数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；按存储吞吐评估。
+    danger: low
+    tags:
+    - broker
+  - name: default.replication.factor
+    default: '1'
+    section: broker
+    syntax: default.replication.factor=3
+    example: default.replication.factor=3
+    desc: 自动创建主题默认副本数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；不能超过可用 broker 数。
+    danger: medium
+    tags:
+    - broker
+  - name: offsets.topic.num.partitions
+    default: '50'
+    section: broker
+    syntax: offsets.topic.num.partitions=50
+    example: offsets.topic.num.partitions=50
+    desc: 消费位点主题分区数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；部署前规划，后续不宜调整。
+    danger: low
+    tags:
+    - broker
+  - name: offsets.topic.replication.factor
+    default: '3'
+    section: broker
+    syntax: offsets.topic.replication.factor=3
+    example: offsets.topic.replication.factor=3
+    desc: 消费位点主题副本数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；单机演示需显式降为 1，生产保留冗余。
+    danger: medium
+    tags:
+    - broker
+  - name: transaction.state.log.replication.factor
+    default: '3'
+    section: broker
+    syntax: transaction.state.log.replication.factor=3
+    example: transaction.state.log.replication.factor=3
+    desc: 事务状态主题副本数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；事务初始化需要足够 broker。
+    danger: medium
+    tags:
+    - broker
+  - name: transaction.state.log.min.isr
+    default: '2'
+    section: broker
+    syntax: transaction.state.log.min.isr=2
+    example: transaction.state.log.min.isr=2
+    desc: 事务状态主题最少同步副本数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；与副本数协调。
+    danger: low
+    tags:
+    - broker
+  - name: log.retention.hours
+    default: '168'
+    section: broker
+    syntax: log.retention.hours=168
+    example: log.retention.hours=168
+    desc: 默认日志保留小时数。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；主题覆盖配置优先，缩短可能删除历史数据。
+    danger: medium
+    tags:
+    - broker
+  - name: log.retention.bytes
+    default: '-1'
+    section: broker
+    syntax: log.retention.bytes=1073741824
+    example: log.retention.bytes=1073741824
+    desc: 每分区保留字节数限制。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；-1 表示不按大小限制。
+    danger: medium
+    tags:
+    - broker
+  - name: log.segment.bytes
+    default: '1073741824'
+    section: broker
+    syntax: log.segment.bytes=1073741824
+    example: log.segment.bytes=1073741824
+    desc: 数据段大小。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；影响滚动与清理粒度。
+    danger: low
+    tags:
+    - broker
+  - name: log.retention.check.interval.ms
+    default: '300000'
+    section: broker
+    syntax: log.retention.check.interval.ms=300000
+    example: log.retention.check.interval.ms=300000
+    desc: 保留期检查周期。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；单位毫秒。
+    danger: low
+    tags:
+    - broker
+  - name: log.cleanup.policy
+    default: delete
+    section: broker
+    syntax: log.cleanup.policy=delete
+    example: log.cleanup.policy=delete
+    desc: 配置删除或压缩策略。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；日志压缩通过 compact
+      或主题 cleanup.policy，不存在 log.compaction 这个通用配置键。
+    danger: medium
+    tags:
+    - broker
+  - name: delete.topic.enable
+    default: 'true'
+    section: broker
+    syntax: delete.topic.enable=true
+    example: delete.topic.enable=true
+    desc: 允许删除主题。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；生产删除应受权限控制。
+    danger: medium
+    tags:
+    - broker
+  - name: auto.create.topics.enable
+    default: 'true'
+    section: broker
+    syntax: auto.create.topics.enable=false
+    example: auto.create.topics.enable=false
+    desc: 控制自动创建主题。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；关闭可避免拼错名称意外建主题。
+    danger: medium
+    tags:
+    - broker
+  - name: message.max.bytes
+    default: '1048588'
+    section: broker
+    syntax: message.max.bytes=1048588
+    example: message.max.bytes=1048588
+    desc: broker 可接受的最大记录批次。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；同时检查生产者、主题及副本拉取限制。
+    danger: low
+    tags:
+    - broker
+  - name: replica.fetch.max.bytes
+    default: '1048576'
+    section: broker
+    syntax: replica.fetch.max.bytes=1048576
+    example: replica.fetch.max.bytes=1048576
+    desc: 副本每分区拉取目标上限。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；首个超大批次可能仍返回以保证进度。
+    danger: low
+    tags:
+    - broker
+  - name: min.insync.replicas
+    default: '1'
+    section: broker
+    syntax: min.insync.replicas=2
+    example: min.insync.replicas=2
+    desc: acks=all 下写入要求的最小 ISR。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；与副本数及容错目标一致。
+    danger: medium
+    tags:
+    - broker
+  - name: unclean.leader.election.enable
+    default: 'false'
+    section: broker
+    syntax: unclean.leader.election.enable=false
+    example: unclean.leader.election.enable=false
+    desc: 控制是否允许非同步副本当选。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；启用可能丢数据。
+    danger: medium
+    tags:
+    - broker
+  - name: group.initial.rebalance.delay.ms
+    default: '3000'
+    section: broker
+    syntax: group.initial.rebalance.delay.ms=3000
+    example: group.initial.rebalance.delay.ms=3000
+    desc: 新组首次重平衡延迟。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；单位毫秒。
+    danger: low
+    tags:
+    - broker
+  - name: zookeeper.connect
+    default: 未设置
+    section: broker
+    syntax: zookeeper.connect=localhost:2181
+    example: zookeeper.connect=localhost:2181
+    desc: ZK 模式连接串。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；Kafka 3.x 的 ZK
+      模式；KRaft 不填写。
+    danger: medium
+    tags:
+    - broker
+  - name: process.roles
+    default: 空（ZK 模式）
+    section: broker
+    syntax: process.roles=broker,controller
+    example: process.roles=broker,controller
+    desc: KRaft 节点角色。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；组合模式仅建议小规模或演示部署。
+    danger: medium
+    tags:
+    - broker
+  - name: node.id
+    default: 必须为 KRaft 配置
+    section: broker
+    syntax: node.id=1
+    example: node.id=1
+    desc: KRaft 节点唯一 ID。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；与 quorum voters
+      的 ID 一致。
+    danger: medium
+    tags:
+    - broker
+  - name: controller.quorum.voters
+    default: 空
+    section: broker
+    syntax: controller.quorum.voters=1@localhost:9093
+    example: controller.quorum.voters=1@localhost:9093
+    desc: 静态 KRaft quorum 成员。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；3.x 静态投票配置，多机地址需可达。
+    danger: medium
+    tags:
+    - broker
+  - name: advertised.host.name
+    default: 旧版已废弃
+    section: broker
+    syntax: advertised.host.name=localhost
+    example: advertised.host.name=localhost
+    desc: 历史版本的通告主机名。
+    notes: server.properties 修改通常需滚动重启；支持动态更新的键可经 kafka-configs 管理；Kafka 3.x 不再使用，改用
+      advertised.listeners；此行仅迁移说明，不应写入新配置。
+    danger: 'false'
+    tags:
+    - broker

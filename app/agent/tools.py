@@ -7,6 +7,7 @@ from typing import Any
 
 from app import config
 from app.commands.service import get_command_index
+from app.kb import workbench
 from app.kb.service import get_kb
 from app.logs import store as log_store
 import re
@@ -18,6 +19,7 @@ TOOL_DESCRIPTIONS = {
     "filter_log": "只读筛选当前日志，args={log_id,q可选,level可选,regex可选,limit:1到50}，返回行号和有界片段",
     "get_stats": "只读当前日志的级别与聚类统计，args={log_id}",
     "get_context": "只读当前日志行附近上下文，args={log_id,line_no,around:0到10}",
+    "read_user_config": "读取用户显式开启共享的配置原文，args={name:配置名称}；未共享或不存在时返回失败",
 }
 
 
@@ -58,6 +60,11 @@ def execute_tool(name: str, args: dict[str, Any], *, scope_log_id: int | None = 
             if "lines" in result:
                 result["lines"] = [{**row, "text": row["text"][:600]} for row in result["lines"]]
             return {"ok": True, "result": result}
+        if name == "read_user_config":
+            config_name = str(args.get("name", "")).strip()
+            if not config_name or len(config_name) > 80:
+                return {"ok": False, "error": "配置不存在或未共享"}
+            return workbench.read_shared_config(config_name)
         q = args.get("q", "")
         if not isinstance(q, str) or not q.strip() or len(q) > 500:
             return {"ok": False, "error": "q 必须是 1–500 字文本"}

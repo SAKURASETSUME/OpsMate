@@ -178,6 +178,10 @@ const App = {
       kbSearchItems: null,
       kbSearchLoading: false,
       kbSearchTimer: null,
+      kbView: "kb",
+      wbConfigs: [], wbLoading: false, wbSelectedId: null,
+      wbForm: { name: "", format: "yaml", content: "" },
+      wbValidation: null, wbBusy: false, wbShowRegex: false, wbShared: false, wbDeleteId: false,
       settings: { provider: "zhipu", base_url: "", model: "", api_key: "", api_key_set: false },
       settingsLoaded: false,
       settingsBusy: false,
@@ -572,6 +576,107 @@ const App = {
         [name]: !this.kbExpanded[name],
       });
     },
+    switchKbView(view) {
+      this.kbView = view;
+      if (view === "mine" && !this.wbConfigs.length) this.loadWbConfigs();
+    },
+    async loadWbConfigs() {
+      this.wbLoading = true;
+      try { this.wbConfigs = (await apiFetch("/api/kb/workbench/configs")).items; }
+      catch (err) { /* 统一提示 */ }
+      finally { this.wbLoading = false; }
+    },
+    newWbConfig() {
+      this.wbSelectedId = null;
+      this.wbForm = { name: "", format: "yaml", content: "" };
+      this.wbValidation = null; this.wbShared = false; this.wbShowRegex = false; this.wbDeleteId = false;
+    },
+    async openWbConfig(item) {
+      this.wbBusy = true;
+      try {
+        const data = await apiFetch("/api/kb/workbench/configs/" + item.id);
+        this.wbSelectedId = data.id;
+        this.wbForm = { name: data.name, format: data.format, content: data.content };
+        this.wbShared = data.shared === 1;
+        this.wbValidation = null; this.wbShowRegex = false; this.wbDeleteId = false;
+      } catch (err) { /* 统一提示 */ }
+      finally { this.wbBusy = false; }
+    },
+    async uploadWbFile(event) {
+      const file = event.target.files[0];
+      event.target.value = "";
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) { showToast("配置内容超过 2MB 上限，请先拆分", "err"); return; }
+      try {
+        this.wbForm.content = await file.text();
+        showToast("已按 UTF-8 读入：" + file.name);
+      } catch (err) { showToast("读取文件失败", "err"); }
+    },
+    jumpWbLine(line) {
+      const editor = document.getElementById("wb-editor-content");
+      if (!editor || !line || line < 1) return;
+      const lines = this.wbForm.content.split(/\r?\n/);
+      if (line > lines.length) return;
+      let start = 0;
+      for (let index = 0; index < line - 1; index++) start += lines[index].length + 1;
+      editor.focus();
+      editor.setSelectionRange(start, start + lines[line - 1].length);
+      const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 20;
+      editor.scrollTop = Math.max(0, (line - 3) * lineHeight);
+    },
+    async validateWbConfig() {
+      this.wbBusy = true;
+      try {
+        this.wbValidation = await apiFetch("/api/kb/workbench/validate", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ format: this.wbForm.format, content: this.wbForm.content }),
+        });
+        showToast(this.wbValidation.ok ? "校验通过" : "发现 " + this.wbValidation.errors.length + " 处错误",
+          this.wbValidation.ok ? "ok" : "err");
+      } catch (err) { /* 统一提示 */ }
+      finally { this.wbBusy = false; }
+    },
+    async saveWbConfig() {
+      if (this.wbBusy || !this.wbForm.name.trim()) return;
+      this.wbBusy = true;
+      try {
+        const creating = this.wbSelectedId === null;
+        const saved = await apiFetch("/api/kb/workbench/configs" + (creating ? "" : "/" + this.wbSelectedId), {
+          method: creating ? "POST" : "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(this.wbForm),
+        });
+        if (creating) this.wbSelectedId = saved.id;
+        this.wbDeleteId = false;
+        showToast("配置已保存（仅本机）");
+        await this.loadWbConfigs();
+      } catch (err) { /* 统一提示 */ }
+      finally { this.wbBusy = false; }
+    },
+    async toggleWbShare() {
+      if (this.wbSelectedId === null || this.wbBusy) return;
+      this.wbBusy = true;
+      try {
+        const data = await apiFetch("/api/kb/workbench/configs/" + this.wbSelectedId + "/share", {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ shared: !this.wbShared }),
+        });
+        this.wbShared = data.shared === 1;
+        showToast(this.wbShared ? "已共享：智能体现在可读取该配置" : "已关闭共享，立即生效");
+        await this.loadWbConfigs();
+      } catch (err) { /* 统一提示 */ }
+      finally { this.wbBusy = false; }
+    },
+    async deleteWbConfig() {
+      if (this.wbSelectedId === null || this.wbBusy) return;
+      this.wbBusy = true;
+      try {
+        await apiFetch("/api/kb/workbench/configs/" + this.wbSelectedId, { method: "DELETE" });
+        showToast("配置已删除");
+        this.newWbConfig();
+        await this.loadWbConfigs();
+      } catch (err) { /* 统一提示 */ }
+      finally { this.wbBusy = false; }
+    },
     queueCommandSearch() {
       clearTimeout(this.commandSearchTimer);
       this.commandSearchTimer = setTimeout(() => this.loadCommands(), 300);
@@ -690,11 +795,16 @@ const App = {
     '      <header class="page-header">',
     "        <div>",
     "          <h1>配置速查</h1>",
-    '          <p v-if="!kbSelected">nginx / zabbix 启停命令与配置参数分 Tab 查询</p>',
-    '          <p v-else>{{ kbSelected.label }} · {{ kbSelected.version_ref }}</p>',
+    '          <div class="kb-view-tabs" role="tablist">',
+    '            <button type="button" :class="{ active: kbView === \'kb\' }" @click="switchKbView(\'kb\')">知识库</button>',
+    '            <button type="button" :class="{ active: kbView === \'mine\' }" @click="switchKbView(\'mine\')">我的配置</button>',
+    "          </div>",
     "        </div>",
     '        <span class="result-count">AI 整理，使用前请核对官方文档</span>',
     "      </header>",
+    "      <template v-if=\"kbView === 'kb'\">",
+    '      <p v-if="!kbSelected" class="placeholder dim">nginx / zabbix / keepalived / kafka / redis / docker 启停命令与配置参数分 Tab 查询</p>',
+    '      <p v-else class="placeholder dim">{{ kbSelected.label }} · {{ kbSelected.version_ref }}</p>',
     '      <label class="command-search">',
     "        <span>搜索</span>",
     '        <input v-model="kbQuery" @input="queueKbSearch" type="search"',
@@ -748,7 +858,57 @@ const App = {
     "          </div>",
     "        </div>",
     "      </div>",
-    "    </section>",
+    "    </template>",
+    '    <div v-else class="wb-layout">',
+    '      <aside class="wb-list" aria-label="我的配置列表">',
+    '        <button class="copy-button" type="button" @click="newWbConfig" :disabled="wbBusy">＋ 新建配置</button>',
+    '        <p v-if="wbLoading" class="empty-state">加载中…</p>',
+    '        <p v-else-if="!wbConfigs.length" class="empty-state">暂无配置：新建或上传一份配置开始校验</p>',
+    '        <button v-for="item in wbConfigs" :key="item.id" type="button" class="history-item"',
+    '                :class="{ active: wbSelectedId === item.id }" @click="openWbConfig(item)">',
+    "          <strong>{{ item.name }}</strong>",
+    '          <span class="wb-meta">{{ item.format }} · {{ item.size_bytes }} 字节 · {{ item.updated_at }}<em v-if="item.shared" class="wb-shared-badge">已共享</em></span>',
+    "        </button>",
+    "      </aside>",
+    '      <section class="wb-editor" aria-label="配置编辑器">',
+    '        <p class="placeholder dim">配置仅保存在本机数据库；校验为本地静态分析，不联网、不执行。单份内容不超过 2MB。</p>',
+    '        <div class="settings-form">',
+    '          <label>配置名称<input v-model="wbForm.name" maxlength="80" :disabled="wbBusy" placeholder="例如：生产 nginx 主配置"></label>',
+    '          <label>格式<select v-model="wbForm.format" :disabled="wbBusy">',
+    '            <option value="yaml">YAML</option><option value="nginx">nginx</option>',
+    '            <option value="keepalived">keepalived</option><option value="properties">properties（zabbix / kafka / redis）</option>',
+    '            <option value="json">JSON</option><option value="text">纯文本</option></select></label>',
+    '          <label>配置内容（UTF-8 文本）<textarea id="wb-editor-content" v-model="wbForm.content" rows="14" spellcheck="false" :disabled="wbBusy" class="code-input" placeholder="粘贴配置内容，或点击下方按钮选择文件"></textarea></label>',
+    '          <div class="settings-actions">',
+    '            <label class="copy-button wb-upload-btn">选择文件上传<input type="file" :disabled="wbBusy" accept=".yaml,.yml,.conf,.cfg,.properties,.json,.txt" @change="uploadWbFile"></label>',
+    '            <button class="copy-button" type="button" @click="validateWbConfig" :disabled="wbBusy">校验</button>',
+    '            <button class="copy-button" type="button" @click="wbShowRegex = !wbShowRegex">正则测试</button>',
+    '            <button class="copy-button" type="button" @click="saveWbConfig" :disabled="wbBusy || !wbForm.name.trim()">{{ wbBusy ? "处理中…" : "保存" }}</button>',
+    '            <button v-if="wbSelectedId !== null" class="copy-button danger-button" type="button" @click="wbDeleteId = true" :disabled="wbBusy">删除</button>',
+    "          </div>",
+    '          <div v-if="wbDeleteId" class="delete-confirm">',
+    "            <p>确认删除该配置？此操作不可撤销。</p>",
+    '            <button class="copy-button danger-button" type="button" @click="deleteWbConfig" :disabled="wbBusy">确认删除</button>',
+    '            <button class="copy-button" type="button" @click="wbDeleteId = false">取消</button>',
+    "          </div>",
+    '          <div v-if="wbSelectedId !== null" class="wb-share-row">',
+    '            <label class="inline-label"><input type="checkbox" :checked="wbShared" :disabled="wbBusy" @change="toggleWbShare">共享给智能体（可被工具 read_user_config 读取）</label>',
+    '            <p class="wb-share-hint">⚠ 开启后该配置内容会被发送给大模型；关闭立即生效。包含密钥、口令等敏感信息的配置请勿开启。</p>',
+    "          </div>",
+    "        </div>",
+    '        <div v-if="wbValidation" class="wb-results">',
+    '          <p :class="wbValidation.ok ? \'wb-ok\' : \'regex-error\'" role="status">{{ wbValidation.ok ? "校验通过" : "发现 " + wbValidation.errors.length + " 处错误" }} · {{ wbValidation.stats.lines }} 行 · {{ wbValidation.stats.bytes }} 字节</p>',
+    '          <div class="wb-issues">',
+    '            <p v-for="(issue,i) in wbValidation.errors" :key="\'e\'+i" class="wb-issue err" title="点击定位到该行" @click="jumpWbLine(issue.line)">',
+    '              <span class="wb-line-no">{{ issue.line ? "第 " + issue.line + " 行" : "全局" }}</span>{{ issue.message }}</p>',
+    '            <p v-for="(issue,i) in wbValidation.warnings" :key="\'w\'+i" class="wb-issue warn" title="点击定位到该行" @click="jumpWbLine(issue.line)">',
+    '              <span class="wb-line-no">{{ issue.line ? "第 " + issue.line + " 行" : "全局" }}</span>{{ issue.message }}</p>',
+    "          </div>",
+    "        </div>",
+    '        <regex-preview v-if="wbShowRegex" initial-pattern="(\\w+)@(\\w+\\.\\w+)" :initial-text="wbForm.content.slice(0, 20000)"></regex-preview>',
+    "      </section>",
+    "    </div>",
+    '    </section>',
     '    <section v-else-if="page === \'logs\'" class="logs-page">',
     '      <template v-if="!logId">',
     '        <h1>日志中心</h1><p class="placeholder dim">本机导入、过滤与导出；单份日志不超过 50MB，使用 UTF-8 编码。</p>',

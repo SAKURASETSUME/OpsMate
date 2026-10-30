@@ -775,3 +775,82 @@
 - 构建：授权 ASCII 目录下 phase6-dist/OpsMate/OpsMate.exe；无模型配置/密钥/用户数据库/原始日志载荷。开发页面 http://127.0.0.1:5733/#/logs/1 保留。
 决策：本阶段按施工顺序封账并停在 Phase 6。（理由：仓库协作规则要求每阶段验收后汇报，等待用户确认再进入 Phase 7。）
 最终形态：日志诊断可用；报告为模型推断，原日志保留供核对；未执行建议命令，未进入知识库扩充阶段。
+
+## 2026-10-30 · Phase 7 · 知识库扩充与配置工坊（施工中）
+
+### 步骤 1：核对契约
+
+- 用户确认继续，已读 AGENTS、母文档 §4.3/4.4/4.6、API、Phase 7 与 §11 清单；工作区干净。
+- 顺序：四软件知识库 → 本地配置存取与静态校验 → 只读共享工具 → 工坊页面 → 隔离/页面/打包验收。
+决策：保持五个导航，运维助手随 Phase 8 落地。（理由：§8 明确 Phase 8 扩为六项，避免提前产生空入口。）
+决策：列表 API 不回传正文；补充只读 GET /api/kb/workbench/configs/{id} 供本地编辑回看。（理由：母文档要求回看与编辑，但只列出摘要列表，需最小补齐读取契约，不改变既有字段或路径。）
+最终形态：本阶段开工；默认不共享配置，所有校验本地执行，无需模型或新增依赖。
+
+### 步骤 2：四软件知识资料
+
+- 按官方 Keepalived 配置参考、Kafka 3.8 broker/操作文档、Redis 7.2 示例配置与 Docker dockerd/CLI 整理离线生成器，每条分别保留默认值、示例、生效方式与风险。
+- 对母清单中的旧键作迁移说明：Kafka log.compaction 不是通用有效键，使用 log.cleanup.policy=compact；advertised.host.name 标为旧版弃用；Keepalived 默认抢占，无独立 preempt 指令；Docker containerd 是 socket，namespace 另列。
+决策：文档示例使用回环/文档保留地址与本地口令占位符，Docker 下载例使用华为 SWR 占位仓库。（理由：不硬编码内网与密钥，不编造通用镜像加速地址；资料不执行任何命令。）
+最终形态：生成器已落盘，运行生成四份分离 cli/conf 的 YAML 后核对数量与字段。
+
+#### 步骤 2 验收结果：YAML 数据核定与 danger 分级修正
+
+- 运行 `python tools/build_phase7_kb.py` 生成四份 YAML：keepalived cli 13 / conf 45、kafka 20 / 36、redis 20 / 51、docker 26 / 34，均超 §11 下限。
+- 契约校验（Temp 一次性脚本 + `tools/verify_workbench.py` 内固化）：六软件 name 唯一、danger ∈ 枚举、conf 必有 section/default（keepalived=global/vrrp/virtual_server、kafka=broker、redis=server、docker=daemon）、cli 必有 example、cli∩conf=∅，全部通过。
+- 审计发现生成器初版把全部 conf 条目写死 `danger: medium`（169 条全红 ⚠，与 nginx/zabbix 大多为 false 的口径不一致），已加分级映射后重生成。
+
+决策：conf 条目 danger 默认 false，直接影响高可用切换/数据保留/安全边界的参数标 medium，调优类标 low，conf 不用 high。（理由：与 Phase 2 两文件口径一致，避免 UI 全屏红色噪音；high 沿用惯例保留给 stop/清空类危险命令。重生成后分布如 keepalived 29 medium / 15 low / 11 false。）
+
+最终形态：四份 YAML 为最终数据资产入库；生成器可随时再生。
+
+### 步骤 3：工坊后端（存取 + 静态校验）
+
+- `app/kb/workbench.py`：`init_workbench()` 按 §4.4 DDL 建 user_configs（create_app 调用，与各模块自管 DDL 先例一致）；CRUD/共享开关/`read_shared_config`；`validate_config` 六格式静态校验（yaml 行号错误+重复键、nginx/keepalived 括号栈+引号豁免、properties 非法行+重复键、json 行列号、text 仅通用；通用警告 BOM/混合行尾/尾随空格/超长行，各设显示上限防刷屏）。
+- `app/kb/routes.py`：/api/kb/workbench/configs（GET 列表不含正文、POST 建 >2MB→413）、configs/{id}（GET/PUT/DELETE）、{id}/share、validate；均注册在 /{software} 之前。
+- `app/agent/tools.py`：注册表新增 `read_user_config(name)`，仅返回 shared=1 记录、截断 4000 字符，未共享/不存在返回 `{"ok":false,"error":"配置不存在或未共享"}`。
+
+决策：keepalived 格式只做括号配对检查、不做分号检查；nginx 两者都做。（理由：§4.6 把两者并列写分号检查，但 keepalived.conf 指令行语法本就不以分号结尾，强查会把全部合法行报错；验收只要求 keepalived 报括号不配对及所在行。）
+决策：YAML 解析失败时降级用"同缩进层级同名键"启发式扫重复键（跳过列表项与块标量，嵌套同名键不误报）。（理由：PyYAML 解析失败时 constructor 不执行、重复键收集恒为空；验收要求同一份坏文件同时给出行号错误与重复键警告。）
+决策：`read_user_config` 只进工具注册表，不改脚本工坊场景白名单（engine 仍只开放 `search_*` 前缀工具）。（理由：Phase 4 已调优的规划提示词不引入新变量防回归；Phase 8 运维助手按契约显式接入该工具；本阶段验收以 execute_tool 直测即覆盖。）
+
+最终形态：工坊后端与智能体工具就绪，等待隔离验收。
+
+### 步骤 4：前端 #/kb 双视图与工坊
+
+- 顶部视图 Tab【知识库 | 我的配置】；知识库视图保留原搜索/卡片/双 Tab 详情，副标题更新为六软件。
+- 我的配置视图：左列表（名称/格式/字节/时间/已共享徽标）+ 右编辑器（名称、格式下拉、等宽 textarea、文件上传按 UTF-8 读入 ≤2MB、校验、正则测试折叠、保存、两步删除确认）；错误/警告按行号列示可点击跳行（textarea 选区定位+滚动）；共享开关旁醒目橙字"开启后该配置内容会被发送给大模型"；正则面板复用 Phase 5 RegexPreview 组件，默认样例 `(\w+)@(\w+\.\w+)`。
+- style.css 追加工坊布局（复用暗色契约变量与 history-item 等既有类）。
+
+决策：刷新/切走视图后工坊表单重置、视图回到知识库，列表按需惰性加载。（理由：Vue 单实例数据不落 hash，保持简单；配置本体已入库可随时回看。）
+
+最终形态：前后端齐备，进入验收。
+
+### 步骤 5：隔离验收与全量回归
+
+- 新增 `tools/verify_workbench.py`（临时库 + TestClient）：kb 六软件契约、validate 全格式正反例（坏 YAML 第 3 行/组合坏文件第 6 行错误+第 3 行重复键/嵌套同名键不误报/keepalived 缺 } 第 1 行/nginx 缺分号第 2、4 行/引号与注释内括号豁免/properties/json/通用警告/text stats）、CRUD、404、413、共享开关与 execute_tool 读写、4000 字符截断。运行命令 `PYTHONPATH=. python tools/verify_workbench.py`（verify_* 系列均需项目根在 sys.path）。
+- 回归：verify_logs / verify_analysis / verify_codegen 全部 PASS；`compileall main.py app tools`、`git diff --check` 通过；`node --check app/web/app.js` 无输出（语法有效）。
+
+最终形态：隔离与回归全绿。
+
+### 步骤 6：浏览器验收（开发态 127.0.0.1:5731）
+
+- /api/kb 六软件卡片计数正确；keepalived 与 kafka 双向抽验：命令 Tab 无任何配置参数、配置 Tab 无任何命令，严格隔离。
+- 坏 YAML（缩进错+重复键）→ 页面显示"第 6 行 YAML 解析错误"与"第 3 行 重复键：name（后值覆盖前值）"。
+- keepalived 少写 `}` → "第 1 行 块未闭合：'{' 缺少对应的 '}'"；点击错误条目光标定位到 textarea 第 1 行（selectionStart=0）。
+- 正则 `(\w+)@(\w+\.\w+)`：3 处邮箱高亮，分组表两列（ops | example.com 等），`root@localhost` 正确不匹配。
+- 保存"演示 nginx 段"（107 字节）→ 列表回显；刷新页面后仍在；开启共享 → `execute_tool("read_user_config")` 真实读到内容，关闭 → 立即返回"配置不存在或未共享"。
+- 页面内 fetch 2MB+1 → 413。截图留档（暗色工坊布局正常）。
+
+最终形态：Phase 7 全部浏览器验收项通过；演示配置保留在开发库供用户查看（shared=0，坏 YAML 样例未保存）。
+
+### 步骤 7：打包冒烟
+
+- PyInstaller onedir（绝对路径 add-data app/commands/kb + winforms hidden import，workpath/specpath/distpath 全部在 ASCII 目录 `C:\Users\Dell\OpsMateBuild\phase7`），22 秒构建成功。
+- 载荷扫描：config.json / model_profiles.json / 临时文件 / opsmate.db / data/logs 数量为 0；_internal/data/kb 含六份 YAML。
+- 冻结进程（OPSMATE_DATA_DIR 指向隔离测试目录，127.0.0.1:18409）：health、/api/kb 六软件计数、commands=621、keepalived 13/45、坏 YAML 校验（第 6 行错误+第 3 行重复键）、工坊建/共享/列表/回读/删除/2MB→413 全部通过；exe 旁无数据库，隔离目录正常建库；进程终止无残留，构建产物已清理。
+
+决策：curl 直发含中文的 JSON 建配置在冻结包上报 body parse error，判定为 Git Bash/curl 编码假象而非应用缺陷。（理由：同一端点用 httpx 从本机直调全部通过，TestClient 与浏览器路径亦通过。）
+
+### Phase 状态
+
+**验收通过；随 `feat(kb): 完成 Phase 7 知识库扩充与配置工坊` 提交封账。停工汇报，未经用户确认不进入 Phase 8。**
