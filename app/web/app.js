@@ -10,7 +10,7 @@
  * @param {number} [timeoutMs=30000] 超时毫秒数
  * @returns {Promise<any>} 解析后的 JSON；失败抛错并 toast
  */
-async function apiFetch(url, options, timeoutMs = 30000) {
+async function apiFetch(url, options, timeoutMs = 30000, responseType = "json") {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -20,7 +20,7 @@ async function apiFetch(url, options, timeoutMs = 30000) {
       try { detail = (await resp.json()).detail || ""; } catch (e) { /* 响应体非 JSON 时忽略 */ }
       throw new Error("HTTP " + resp.status + (detail ? "：" + detail : ""));
     }
-    return await resp.json();
+    return responseType === "blob" ? await resp.blob() : await resp.json();
   } catch (err) {
     if (err.name === "AbortError") {
       showToast("请求超时，请检查后端服务", "err");
@@ -79,7 +79,64 @@ function parseRoute() {
   return NAV_ITEMS.some((item) => item.page === name) ? name : "commands";
 }
 
+/** 纯本地、可复用正则预览，Worker 超时后终止，不阻塞 UI。 */
+const RegexPreview = {
+  props: { initialPattern: { type: String, default: "Exception|Error" }, initialText: { type: String, default: "" } },
+  data() { return { pattern: this.initialPattern, text: this.initialText, flags: "gi", matches: [], error: "", busy: false, worker: null, timer: null }; },
+  computed: {
+    previewText() { return this.text.slice(0, 20000); },
+    segments() {
+      const pieces = []; let cursor = 0;
+      for (const match of this.matches) {
+        pieces.push({ text: this.previewText.slice(cursor, match.index), hit: false });
+        pieces.push({ text: match.text || "（零宽匹配）", hit: true });
+        cursor = match.index + match.text.length;
+      }
+      pieces.push({ text: this.previewText.slice(cursor), hit: false });
+      return pieces;
+    },
+  },
+  watch: { pattern() { this.preview(); }, text() { this.preview(); }, flags() { this.preview(); } },
+  mounted() { this.preview(); },
+  beforeUnmount() { clearTimeout(this.timer); if (this.worker) this.worker.terminate(); },
+  methods: {
+    preview() {
+      clearTimeout(this.timer); if (this.worker) this.worker.terminate();
+      this.error = ""; this.matches = []; this.busy = false;
+      if (!this.pattern) return;
+      const code = `onmessage = ({data}) => { try {
+        const re = new RegExp(data.pattern, data.flags.includes('g') ? data.flags : data.flags + 'g');
+        const matches = []; let match;
+        while ((match = re.exec(data.text)) !== null && matches.length < 1000) {
+          matches.push({index:match.index,text:match[0],captures:Array.from(match).slice(1),groups:match.groups || {}});
+          if (!match[0]) re.lastIndex += data.flags.includes('u') && data.text.codePointAt(re.lastIndex) > 65535 ? 2 : 1;
+        }
+        postMessage({matches});
+      } catch(error) { postMessage({error: String(error.message)}); } };`;
+      const url = URL.createObjectURL(new Blob([code], {type: "text/javascript"}));
+      try { this.worker = new Worker(url); } catch (err) { this.error = "无法启动正则预览"; URL.revokeObjectURL(url); return; }
+      URL.revokeObjectURL(url);
+      const worker = this.worker; this.busy = true;
+      worker.onmessage = ({data}) => { if (worker !== this.worker) return; clearTimeout(this.timer); this.matches = data.matches || []; this.error = data.error || ""; this.busy = false; worker.terminate(); };
+      worker.onerror = () => { clearTimeout(this.timer); this.error = "正则预览失败"; this.busy = false; worker.terminate(); };
+      this.timer = setTimeout(() => { worker.terminate(); this.busy = false; this.error = "匹配耗时过长，请简化正则"; }, 700);
+      worker.postMessage({pattern:this.pattern,flags:this.flags,text:this.previewText});
+    },
+  },
+  template: `<section class="regex-preview settings-form">
+    <label>测试正则<input v-model="pattern" placeholder="Exception|Error"></label>
+    <label>正则标志<input v-model="flags" placeholder="gi"></label>
+    <label>示例文本<textarea rows="4" v-model="text"></textarea></label>
+    <p class="placeholder dim">纯本地预览：最多 20000 字、1000 个匹配；使用浏览器 RegExp，后端过滤使用 Python 正则，高级语法可能不同。</p>
+    <p v-if="error" class="regex-error" role="alert">正则无效或无法完成：{{ error }}</p>
+    <p v-else role="status">{{ busy ? "预览中…" : "匹配 " + matches.length + " 处" }}</p>
+    <pre class="regex-highlight"><template v-for="(part,i) in segments" :key="i"><mark v-if="part.hit">{{ part.text }}</mark><span v-else>{{ part.text }}</span></template></pre>
+    <table v-if="matches.length"><thead><tr><th>位置</th><th>匹配内容</th><th>捕获分组</th><th>命名分组</th></tr></thead><tbody><tr v-for="(m,i) in matches" :key="i"><td>{{ m.index }}</td><td>{{ m.text }}</td><td>{{ m.captures.join(" | ") }}</td><td>{{ JSON.stringify(m.groups) }}</td></tr></tbody></table>
+  </section>`,
+};
+
 const App = {
+  components: { RegexPreview },
   data() {
     return {
       page: parseRoute(),
@@ -117,6 +174,11 @@ const App = {
       codegenResult: null,
       codegenHistory: [],
       clarificationAnswers: [],
+      logEntries: [], logId: null, currentLog: null, logRows: [], logTotal: 0,
+      logsLoading: false, logImporting: false, logTitle: "", logContent: "",
+      logLevels: [], logKeyword: "", logUseRegex: false, logPattern: "", logOrder: "asc",
+      logFilterTimer: null, logRequestId: 0, logRouteRequestId: 0, showRegexPreview: false,
+      pendingDeleteLogId: null,
     };
   },
   computed: {
@@ -160,6 +222,88 @@ const App = {
     },
   },
   methods: {
+    async refreshLogsRoute() {
+      clearTimeout(this.logFilterTimer); ++this.logRequestId;
+      const ticket = ++this.logRouteRequestId;
+      const match = location.hash.match(/^#\/logs\/(\d+)$/);
+      this.logId = match ? Number(match[1]) : null;
+      this.currentLog = null; this.logRows = []; this.logTotal = 0; this.showRegexPreview = false;
+      this.logLevels = []; this.logKeyword = ""; this.logUseRegex = false; this.logPattern = ""; this.logOrder = "asc";
+      if (!this.logId) { await this.loadLogList(); return; }
+      this.logsLoading = true;
+      try {
+        const data = await apiFetch("/api/logs/" + this.logId);
+        if (ticket !== this.logRouteRequestId) return;
+        this.currentLog = data;
+        await this.loadLogLines(false);
+      } catch (err) { /* 统一提示 */ }
+      finally { if (ticket === this.logRouteRequestId) this.logsLoading = false; }
+    },
+    async loadLogList() {
+      this.logsLoading = true;
+      try { this.logEntries = (await apiFetch("/api/logs")).items; }
+      catch (err) { /* 统一提示 */ }
+      finally { this.logsLoading = false; }
+    },
+    async uploadLogFile(file) {
+      if (!file || this.logImporting) return;
+      if (file.size > 50 * 1024 * 1024) { showToast("日志超过 50MB，请先 split/grep 裁剪", "err"); return; }
+      this.logImporting = true;
+      try {
+        const form = new FormData(); form.append("file", file);
+        const result = await apiFetch("/api/logs", {method:"POST",body:form}, 60000);
+        showToast("日志导入成功"); location.hash = "#/logs/" + result.id;
+      } catch (err) { /* 统一提示 */ }
+      finally { this.logImporting = false; }
+    },
+    async chooseLogFile(event) { await this.uploadLogFile(event.target.files[0]); event.target.value = ""; },
+    async dropLogFile(event) { await this.uploadLogFile(event.dataTransfer.files[0]); },
+    async pasteLog() {
+      if (this.logImporting) return;
+      this.logImporting = true;
+      try {
+        const result = await apiFetch("/api/logs", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:this.logTitle,content:this.logContent})}, 60000);
+        this.logTitle = ""; this.logContent = ""; showToast("日志导入成功"); location.hash = "#/logs/" + result.id;
+      } catch (err) { /* 统一提示 */ }
+      finally { this.logImporting = false; }
+    },
+    async deleteLog(item) {
+      try {
+        await apiFetch("/api/logs/" + item.id, {method:"DELETE"}); this.pendingDeleteLogId = null;
+        showToast("日志及原始副本已删除"); await this.loadLogList();
+      } catch (err) { /* 统一提示 */ }
+    },
+    logFilterParams() {
+      const params = new URLSearchParams();
+      if (this.logLevels.length) params.set("level", this.logLevels.join(","));
+      if (this.logKeyword) params.set("q", this.logKeyword);
+      if (this.logUseRegex && this.logPattern) params.set("regex", this.logPattern);
+      return params;
+    },
+    queueLogFilter() { clearTimeout(this.logFilterTimer); this.logFilterTimer = setTimeout(() => this.loadLogLines(false), 300); },
+    async loadLogLines(append = false) {
+      if (!this.logId || (append && this.logsLoading)) return;
+      const ticket = ++this.logRequestId; const id = this.logId;
+      const params = this.logFilterParams(); params.set("offset", append ? this.logRows.length : 0);
+      params.set("limit", 500); params.set("order", this.logOrder);
+      this.logsLoading = true;
+      if (!append) { this.logRows = []; this.logTotal = 0; }
+      try {
+        const data = await apiFetch("/api/logs/" + id + "/lines?" + params);
+        if (ticket !== this.logRequestId || id !== this.logId) return;
+        this.logRows = append ? this.logRows.concat(data.lines) : data.lines; this.logTotal = data.total;
+      } catch (err) { /* 统一提示 */ }
+      finally { if (ticket === this.logRequestId) this.logsLoading = false; }
+    },
+    async exportLog() {
+      try {
+        const blob = await apiFetch("/api/logs/" + this.logId + "/export?" + this.logFilterParams(), undefined, 60000, "blob");
+        const url = URL.createObjectURL(blob); const link = document.createElement("a");
+        link.href = url; link.download = "opsmate-log-" + this.logId + ".txt"; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000); showToast("已导出过滤后的全部日志（含原行号）");
+      } catch (err) { /* 统一提示 */ }
+    },
+    logsAiNotice() { showToast("AI 分析将在下一阶段接入；当前日志仅在本机处理"); },
     async loadCodegenHistory() {
       try { this.codegenHistory = (await apiFetch("/api/codegen/history")).items; }
       catch (err) { /* 统一错误反馈 */ }
@@ -413,10 +557,12 @@ const App = {
     },
   },
   created() {
+    if (this.page === "logs") this.refreshLogsRoute();
     if (this.page === "codegen") this.loadCodegenHistory();
     if (this.page === "settings") this.loadSettings();
     window.addEventListener("hashchange", () => {
       this.page = parseRoute();
+      if (this.page === "logs") this.refreshLogsRoute();
     });
     if (this.page === "commands") this.loadCommands();
     if (this.page === "kb") this.loadKbList();
@@ -424,6 +570,7 @@ const App = {
   beforeUnmount() {
     clearTimeout(this.commandSearchTimer);
     clearTimeout(this.kbSearchTimer);
+    clearTimeout(this.logFilterTimer);
   },
   template: [
     '<div class="layout">',
@@ -528,6 +675,30 @@ const App = {
     "        </div>",
     "      </div>",
     "    </section>",
+    '    <section v-else-if="page === \'logs\'" class="logs-page">',
+    '      <template v-if="!logId">',
+    '        <h1>日志中心</h1><p class="placeholder dim">本机导入、过滤与导出；单份日志不超过 50MB，使用 UTF-8 编码。</p>',
+    '        <div class="log-drop" @dragover.prevent @drop.prevent="dropLogFile"><label class="copy-button">{{ logImporting ? "导入中…" : "选择日志文件 / 拖拽文件到此处" }}<input type="file" @change="chooseLogFile" :disabled="logImporting" accept=".log,.txt,.out,.json"></label></div>',
+    '        <form class="settings-form" @submit.prevent="pasteLog"><label>日志标题<input v-model="logTitle" required maxlength="200" :disabled="logImporting"></label><label>粘贴日志<textarea v-model="logContent" rows="5" required :disabled="logImporting"></textarea></label><button class="copy-button" type="submit" :disabled="logImporting">{{ logImporting ? "导入中…" : "导入粘贴日志" }}</button></form>',
+    '        <h2>本机日志</h2><p v-if="logsLoading">加载中…</p><p v-else-if="!logEntries.length" class="placeholder dim">暂无日志，请上传文件或粘贴文本。</p>',
+    '        <article v-for="item in logEntries" :key="item.id" class="trace-card"><h3>{{ item.title }}</h3><p class="placeholder dim">{{ item.line_count }} 行 · {{ item.size_bytes }} 字节 · {{ item.format_guess }} · {{ item.created_at }}</p><p><span v-for="(count,level) in item.level_stats" :key="level" :class="[\'level-badge\',\'level-\'+(level || \'UNKNOWN\')]">{{ level || "未知" }} {{ count }}</span></p><div class="settings-actions"><a class="copy-button" :href="\'#/logs/\'+item.id">查看 / 分析</a><button class="copy-button danger-button" @click="pendingDeleteLogId=item.id">删除</button></div><div v-if="pendingDeleteLogId===item.id" class="delete-confirm"><p>确认删除此日志、行数据和原始副本？此操作不可撤销。</p><button class="copy-button danger-button" @click="deleteLog(item)">确认删除</button><button class="copy-button" @click="pendingDeleteLogId=null">取消</button></div></article>',
+    '      </template>',
+    '      <template v-else><a href="#/logs" class="back-link">← 返回日志列表</a><p v-if="!currentLog">{{ logsLoading ? "加载日志中…" : "日志不存在或加载失败" }}</p>',
+    '        <template v-if="currentLog"><h1>{{ currentLog.title }}</h1><p class="placeholder dim">{{ currentLog.line_count }} 行 · {{ currentLog.size_bytes }} 字节 · {{ currentLog.format_guess }}</p>',
+    '          <p><span v-for="(count,level) in currentLog.level_stats" :key="level" :class="[\'level-badge\',\'level-\'+(level || \'UNKNOWN\')]">{{ level || "未知" }} {{ count }}</span></p>',
+    '          <div class="log-toolbar settings-form"><fieldset><legend>级别过滤（未勾选表示全部）</legend><label v-for="level in [\'ERROR\',\'WARN\',\'INFO\',\'DEBUG\',\'UNKNOWN\']" :key="level"><input type="checkbox" v-model="logLevels" :value="level" @change="loadLogLines(false)">{{ level === "UNKNOWN" ? "未知" : level }}</label></fieldset>',
+    '            <label>关键词<input v-model="logKeyword" @input="queueLogFilter" placeholder="大小写不敏感子串"></label><label class="inline-label"><input type="checkbox" v-model="logUseRegex" @change="loadLogLines(false)">启用正则过滤（与关键词取交集）</label>',
+    '            <label>正则表达式<input v-model="logPattern" :disabled="!logUseRegex" @input="queueLogFilter" placeholder="Exception|Error"></label>',
+    '            <label>行号排序<select v-model="logOrder" @change="loadLogLines(false)"><option value="asc">升序</option><option value="desc">倒序</option></select></label>',
+    '            <div class="settings-actions"><button class="copy-button" @click="showRegexPreview=!showRegexPreview">正则测试</button><button class="copy-button" @click="exportLog" :disabled="logsLoading">导出过滤结果</button><button class="copy-button" @click="logsAiNotice">AI 分析（待接入）</button></div>',
+    '          </div>',
+    '          <regex-preview v-if="showRegexPreview" :initial-pattern="logPattern || \'Exception|Error\'" :initial-text="logRows.slice(0,30).map(row=>row.text).join(\'\\n\')"></regex-preview>',
+    '          <p role="status">{{ logsLoading ? "查询中…" : "匹配 " + logTotal + " 行，已加载 " + logRows.length + " 行" }}</p>',
+    '          <div class="log-viewer"><div v-for="row in logRows" :key="row.line_no" class="log-line" :class="\'level-\'+(row.level || \'UNKNOWN\')"><span class="log-line-no">{{ row.line_no }}</span><span class="log-line-level">{{ row.level || "—" }}</span><span class="log-line-text" :title="row.text">{{ row.text }}</span></div></div>',
+    '          <p v-if="!logsLoading && !logRows.length" class="placeholder dim">没有符合过滤条件的日志行</p><button v-if="logRows.length<logTotal" class="copy-button" :disabled="logsLoading" @click="loadLogLines(true)">加载更多（+500）</button>',
+    '        </template>',
+    '      </template>',
+    '    </section>',
     '    <section v-else-if="page === \'codegen\'" class="codegen-page">',
     '      <h1>脚本工坊</h1><p class="placeholder dim">检索本地知识生成脚本；执行前请审阅并在测试环境验证。</p>',
     '      <form class="settings-form" @submit.prevent="generateScript(false)">',

@@ -22,6 +22,29 @@
 .settings-actions { display: flex; gap: 12px; }
 button:disabled { opacity: .5; cursor: wait; }
 .settings-page a { color: var(--primary); }
+.log-drop { padding: 28px; margin: 18px 0; border: 2px dashed var(--border); border-radius: 8px; text-align: center; }
+.log-drop input[type=file] { display: block; margin: 12px auto 0; max-width: 100%; }
+.level-badge { display: inline-block; padding: 2px 8px; margin: 3px; border: 1px solid currentColor; border-radius: 4px; font-size: 12px; }
+.level-ERROR { color: #ff6b6b; }.level-WARN { color: #ffb45c; }.level-INFO { color: #72a7ff; }.level-DEBUG,.level-UNKNOWN { color: var(--text-dim); }
+.danger-button,.regex-error { color: var(--err); }.danger-button { border-color: var(--err); }
+.delete-confirm { margin-top: 12px; padding: 12px; border: 1px solid var(--err); }
+.delete-confirm button { margin-right: 10px; }
+.back-link { color: var(--primary); }
+.log-toolbar { padding: 16px; background: var(--card); border-radius: 8px; }
+.log-toolbar fieldset { border: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 14px; }
+.log-toolbar fieldset label,.log-toolbar .inline-label { display: flex; align-items: center; gap: 5px; }
+.log-toolbar input[type=checkbox] { width: auto; }
+.log-toolbar .settings-actions { flex-wrap: wrap; }
+.log-viewer { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: #18191e; margin-bottom: 16px; }
+.log-line { display: grid; grid-template-columns: 65px 70px minmax(0,1fr); gap: 8px; padding: 5px 12px; border-bottom: 1px solid #292b33; font-family: Consolas, monospace; font-size: 13px; }
+.log-line-no { color: var(--text-dim); text-align: right; user-select: none; }
+.log-line-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-line:hover .log-line-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.regex-preview { padding: 18px; border: 1px solid var(--primary); border-radius: 8px; }
+.regex-highlight { white-space: pre-wrap; overflow-wrap: anywhere; background: #18191e; padding: 14px; max-height: 350px; overflow: auto; }
+.regex-highlight mark { background: #ffcc55; color: #17181b; }
+.regex-preview table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+.regex-preview th,.regex-preview td { text-align: left; padding: 6px; border: 1px solid var(--border); overflow-wrap: anywhere; }
 .settings-form textarea { resize: vertical; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); font: inherit; }
 .codegen-output { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; margin: 24px 0; }
 .script-source { overflow-x: auto; padding: 16px; background: #18191e; border-radius: 6px; font-family: Consolas, monospace; }
