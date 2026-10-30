@@ -177,6 +177,7 @@ const App = {
       kbDetailLoading: false,
       kbTab: "cli",
       kbExpanded: {},
+      kbTplExpanded: {},
       kbQuery: "",
       kbSearchItems: null,
       kbSearchLoading: false,
@@ -199,6 +200,7 @@ const App = {
       codegenResult: null,
       codegenHistory: [],
       clarificationAnswers: [],
+      codegenLiveSteps: [], codegenPhase: "", codegenAbort: null,
       logEntries: [], logId: null, currentLog: null, logRows: [], logTotal: 0,
       logsLoading: false, logImporting: false, logTitle: "", logContent: "",
       logLevels: [], logKeyword: "", logUseRegex: false, logPattern: "", logOrder: "asc",
@@ -208,9 +210,16 @@ const App = {
       analysisFocus: "", analysisAbort: null, logReports: [], selectedReportId: "", analysisSaved: false,
       asstSessions: [], asstMessages: [], asstSessionId: null, asstInput: "",
       asstBusy: false, asstAbort: null, asstError: "", pendingDeleteAsstId: null, asstKeySeq: 0,
+      paneWidths: { commands: 320, wb: 300, asst: 260, codegen: 0.5 },
     };
   },
   computed: {
+    codegenPhaseText() {
+      if (this.codegenPhase === "direct") return "直接生成模式：未走工具检索，模型正在写脚本…";
+      if (this.codegenPhase === "final") return "资料检索完成，正在生成最终脚本…";
+      if (this.codegenPhase === "retry") return "输出未通过校验，正在按提示重试…";
+      return "智能体检索本地知识与脚本历史…";
+    },
     analysisHtml() { return reportMarkdown(this.analysisContent); },
     profileHasChanges() {
       const profile = this.modelProfiles.find((p) => p.id === this.selectedProfileId);
@@ -406,19 +415,43 @@ const App = {
       }
       this.codegenBusy = true;
       this.codegenResult = null;
+      this.codegenLiveSteps = [];
+      this.codegenPhase = "";
+      const controller = new AbortController(); this.codegenAbort = controller;
       try {
-        this.codegenResult = await apiFetch("/api/codegen/generate", {
+        await apiFetch("/api/codegen/generate", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(this.codegenForm),
-        }, 125000);
-        if (this.codegenResult.need_clarification) {
+          body: JSON.stringify(this.codegenForm), signal: controller.signal,
+        }, 125000, async (response) => {
+          const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8"); let buffer = ""; let completed = false;
+          const accept = (line) => {
+            if (!line.startsWith("data:")) return;
+            const event = JSON.parse(line.slice(5).trim());
+            if (event.error) throw new Error(event.error);
+            if (event.tool) this.codegenLiveSteps.push({ tool: event.tool, args: event.args, result_summary: event.result });
+            if (event.phase) this.codegenPhase = event.phase;
+            if (event.result && !event.tool) this.codegenResult = event.result;
+            if (event.done) completed = true;
+          };
+          try {
+            while (true) {
+              const {value, done} = await reader.read();
+              buffer += decoder.decode(value || new Uint8Array(), {stream: !done});
+              const lines = buffer.split(/\r?\n/); buffer = lines.pop(); lines.forEach(accept);
+              if (done) { if (buffer.trim()) accept(buffer); break; }
+            }
+            if (!completed) throw new Error("生成连接中断，本轮未保存");
+          } finally { if (!completed) { try { await reader.cancel(); } catch (err) { /* 已断开的连接 */ } reader.releaseLock(); } }
+        });
+        if (this.codegenResult && this.codegenResult.need_clarification) {
           this.clarificationAnswers = this.codegenResult.questions.map(() => "");
         } else {
           await this.loadCodegenHistory();
           showToast("脚本已生成并保存，执行前请审阅");
         }
-      } catch (err) { /* apiFetch 统一反馈 */ }
-      finally { this.codegenBusy = false; }
+      } catch (err) {
+        if (err.name !== "AbortError") showToast(String(err.message || err), "err");
+      } finally { this.codegenBusy = false; this.codegenAbort = null; }
     },
     async openCodegenHistory(item) {
       if (this.codegenBusy) return;
@@ -561,6 +594,7 @@ const App = {
         this.kbSelected = data;
         this.kbTab = "cli";
         this.kbExpanded = {};
+        this.kbTplExpanded = {};
       } finally {
         this.kbDetailLoading = false;
       }
@@ -574,6 +608,7 @@ const App = {
         this.kbSelected = data;
         this.kbTab = item.category === "cli" ? "cli" : "conf";
         this.kbExpanded = {};
+        this.kbTplExpanded = {};
       } finally {
         this.kbDetailLoading = false;
       }
@@ -587,6 +622,32 @@ const App = {
         [name]: !this.kbExpanded[name],
       });
     },
+    toggleKbTpl(name) {
+      this.kbTplExpanded = Object.assign({}, this.kbTplExpanded, {
+        [name]: !this.kbTplExpanded[name],
+      });
+    },
+    async copyText(text, message) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          textarea.style.position = "fixed";
+          textarea.style.opacity = "0";
+          document.body.appendChild(textarea);
+          textarea.select();
+          const copied = document.execCommand("copy");
+          textarea.remove();
+          if (!copied) throw new Error("浏览器未允许写入剪贴板");
+        }
+        showToast(message);
+      } catch (err) {
+        showToast("复制失败：" + String(err.message || err), "err");
+      }
+    },
+    copyKbTemplate(tpl) { this.copyText(tpl.content, "模板已复制，替换占位符后即可使用"); },
     switchKbView(view) {
       this.kbView = view;
       if (view === "mine" && !this.wbConfigs.length) this.loadWbConfigs();
@@ -687,6 +748,43 @@ const App = {
         await this.loadWbConfigs();
       } catch (err) { /* 统一提示 */ }
       finally { this.wbBusy = false; }
+    },
+    /* ============ 可拖拽分割条 ============ */
+    gridPaneStyle(key) {
+      if (key === "codegen") {
+        const left = Math.min(0.75, Math.max(0.25, this.paneWidths.codegen));
+        return { gridTemplateColumns: `minmax(0, ${left}fr) 6px minmax(0, ${1 - left}fr)` };
+      }
+      return { gridTemplateColumns: `${this.paneWidths[key]}px 6px minmax(0, 1fr)` };
+    },
+    startPaneDrag(event, key) {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const limits = { commands: [180, 640], wb: [200, 720], asst: [200, 520] }[key];
+      const startX = event.clientX;
+      const startWidth = this.paneWidths[key];
+      const totalPx = Math.max(event.currentTarget.parentElement.clientWidth - 6, 1);
+      const startRatio = this.paneWidths.codegen;
+      const splitter = event.currentTarget;
+      splitter.classList.add("active");
+      document.body.classList.add("pane-dragging");
+      const onMove = (moveEvent) => {
+        const delta = moveEvent.clientX - startX;
+        if (key === "codegen") {
+          this.paneWidths.codegen = Math.round(Math.min(0.75, Math.max(0.25, startRatio + delta / totalPx)) * 1000) / 1000;
+        } else {
+          this.paneWidths[key] = Math.round(Math.min(limits[1], Math.max(limits[0], startWidth + delta)));
+        }
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        splitter.classList.remove("active");
+        document.body.classList.remove("pane-dragging");
+        try { localStorage.setItem("opsmate-pane-widths", JSON.stringify(this.paneWidths)); } catch (err) { /* 忽略持久化失败 */ }
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     },
     /* ============ 运维助手（Phase 8） ============ */
     async loadAsstSessions() {
@@ -801,6 +899,7 @@ const App = {
           const data = await apiFetch("/api/kb/" + encodeURIComponent(software));
           this.kbSelected = data;
           this.kbExpanded = {};
+          this.kbTplExpanded = {};
           if (entry) {
             const hit = (data.categories || []).find((cat) =>
               (cat.entries || []).some((e) => e.name === entry));
@@ -870,6 +969,10 @@ const App = {
     },
   },
   created() {
+    try {
+      const saved = JSON.parse(localStorage.getItem("opsmate-pane-widths") || "{}");
+      Object.assign(this.paneWidths, saved);
+    } catch (err) { /* 本地存储不可用时用默认宽度 */ }
     if (this.page === "logs") this.refreshLogsRoute();
     if (this.page === "codegen") this.loadCodegenHistory();
     if (this.page === "settings") this.loadSettings();
@@ -913,7 +1016,7 @@ const App = {
     '        <input v-model="commandQuery" @input="queueCommandSearch" type="search"',
     '               placeholder="输入命令名或中文关键词，例如：磁盘" autocomplete="off">',
     '      </label>',
-    '      <div class="command-browser">',
+    '      <div class="command-browser" :style="gridPaneStyle(\'commands\')">',
     '        <aside class="command-list" aria-label="命令搜索结果">',
     '          <button v-for="item in commandItems" :key="item.name" type="button"',
     '                  :class="{ active: selectedCommand && selectedCommand.name === item.name }"',
@@ -922,6 +1025,7 @@ const App = {
     '          </button>',
     '          <p v-if="!commandLoading && commandItems.length === 0" class="empty-state">未找到匹配命令</p>',
     '        </aside>',
+    '        <div class="pane-splitter" title="拖拽调整宽度" @mousedown="startPaneDrag($event, \'commands\')"></div>',
     '        <article class="command-detail">',
     '          <div v-if="selectedCommand" class="command-detail-head">',
     '            <div><h2>{{ selectedCommand.name }}</h2><p>{{ selectedCommand.title }}</p></div>',
@@ -978,9 +1082,23 @@ const App = {
     '          <div class="kb-tabs">',
     '            <button type="button" :class="{ active: kbTab === \'cli\' }" @click="kbTab = \'cli\'">启停与运行命令</button>',
     '            <button type="button" :class="{ active: kbTab === \'conf\' }" @click="kbTab = \'conf\'">配置参数</button>',
+    '            <button v-if="kbSelected.templates && kbSelected.templates.length" type="button" :class="{ active: kbTab === \'tpl\' }" @click="kbTab = \'tpl\'">推荐模板</button>',
     "          </div>",
     "        </div>",
     '        <p v-if="kbDetailLoading" class="empty-state">加载中…</p>',
+    '        <div v-if="kbTab === \'tpl\'" class="kb-group">',
+    '          <h3>推荐配置模板 <span class="result-count">（{{ (kbSelected.templates || []).length }} 份，可复制直接使用）</span></h3>',
+    '          <div v-for="tpl in kbSelected.templates" :key="tpl.name" class="kb-entry">',
+    '            <div class="kb-entry-head kb-clickable" @click="toggleKbTpl(tpl.name)">',
+    "              <strong>{{ tpl.name }}</strong>",
+    "            </div>",
+    '            <p class="kb-entry-desc">{{ tpl.desc }}</p>',
+    '            <div v-if="kbTplExpanded[tpl.name]" class="kb-entry-detail">',
+    '              <div class="settings-actions"><button class="copy-button" type="button" @click="copyKbTemplate(tpl)">复制模板</button></div>',
+    '              <pre class="kb-tpl-content">{{ tpl.content }}</pre>',
+    "            </div>",
+    "          </div>",
+    "        </div>",
     '        <div v-for="cat in kbTabCategories" :key="cat.label" class="kb-group">',
     '          <h3>{{ cat.label }} <span class="result-count">（{{ (cat.entries || []).length }} 条）</span></h3>',
     '          <div v-for="e in cat.entries" :key="e.name" class="kb-entry">',
@@ -1001,7 +1119,7 @@ const App = {
     "        </div>",
     "      </div>",
     "    </template>",
-    '    <div v-else class="wb-layout">',
+    '    <div v-else class="wb-layout" :style="gridPaneStyle(\'wb\')">',
     '      <aside class="wb-list" aria-label="我的配置列表">',
     '        <button class="copy-button" type="button" @click="newWbConfig" :disabled="wbBusy">＋ 新建配置</button>',
     '        <p v-if="wbLoading" class="empty-state">加载中…</p>',
@@ -1012,6 +1130,7 @@ const App = {
     '          <span class="wb-meta">{{ item.format }} · {{ item.size_bytes }} 字节 · {{ item.updated_at }}<em v-if="item.shared" class="wb-shared-badge">已共享</em></span>',
     "        </button>",
     "      </aside>",
+    '      <div class="pane-splitter" title="拖拽调整宽度" @mousedown="startPaneDrag($event, \'wb\')"></div>',
     '      <section class="wb-editor" aria-label="配置编辑器">',
     '        <p class="placeholder dim">配置仅保存在本机数据库；校验为本地静态分析，不联网、不执行。单份内容不超过 2MB。</p>',
     '        <div class="settings-form">',
@@ -1064,15 +1183,13 @@ const App = {
     '          <p><span v-for="(count,level) in currentLog.level_stats" :key="level" :class="[\'level-badge\',\'level-\'+(level || \'UNKNOWN\')]">{{ level || "未知" }} {{ count }}</span></p>',
     '          <div class="log-toolbar">',
     '            <fieldset><legend>级别过滤（未勾选表示全部）</legend><label v-for="level in [\'ERROR\',\'WARN\',\'INFO\',\'DEBUG\',\'UNKNOWN\']" :key="level"><input type="checkbox" v-model="logLevels" :value="level" @change="loadLogLines(false)">{{ level === "UNKNOWN" ? "未知" : level }}</label></fieldset>',
-    '            <div class="log-filter-row">',
+    '            <div class="log-toolbar-row">',
     '              <label>关键词<input class="log-kw" v-model="logKeyword" @input="queueLogFilter" placeholder="大小写不敏感子串"></label>',
     '              <label class="inline-label"><input type="checkbox" v-model="logUseRegex" @change="loadLogLines(false)">启用正则</label>',
     '              <label>正则<input class="log-re" v-model="logPattern" :disabled="!logUseRegex" @input="queueLogFilter" placeholder="Exception|Error"></label>',
     '              <label>排序<select v-model="logOrder" @change="loadLogLines(false)"><option value="asc">升序</option><option value="desc">倒序</option></select></label>',
-    '            </div>',
-    '            <div class="log-action-row">',
-    '              <div class="settings-actions"><button class="copy-button" @click="showRegexPreview=!showRegexPreview">正则测试</button><button class="copy-button" @click="exportLog" :disabled="logsLoading">导出过滤结果</button><button class="copy-button" @click="openAnalysis">AI 分析</button></div>',
     '              <label class="log-report">历史报告<select v-model="selectedReportId" @change="openReport" :disabled="analysisBusy"><option value="">选择已保存的报告</option><option v-for="report in logReports" :key="report.id" :value="String(report.id)">{{ report.created_at }} · {{ report.model }}</option></select></label>',
+    '              <div class="settings-actions"><button class="copy-button" @click="showRegexPreview=!showRegexPreview">正则测试</button><button class="copy-button" @click="exportLog" :disabled="logsLoading">导出过滤结果</button><button class="copy-button" @click="openAnalysis">AI 分析</button></div>',
     '            </div>',
     '          </div>',
     '          <regex-preview v-if="showRegexPreview" :initial-pattern="logPattern || \'Exception|Error\'" :initial-text="logRows.slice(0,30).map(row=>row.text).join(\'\\n\')"></regex-preview>',
@@ -1098,6 +1215,7 @@ const App = {
     '        <label>发行版<select v-model="codegenForm.distro" :disabled="codegenBusy"><option value="">不指定</option><option>CentOS</option><option>Ubuntu</option><option>Debian</option><option>其他</option></select></label>',
     '        <label>补充说明<textarea v-model="codegenForm.notes" :disabled="codegenBusy" rows="2"></textarea></label>',
     '        <button class="copy-button" :disabled="codegenBusy" type="submit">{{ codegenBusy ? "生成中…" : "生成脚本" }}</button>',
+    '        <button v-if="codegenBusy" class="copy-button" type="button" @click="codegenAbort.abort()">停止</button>',
     '      </form>',
     '      <section v-if="codegenResult && codegenResult.need_clarification" class="clarification">',
     '        <h2>需要补充信息</h2><form class="settings-form" @submit.prevent="generateScript(true)">',
@@ -1105,10 +1223,18 @@ const App = {
     '          <button class="copy-button" type="submit" :disabled="codegenBusy">补充并重新生成</button>',
     '        </form>',
     '      </section>',
-    '      <section v-else-if="codegenResult">',
-    '        <h2>生成过程</h2><p v-if="!codegenResult.steps || !codegenResult.steps.length" class="placeholder dim">直接生成</p>',
-    '        <details v-for="(step,i) in codegenResult.steps" :key="i" class="trace-card"><summary>{{ i + 1 }} · {{ step.tool }}</summary><pre>{{ JSON.stringify(step.args) }}</pre><p>{{ step.result_summary }}</p></details>',
-    '        <div class="codegen-output"><section><div class="settings-actions"><button class="copy-button" @click="copyScript">复制脚本</button><button class="copy-button" @click="downloadScript">下载 .sh</button></div><pre class="script-source">{{ codegenResult.script }}</pre></section>',
+    '      <section v-else-if="codegenResult || codegenBusy">',
+    "        <h2>生成过程</h2>",
+    '        <p v-if="codegenBusy" class="placeholder dim" role="status">{{ codegenPhaseText }}</p>',
+    '        <template v-if="codegenBusy">',
+    '          <details v-for="(step,i) in codegenLiveSteps" :key="i" class="trace-card" open><summary>{{ i + 1 }} · {{ step.tool }}</summary><pre>{{ JSON.stringify(step.args) }}</pre><p>{{ step.result_summary }}</p></details>',
+    "        </template>",
+    '        <template v-else>',
+    '          <p v-if="!codegenResult.steps || !codegenResult.steps.length" class="placeholder dim">直接生成</p>',
+    '          <details v-for="(step,i) in codegenResult.steps" :key="i" class="trace-card"><summary>{{ i + 1 }} · {{ step.tool }}</summary><pre>{{ JSON.stringify(step.args) }}</pre><p>{{ step.result_summary }}</p></details>',
+    "        </template>",
+    '        <div class="codegen-output" :style="gridPaneStyle(\'codegen\')"><section><div class="settings-actions"><button class="copy-button" @click="copyScript">复制脚本</button><button class="copy-button" @click="downloadScript">下载 .sh</button></div><pre class="script-source">{{ codegenResult.script }}</pre></section>',
+    '          <div class="pane-splitter" title="拖拽调整宽度" @mousedown="startPaneDrag($event, \'codegen\')"></div>',
     '          <section><h2>逐段解读</h2><article v-for="(part,i) in codegenResult.explanation" :key="i" class="trace-card"><h3><span class="line-badge">{{ part.lines }}</span> {{ part.title }}</h3><p>{{ part.detail }}</p></article>',
     '            <div class="script-warnings"><p v-for="(warning,i) in codegenResult.warnings" :key="i">⚠ {{ warning }}</p></div><p class="script-usage">{{ codegenResult.usage }}</p>',
     '          </section></div>',
@@ -1124,7 +1250,7 @@ const App = {
     "        </div>",
     '        <span class="result-count">模型推断，请以官方文档为准</span>',
     "      </header>",
-    '      <div class="asst-layout">',
+    '      <div class="asst-layout" :style="gridPaneStyle(\'asst\')">',
     '        <aside class="asst-sessions" aria-label="会话列表">',
     '          <button class="copy-button" type="button" @click="newAsstSession" :disabled="asstBusy">＋ 新建对话</button>',
     '          <p v-if="!asstSessions.length" class="empty-state">暂无历史会话</p>',
@@ -1137,6 +1263,7 @@ const App = {
     '            <button v-else class="copy-button asst-del" type="button" @click="pendingDeleteAsstId = s.id" :disabled="asstBusy">删除</button>',
     "          </div>",
     "        </aside>",
+    '        <div class="pane-splitter" title="拖拽调整宽度" @mousedown="startPaneDrag($event, \'asst\')"></div>',
     '        <section class="asst-chat" aria-label="对话消息流">',
     '          <div class="asst-messages">',
     '            <div v-for="m in asstMessages" :key="m.key" :class="m.role === \'user\' ? \'asst-user\' : \'asst-item\'">',

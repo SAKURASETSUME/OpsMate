@@ -389,6 +389,14 @@ a.copy-button, label.copy-button { text-decoration: none; }
 }
 .kb-example { display: inline-block; overflow-wrap: anywhere; }
 
+/* 推荐配置模板 */
+.kb-tpl-content {
+  margin: 10px 0 0; padding: 14px 16px;
+  background: var(--inset); border: 1px solid var(--border); border-radius: var(--r-card);
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+  max-height: 420px; overflow: auto; white-space: pre;
+}
+
 /* 我的配置工坊 */
 .wb-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; margin-top: 16px; }
 .wb-list { display: flex; flex-direction: column; gap: 8px; align-content: flex-start; }
@@ -478,23 +486,26 @@ a.copy-button, label.copy-button { text-decoration: none; }
 .log-toolbar fieldset label, .log-toolbar .inline-label { display: flex; align-items: center; gap: 5px; font-size: 13px; }
 .log-toolbar input[type=checkbox] { width: auto; accent-color: var(--primary); }
 
-.log-filter-row { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; }
-.log-filter-row label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); margin: 0; }
-.log-filter-row input, .log-filter-row select, .log-report select {
+.log-toolbar-row { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; }
+.log-toolbar-row label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); margin: 0; }
+.log-toolbar-row input, .log-toolbar-row select, .log-report select {
   height: 36px; padding: 0 12px;
   border: 1px solid var(--border-strong); border-radius: var(--r-card);
   background: var(--inset); color: var(--text);
   font: inherit; font-size: 13px; outline: none;
 }
-.log-filter-row input:focus, .log-filter-row select:focus, .log-report select:focus {
+.log-toolbar-row input:focus, .log-toolbar-row select:focus, .log-report select:focus {
   border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft);
 }
-.log-filter-row input[type="checkbox"] { height: auto; padding: 0; }
-.log-filter-row .log-kw { width: 190px; }
-.log-filter-row .log-re { width: 210px; }
-.log-action-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.log-toolbar-row input[type="checkbox"] { height: auto; padding: 0; }
+.log-toolbar-row .log-kw { width: 180px; }
+.log-toolbar-row .log-re { width: 200px; }
+.log-toolbar-row .settings-actions { margin-left: auto; }
 .log-report { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
-.log-report select { max-width: 340px; }
+.log-report select { max-width: 300px; }
+
+/* 日志列表卡片：操作按钮靠右 */
+.logs-page article .settings-actions { justify-content: flex-end; }
 
 .log-viewer {
   border: 1px solid var(--border); border-radius: var(--r-card);
@@ -576,6 +587,17 @@ a.copy-button, label.copy-button { text-decoration: none; }
   to { opacity: 1; transform: none; }
 }
 
+/* ============ 可拖拽分割条 ============ */
+
+.pane-splitter { position: relative; cursor: col-resize; min-width: 6px; }
+.pane-splitter::after {
+  content: ""; position: absolute; inset: 0 2px; border-radius: 3px;
+  background: var(--border-strong); opacity: 0; transition: opacity 0.12s;
+}
+.pane-splitter:hover::after, .pane-splitter.active::after { opacity: 1; background: var(--primary); }
+body.pane-dragging { user-select: none; cursor: col-resize; }
+body.pane-dragging .content { pointer-events: none; }
+
 /* ============ Phase 8：运维助手 ============ */
 
 .assistant-page { height: 100%; display: flex; flex-direction: column; min-height: 520px; }
@@ -621,8 +643,8 @@ a.copy-button, label.copy-button { text-decoration: none; }
 @media (max-width: 1050px) { .codegen-output { grid-template-columns: 1fr; } }
 @media (max-width: 900px) {
   .content { padding: 20px; }
-  .command-browser { grid-template-columns: 260px minmax(0, 1fr); }
+  .command-browser, .wb-layout, .asst-layout, .codegen-output { grid-template-columns: 1fr !important; }
+  .pane-splitter { display: none !important; }
+  .command-list { max-height: 40vh; }
   .kb-cards { grid-template-columns: 1fr; }
-  .wb-layout { grid-template-columns: 1fr; }
-  .asst-layout { grid-template-columns: 1fr; }
 }
