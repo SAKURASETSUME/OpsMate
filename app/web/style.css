@@ -148,19 +148,26 @@ body {
 .back-link { color: var(--primary); text-decoration: none; font-size: 13px; }
 .back-link:hover { color: var(--primary-bright); }
 
-/* 按钮：默认安静，反馈才亮 */
+/* 按钮：默认安静，反馈才亮；inline-flex 保证 a/label/button 三种载体完全同高 */
 .copy-button {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 14px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-card);
   background: var(--raised);
   color: var(--text);
-  padding: 7px 14px;
   font: inherit;
   font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s, background 0.12s;
 }
+a.copy-button, label.copy-button { text-decoration: none; }
 .copy-button:hover { border-color: var(--primary); color: var(--primary-bright); }
 .copy-button:active { transform: translateY(1px); }
 .copy-button:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -171,16 +178,18 @@ body {
 .settings-form { display: grid; gap: 16px; margin: 24px 0; }
 .settings-form label { display: grid; gap: 6px; font-size: 13px; color: var(--text-dim); }
 .settings-form input, .settings-form select {
+  height: 36px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-card);
   background: var(--inset);
   color: var(--text);
-  padding: 9px 12px;
+  padding: 0 12px;
   font: inherit;
   font-size: 14px;
   outline: none;
   transition: border-color 0.12s, box-shadow 0.12s;
 }
+.settings-form input[type="checkbox"], .settings-form input[type="file"] { height: auto; padding: 0; }
 .settings-form textarea {
   resize: vertical; width: 100%; padding: 10px 12px;
   border: 1px solid var(--border-strong); border-radius: var(--r-card);
@@ -191,7 +200,9 @@ body {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-soft);
 }
-.settings-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+/* grid 表单里直接出现的提交按钮不被拉伸为全宽 */
+.settings-form > .copy-button { justify-self: start; }
+.settings-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .settings-page { max-width: 760px; }
 .settings-page a { color: var(--primary); }
 
@@ -460,12 +471,30 @@ body {
 .log-toolbar {
   padding: 16px 18px; margin: 16px 0;
   background: var(--card); border: 1px solid var(--border); border-radius: var(--r-panel);
+  display: grid; gap: 12px;
 }
-.log-toolbar fieldset { border: 1px solid var(--border); border-radius: var(--r-card); display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 14px; }
+.log-toolbar fieldset { border: 1px solid var(--border); border-radius: var(--r-card); display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 14px; margin: 0; }
 .log-toolbar legend { color: var(--text-faint); font-size: 12px; padding: 0 6px; }
 .log-toolbar fieldset label, .log-toolbar .inline-label { display: flex; align-items: center; gap: 5px; font-size: 13px; }
 .log-toolbar input[type=checkbox] { width: auto; accent-color: var(--primary); }
-.log-toolbar .settings-actions { flex-wrap: wrap; }
+
+.log-filter-row { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; }
+.log-filter-row label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); margin: 0; }
+.log-filter-row input, .log-filter-row select, .log-report select {
+  height: 36px; padding: 0 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-card);
+  background: var(--inset); color: var(--text);
+  font: inherit; font-size: 13px; outline: none;
+}
+.log-filter-row input:focus, .log-filter-row select:focus, .log-report select:focus {
+  border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft);
+}
+.log-filter-row input[type="checkbox"] { height: auto; padding: 0; }
+.log-filter-row .log-kw { width: 190px; }
+.log-filter-row .log-re { width: 210px; }
+.log-action-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.log-report { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
+.log-report select { max-width: 340px; }
 
 .log-viewer {
   border: 1px solid var(--border); border-radius: var(--r-card);
