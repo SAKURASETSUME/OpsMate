@@ -12,6 +12,11 @@
  */
 async function apiFetch(url, options, timeoutMs = 30000, responseType = "json") {
   const controller = new AbortController();
+  const cancel = () => controller.abort();
+  if (options && options.signal) {
+    if (options.signal.aborted) controller.abort();
+    else options.signal.addEventListener("abort", cancel, {once:true});
+  }
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const resp = await fetch(url, Object.assign({}, options, { signal: controller.signal }));
@@ -20,16 +25,19 @@ async function apiFetch(url, options, timeoutMs = 30000, responseType = "json") 
       try { detail = (await resp.json()).detail || ""; } catch (e) { /* 响应体非 JSON 时忽略 */ }
       throw new Error("HTTP " + resp.status + (detail ? "：" + detail : ""));
     }
+    if (typeof responseType === "function") return await responseType(resp);
     return responseType === "blob" ? await resp.blob() : await resp.json();
   } catch (err) {
     if (err.name === "AbortError") {
-      showToast("请求超时，请检查后端服务", "err");
+      if (options && options.signal && options.signal.aborted) showToast("已停止分析");
+      else showToast("请求超时，请检查后端服务", "err");
     } else {
       showToast(String(err.message || err), "err");
     }
     throw err;
   } finally {
     clearTimeout(timer);
+    if (options && options.signal) options.signal.removeEventListener("abort", cancel);
   }
 }
 
@@ -77,6 +85,16 @@ function parseRoute() {
   const hash = location.hash || "#/commands";
   const name = hash.replace(/^#\//, "").split("/")[0] || "commands";
   return NAV_ITEMS.some((item) => item.page === name) ? name : "commands";
+}
+
+/** 分析报告禁止活动 HTML/远程图片，日志或模型正文仅作为显示数据。 */
+function reportMarkdown(text) {
+  const escape = (value) => String(value || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  const renderer = new marked.Renderer();
+  renderer.html = (html) => escape(html);
+  renderer.image = (href,title,alt) => escape(alt || "图片");
+  renderer.link = (href,title,label) => label + " (" + escape(href) + ")";
+  return marked.parse(text.replace(/<!--rehype:[^>]*-->/gi,""), {renderer});
 }
 
 /** 纯本地、可复用正则预览，Worker 超时后终止，不阻塞 UI。 */
@@ -179,9 +197,12 @@ const App = {
       logLevels: [], logKeyword: "", logUseRegex: false, logPattern: "", logOrder: "asc",
       logFilterTimer: null, logRequestId: 0, logRouteRequestId: 0, showRegexPreview: false,
       pendingDeleteLogId: null,
+      analysisOpen: false, analysisBusy: false, analysisContent: "", analysisSteps: [], analysisError: "",
+      analysisFocus: "", analysisAbort: null, logReports: [], selectedReportId: "", analysisSaved: false,
     };
   },
   computed: {
+    analysisHtml() { return reportMarkdown(this.analysisContent); },
     profileHasChanges() {
       const profile = this.modelProfiles.find((p) => p.id === this.selectedProfileId);
       return !profile || this.profileName !== profile.name || Boolean(this.settings.api_key)
@@ -223,6 +244,8 @@ const App = {
   },
   methods: {
     async refreshLogsRoute() {
+      if (this.analysisAbort) this.analysisAbort.abort();
+      this.analysisOpen = false; this.logReports = []; this.selectedReportId = "";
       clearTimeout(this.logFilterTimer); ++this.logRequestId;
       const ticket = ++this.logRouteRequestId;
       const match = location.hash.match(/^#\/logs\/(\d+)$/);
@@ -235,6 +258,7 @@ const App = {
         const data = await apiFetch("/api/logs/" + this.logId);
         if (ticket !== this.logRouteRequestId) return;
         this.currentLog = data;
+        await this.loadLogReports();
         await this.loadLogLines(false);
       } catch (err) { /* 统一提示 */ }
       finally { if (ticket === this.logRouteRequestId) this.logsLoading = false; }
@@ -303,7 +327,55 @@ const App = {
         setTimeout(() => URL.revokeObjectURL(url), 1000); showToast("已导出过滤后的全部日志（含原行号）");
       } catch (err) { /* 统一提示 */ }
     },
-    logsAiNotice() { showToast("AI 分析将在下一阶段接入；当前日志仅在本机处理"); },
+    async loadLogReports() {
+      if (!this.logId) return;
+      const id = this.logId;
+      try { const data = await apiFetch("/api/logs/" + id + "/reports"); if (id === this.logId) this.logReports = data.items; }
+      catch (err) { /* 统一提示 */ }
+    },
+    openAnalysis() {
+      if (this.analysisBusy) { this.analysisOpen = true; return; }
+      this.analysisOpen = true; this.analysisContent = ""; this.analysisSteps = []; this.analysisError = ""; this.analysisSaved = false; this.selectedReportId = "";
+    },
+    closeAnalysis() { if (this.analysisAbort) this.analysisAbort.abort(); this.analysisOpen = false; },
+    async startAnalysis() {
+      if (this.analysisBusy || !this.logId) return;
+      const id = this.logId; const controller = new AbortController(); this.analysisAbort = controller;
+      this.analysisBusy = true; this.analysisSaved = false; this.analysisError = ""; this.analysisSteps = []; this.analysisContent = "";
+      try {
+        await apiFetch("/api/logs/" + id + "/llm-analyze", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({focus:this.analysisFocus}),signal:controller.signal}, 305000, async (response) => {
+          const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8"); let buffer = ""; let completed = false;
+          const accept = (line) => {
+            if (!line.startsWith("data:")) return;
+            const event = JSON.parse(line.slice(5).trim());
+            if (event.error) throw new Error(event.error);
+            if (event.tool) this.analysisSteps.push({tool:event.tool,args:event.args,result:event.result});
+            if (event.delta) this.analysisContent += event.delta;
+            if (event.done) { completed = true; this.analysisSaved = true; this.selectedReportId = String(event.report_id); }
+          };
+          try {
+            while (true) {
+              const {value,done} = await reader.read();
+              buffer += decoder.decode(value || new Uint8Array(), {stream:!done});
+              const lines = buffer.split(/\r?\n/); buffer = lines.pop(); lines.forEach(accept);
+              if (done) { if (buffer.trim()) accept(buffer); break; }
+            }
+            if (!completed) throw new Error("分析连接中断，报告未保存");
+          } finally { if (!completed) { try { await reader.cancel(); } catch (err) { /* 已断开的连接 */ } } reader.releaseLock(); }
+        });
+        if (id === this.logId) await this.loadLogReports();
+        showToast("报告已保存，可从历史报告重新打开");
+      } catch (err) {
+        if (err.name !== "AbortError") this.analysisError = String(err.message || err);
+      } finally { this.analysisBusy = false; this.analysisAbort = null; }
+    },
+    async openReport() {
+      if (!this.selectedReportId || this.analysisBusy) return;
+      try {
+        const data = await apiFetch("/api/logs/" + this.logId + "/reports/" + this.selectedReportId);
+        this.analysisContent = data.content; this.analysisSteps = []; this.analysisError = ""; this.analysisSaved = true; this.analysisOpen = true;
+      } catch (err) { /* 统一提示 */ }
+    },
     async loadCodegenHistory() {
       try { this.codegenHistory = (await apiFetch("/api/codegen/history")).items; }
       catch (err) { /* 统一错误反馈 */ }
@@ -561,6 +633,7 @@ const App = {
     if (this.page === "codegen") this.loadCodegenHistory();
     if (this.page === "settings") this.loadSettings();
     window.addEventListener("hashchange", () => {
+      if (this.analysisAbort) this.analysisAbort.abort();
       this.page = parseRoute();
       if (this.page === "logs") this.refreshLogsRoute();
     });
@@ -568,6 +641,7 @@ const App = {
     if (this.page === "kb") this.loadKbList();
   },
   beforeUnmount() {
+    if (this.analysisAbort) this.analysisAbort.abort();
     clearTimeout(this.commandSearchTimer);
     clearTimeout(this.kbSearchTimer);
     clearTimeout(this.logFilterTimer);
@@ -690,12 +764,22 @@ const App = {
     '            <label>关键词<input v-model="logKeyword" @input="queueLogFilter" placeholder="大小写不敏感子串"></label><label class="inline-label"><input type="checkbox" v-model="logUseRegex" @change="loadLogLines(false)">启用正则过滤（与关键词取交集）</label>',
     '            <label>正则表达式<input v-model="logPattern" :disabled="!logUseRegex" @input="queueLogFilter" placeholder="Exception|Error"></label>',
     '            <label>行号排序<select v-model="logOrder" @change="loadLogLines(false)"><option value="asc">升序</option><option value="desc">倒序</option></select></label>',
-    '            <div class="settings-actions"><button class="copy-button" @click="showRegexPreview=!showRegexPreview">正则测试</button><button class="copy-button" @click="exportLog" :disabled="logsLoading">导出过滤结果</button><button class="copy-button" @click="logsAiNotice">AI 分析（待接入）</button></div>',
+    '            <div class="settings-actions"><button class="copy-button" @click="showRegexPreview=!showRegexPreview">正则测试</button><button class="copy-button" @click="exportLog" :disabled="logsLoading">导出过滤结果</button><button class="copy-button" @click="openAnalysis">AI 分析</button></div>',
+    '            <label>历史报告<select v-model="selectedReportId" @change="openReport" :disabled="analysisBusy"><option value="">选择已保存的报告</option><option v-for="report in logReports" :key="report.id" :value="String(report.id)">{{ report.created_at }} · {{ report.model }}</option></select></label>',
     '          </div>',
     '          <regex-preview v-if="showRegexPreview" :initial-pattern="logPattern || \'Exception|Error\'" :initial-text="logRows.slice(0,30).map(row=>row.text).join(\'\\n\')"></regex-preview>',
     '          <p role="status">{{ logsLoading ? "查询中…" : "匹配 " + logTotal + " 行，已加载 " + logRows.length + " 行" }}</p>',
     '          <div class="log-viewer"><div v-for="row in logRows" :key="row.line_no" class="log-line" :class="\'level-\'+(row.level || \'UNKNOWN\')"><span class="log-line-no">{{ row.line_no }}</span><span class="log-line-level">{{ row.level || "—" }}</span><span class="log-line-text" :title="row.text">{{ row.text }}</span></div></div>',
     '          <p v-if="!logsLoading && !logRows.length" class="placeholder dim">没有符合过滤条件的日志行</p><button v-if="logRows.length<logTotal" class="copy-button" :disabled="logsLoading" @click="loadLogLines(true)">加载更多（+500）</button>',
+    '          <aside v-if="analysisOpen" class="analysis-drawer" aria-label="日志 AI 分析报告"><div class="analysis-head"><h2>日志 AI 分析</h2><button class="copy-button" @click="closeAnalysis">关闭分析</button></div>',
+    '            <p class="placeholder dim">开始后会向已启用的模型发送日志摘要和按需读取的有界片段，不发送日志全文；付费模型按平台计费。</p>',
+    '            <label class="analysis-focus">重点关注<input v-model="analysisFocus" maxlength="1000" :disabled="analysisBusy" placeholder="可选：连接超时、错误激增等"></label>',
+    '            <div class="settings-actions"><button class="copy-button" :disabled="analysisBusy" @click="startAnalysis">{{ analysisBusy ? "分析中…" : "开始分析" }}</button><button v-if="analysisBusy" class="copy-button" @click="analysisAbort.abort()">停止分析</button></div>',
+    '            <p v-if="analysisBusy" role="status">正在检索证据并生成报告…</p><p v-if="analysisSaved" role="status">报告已存历史</p>',
+    '            <p v-if="analysisError" class="regex-error" role="alert">{{ analysisError }} <a href="#/settings">前往模型设置</a></p>',
+    '            <details v-for="(step,i) in analysisSteps" :key="i" class="trace-card" open><summary>{{ i+1 }} · {{ step.tool }}</summary><pre>{{ JSON.stringify(step.args) }}</pre><p>{{ step.result }}</p></details>',
+    '            <article class="markdown-body analysis-report" v-html="analysisHtml"></article>',
+    '          </aside>',
     '        </template>',
     '      </template>',
     '    </section>',

@@ -7,6 +7,10 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from starlette.datastructures import UploadFile
 from app.logs import store
+from app.logs.analyze import analysis_events
+from app.llm.routes import effective_settings
+from pydantic import BaseModel, Field
+import json
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
 
@@ -89,8 +93,8 @@ def lines(log_id: int, level: str = "", q: str = "", regex: str = "",
 
 @router.get("/{log_id}/stats")
 def stats(log_id: int) -> dict[str, Any]:
-    log = require_log(log_id)
-    return {"level_counts": log["level_stats"], "format_guess": log["format_guess"], "top_clusters": []}
+    require_log(log_id)
+    return store.get_stats(log_id)
 
 
 @router.get("/{log_id}/export")
@@ -106,3 +110,32 @@ def delete_log(log_id: int) -> dict[str, bool]:
     if not store.delete_log(log_id):
         raise HTTPException(404, "日志不存在")
     return {"ok": True}
+
+
+class AnalyzeInput(BaseModel):
+    focus: str = Field(default="", max_length=1000)
+
+
+@router.post("/{log_id}/llm-analyze")
+async def analyze(log_id: int, body: AnalyzeInput, request: Request) -> StreamingResponse:
+    require_log(log_id)
+    async def events():
+        async for event in analysis_events(log_id, body.focus, effective_settings(), request.is_disconnected):
+            yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/{log_id}/reports")
+def reports(log_id: int) -> dict[str, Any]:
+    require_log(log_id)
+    return {"items": store.list_reports(log_id)}
+
+
+@router.get("/{log_id}/reports/{report_id}")
+def report(log_id: int, report_id: int) -> dict[str, str]:
+    require_log(log_id)
+    result = store.get_report(log_id, report_id)
+    if result is None:
+        raise HTTPException(404, "报告不存在或不属于该日志")
+    return result

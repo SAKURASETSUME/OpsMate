@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 from app import config
-from app.logs.rules import classify_level, guess_format
+from app.logs.rules import classify_level, guess_format, cluster_rows
 
 MAX_BYTES = 50 * 1024 * 1024
 LEVELS = ("ERROR", "WARN", "INFO", "DEBUG", "")
@@ -154,3 +154,44 @@ def delete_log(log_id: int) -> bool:
             conn.execute("DELETE FROM logs WHERE id=?", (log_id,))
             (config.LOGS_DIR / f"{log_id}.txt").unlink(missing_ok=True)
     return True
+
+
+def get_stats(log_id: int) -> dict[str, Any]:
+    """扫描当前日志构建 L1 聚类，不改动原始行。"""
+    metadata = get_log(log_id)
+    if metadata is None:
+        raise ValueError("日志不存在")
+    with connection() as conn:
+        clusters, time_range = cluster_rows(conn.execute("SELECT line_no,level,text FROM log_lines WHERE log_id=? ORDER BY line_no", (log_id,)))
+    result = {"level_counts": metadata["level_stats"], "format_guess": metadata["format_guess"], "top_clusters": clusters}
+    if time_range:
+        result["time_range"] = time_range
+    return result
+
+
+def get_context(log_id: int, line_no: int, around: int = 10) -> dict[str, Any]:
+    """返回当前行附近有界上下文。"""
+    return query_lines(log_id, offset=max(0, line_no - around - 1), limit=around * 2 + 1)
+
+
+def save_report(log_id: int, model: str, content: str) -> int:
+    """仅保存完整报告，日志被删则拒绝孤立记录。"""
+    with connection() as conn:
+        with conn:
+            if conn.execute("SELECT 1 FROM logs WHERE id=?", (log_id,)).fetchone() is None:
+                raise ValueError("日志已删除，报告未保存")
+            cursor = conn.execute("INSERT INTO reports(log_id,kind,model,content) VALUES (?,'llm',?,?)", (log_id, model, content))
+            return int(cursor.lastrowid)
+
+
+def list_reports(log_id: int) -> list[dict[str, Any]]:
+    """倒序报告元信息。"""
+    with connection() as conn:
+        return [dict(row) for row in conn.execute("SELECT id,model,created_at FROM reports WHERE log_id=? ORDER BY id DESC", (log_id,))]
+
+
+def get_report(log_id: int, report_id: int) -> dict[str, str] | None:
+    """报告必须属于当前日志。"""
+    with connection() as conn:
+        row = conn.execute("SELECT content FROM reports WHERE log_id=? AND id=?", (log_id, report_id)).fetchone()
+        return dict(row) if row else None
