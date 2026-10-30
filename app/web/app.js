@@ -29,7 +29,7 @@ async function apiFetch(url, options, timeoutMs = 30000, responseType = "json") 
     return responseType === "blob" ? await resp.blob() : await resp.json();
   } catch (err) {
     if (err.name === "AbortError") {
-      if (options && options.signal && options.signal.aborted) showToast("已停止分析");
+      if (options && options.signal && options.signal.aborted) showToast("已停止");
       else showToast("请求超时，请检查后端服务", "err");
     } else {
       showToast(String(err.message || err), "err");
@@ -62,22 +62,24 @@ function showToast(message, type = "ok") {
 
 /* ============ hash 路由与应用骨架 ============ */
 
-/** 左侧边栏 5 个导航项（契约 §7，顺序固定） */
+/** 左侧边栏 6 个导航项（契约 §7，顺序固定；运维助手 Phase 8 落地） */
 const NAV_ITEMS = [
-  { hash: "#/commands", page: "commands", label: "指令速查" },
-  { hash: "#/kb",       page: "kb",       label: "配置速查" },
-  { hash: "#/codegen",  page: "codegen",  label: "脚本工坊" },
-  { hash: "#/logs",     page: "logs",     label: "日志中心" },
-  { hash: "#/settings",  page: "settings", label: "设置" },
+  { hash: "#/commands",  page: "commands",  label: "指令速查" },
+  { hash: "#/kb",        page: "kb",        label: "配置速查" },
+  { hash: "#/codegen",   page: "codegen",   label: "脚本工坊" },
+  { hash: "#/logs",      page: "logs",      label: "日志中心" },
+  { hash: "#/assistant", page: "assistant", label: "运维助手" },
+  { hash: "#/settings",  page: "settings",  label: "设置" },
 ];
 
-/** 各模块施工占位文案（Phase 1-6 逐个替换为真实视图） */
+/** 各模块施工占位文案 */
 const PLACEHOLDER = {
-  commands: "指令速查：600+ 中文 Linux 命令离线检索（Phase 1 施工）",
-  kb: "配置速查：nginx / zabbix 启停命令与配置参数分 Tab 查询（Phase 2 施工）",
-  codegen: "脚本工坊：自然语言生成带中文注释的 bash 脚本（Phase 4 施工）",
-  logs: "日志中心：上传 / 粘贴日志，过滤、着色、统计、导出与 AI 分析（Phase 5-6 施工）",
-  settings: "设置：配置大模型接入（Phase 3 施工）",
+  commands: "指令速查：600+ 中文 Linux 命令离线检索",
+  kb: "配置速查：六软件启停命令与配置参数分 Tab 查询",
+  codegen: "脚本工坊：自然语言生成带中文注释的 bash 脚本",
+  logs: "日志中心：上传 / 粘贴日志，过滤、着色、统计、导出与 AI 分析",
+  assistant: "运维助手：基于本地知识库的问答智能体",
+  settings: "设置：配置大模型接入",
 };
 
 /** 解析当前 hash → 页面名（#/logs/:id 归入 logs 页） */
@@ -204,6 +206,8 @@ const App = {
       pendingDeleteLogId: null,
       analysisOpen: false, analysisBusy: false, analysisContent: "", analysisSteps: [], analysisError: "",
       analysisFocus: "", analysisAbort: null, logReports: [], selectedReportId: "", analysisSaved: false,
+      asstSessions: [], asstMessages: [], asstSessionId: null, asstInput: "",
+      asstBusy: false, asstAbort: null, asstError: "", pendingDeleteAsstId: null, asstKeySeq: 0,
     };
   },
   computed: {
@@ -250,6 +254,7 @@ const App = {
       }
       if (nextPage === "settings" && !this.settingsLoaded) this.loadSettings();
       if (nextPage === "codegen") this.loadCodegenHistory();
+      if (nextPage === "assistant" && !this.asstSessions.length) this.loadAsstSessions();
     },
   },
   methods: {
@@ -683,6 +688,131 @@ const App = {
       } catch (err) { /* 统一提示 */ }
       finally { this.wbBusy = false; }
     },
+    /* ============ 运维助手（Phase 8） ============ */
+    async loadAsstSessions() {
+      try { this.asstSessions = (await apiFetch("/api/assistant/sessions")).items; }
+      catch (err) { /* 统一提示 */ }
+    },
+    newAsstSession() {
+      if (this.asstBusy) return;
+      this.asstSessionId = null; this.asstMessages = []; this.asstError = ""; this.pendingDeleteAsstId = null;
+    },
+    parseAsstRow(row) {
+      if (row.role !== "tool") {
+        return { key: row.role[0] + row.id, role: row.role, content: row.content, tools: [] };
+      }
+      try {
+        const trace = JSON.parse(row.content);
+        return { key: "t" + row.id, role: "tool", tool: trace.tool || "", args: trace.args || {}, result: trace.result || "" };
+      } catch (err) {
+        return { key: "t" + row.id, role: "tool", tool: "", args: {}, result: row.content };
+      }
+    },
+    async openAsstSession(item) {
+      if (this.asstBusy) return;
+      try {
+        const data = await apiFetch("/api/assistant/sessions/" + item.id);
+        this.asstSessionId = item.id;
+        this.asstMessages = data.messages.map((row) => this.parseAsstRow(row));
+        this.asstError = ""; this.pendingDeleteAsstId = null;
+      } catch (err) { /* 统一提示 */ }
+    },
+    async deleteAsstSession(item) {
+      if (this.asstBusy) return;
+      try {
+        await apiFetch("/api/assistant/sessions/" + item.id, { method: "DELETE" });
+        this.pendingDeleteAsstId = null;
+        showToast("会话已删除");
+        if (this.asstSessionId === item.id) this.newAsstSession();
+        await this.loadAsstSessions();
+      } catch (err) { /* 统一提示 */ }
+    },
+    askKeydown(event) {
+      if (event.isComposing) return; // 中文输入法选词回车不发送
+      this.sendAsstMessage();
+    },
+    async sendAsstMessage() {
+      if (this.asstBusy || !this.asstInput.trim()) return;
+      const message = this.asstInput.trim();
+      this.asstInput = ""; this.asstError = "";
+      this.asstMessages.push({ key: "u" + (++this.asstKeySeq), role: "user", content: message, tools: [] });
+      const live = { key: "a" + (++this.asstKeySeq), role: "assistant", content: "", tools: [] };
+      this.asstMessages.push(live);
+      const controller = new AbortController(); this.asstAbort = controller;
+      this.asstBusy = true;
+      try {
+        await apiFetch("/api/assistant/chat", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, session_id: this.asstSessionId }),
+          signal: controller.signal,
+        }, 305000, async (response) => {
+          const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8"); let buffer = ""; let completed = false;
+          const accept = (line) => {
+            if (!line.startsWith("data:")) return;
+            const event = JSON.parse(line.slice(5).trim());
+            if (event.error) throw new Error(event.error);
+            if (event.tool) live.tools.push({ tool: event.tool, args: event.args, result: event.result });
+            if (event.delta) live.content += event.delta;
+            if (event.done) { completed = true; this.asstSessionId = event.session_id; }
+          };
+          try {
+            while (true) {
+              const {value, done} = await reader.read();
+              buffer += decoder.decode(value || new Uint8Array(), {stream:!done});
+              const lines = buffer.split(/\r?\n/); buffer = lines.pop(); lines.forEach(accept);
+              if (done) { if (buffer.trim()) accept(buffer); break; }
+            }
+            if (!completed) throw new Error("回答连接中断，本轮未保存");
+          } finally { if (!completed) { try { await reader.cancel(); } catch (err) { /* 已断开的连接 */ } reader.releaseLock(); } }
+        });
+        await this.loadAsstSessions();
+      } catch (err) {
+        if (err.name !== "AbortError") this.asstError = String(err.message || err);
+        if (!live.content && !live.tools.length) this.asstMessages.pop();
+      } finally { this.asstBusy = false; this.asstAbort = null; }
+    },
+    assistantMarkdown(text) {
+      // 来源标记 → 站内链接：【命令：tar】→#/commands/tar；【配置：nginx/name】→#/kb/nginx/name
+      const withLinks = String(text || "")
+        .replace(/【命令：([^】]+)】/g, (m, name) => "[`" + name.trim() + "`](#/commands/" + encodeURIComponent(name.trim()) + ")")
+        .replace(/【配置：([^】/]+)\/([^】]+)】/g, (m, software, entry) =>
+          "[`" + software.trim() + "/" + entry.trim() + "`](#/kb/" + encodeURIComponent(software.trim()) + "/" + encodeURIComponent(entry.trim()) + ")");
+      const escape = (value) => String(value || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+      const renderer = new marked.Renderer();
+      renderer.html = (html) => escape(html);
+      renderer.image = (href,title,alt) => escape(alt || "图片");
+      renderer.link = (href, title, label) => (href && href.indexOf("#/") === 0)
+        ? '<a href="' + escape(href) + '">' + label + "</a>"
+        : label + " (" + escape(href) + ")";
+      return marked.parse(withLinks.replace(/<!--rehype:[^>]*-->/gi,""), {renderer});
+    },
+    async handleDeepLink() {
+      // #/commands/<name> 与 #/kb/<software>/<entry>：来源引用跳转
+      const parts = location.hash.replace(/^#\/?/, "").split("/");
+      if (this.page === "commands" && parts[1]) {
+        if (!this.commandItems.length) this.loadCommands();
+        this.selectCommand(decodeURIComponent(parts[1]));
+      } else if (this.page === "kb" && parts[1]) {
+        this.kbView = "kb"; this.kbQuery = ""; this.kbSearchItems = null;
+        const software = decodeURIComponent(parts[1]);
+        const entry = parts[2] ? decodeURIComponent(parts.slice(2).join("/")) : "";
+        this.kbDetailLoading = true;
+        try {
+          const data = await apiFetch("/api/kb/" + encodeURIComponent(software));
+          this.kbSelected = data;
+          this.kbExpanded = {};
+          if (entry) {
+            const hit = (data.categories || []).find((cat) =>
+              (cat.entries || []).some((e) => e.name === entry));
+            this.kbTab = hit && hit.id === "conf" ? "conf" : "cli";
+            this.kbExpanded = { [entry]: true };
+          } else {
+            this.kbTab = "cli";
+          }
+        } catch (err) { /* 统一提示 */ }
+        finally { this.kbDetailLoading = false; }
+      }
+    },
     queueCommandSearch() {
       clearTimeout(this.commandSearchTimer);
       this.commandSearchTimer = setTimeout(() => this.loadCommands(), 300);
@@ -743,13 +873,17 @@ const App = {
     if (this.page === "logs") this.refreshLogsRoute();
     if (this.page === "codegen") this.loadCodegenHistory();
     if (this.page === "settings") this.loadSettings();
+    if (this.page === "assistant") this.loadAsstSessions();
     window.addEventListener("hashchange", () => {
       if (this.analysisAbort) this.analysisAbort.abort();
       this.page = parseRoute();
       if (this.page === "logs") this.refreshLogsRoute();
+      if (this.page === "assistant" && !this.asstSessions.length) this.loadAsstSessions();
+      this.handleDeepLink();
     });
     if (this.page === "commands") this.loadCommands();
     if (this.page === "kb") this.loadKbList();
+    this.handleDeepLink();
   },
   beforeUnmount() {
     if (this.analysisAbort) this.analysisAbort.abort();
@@ -982,6 +1116,56 @@ const App = {
     '      <h2>生成历史</h2><p v-if="!codegenHistory.length" class="placeholder dim">暂无生成记录</p>',
     '      <button v-for="item in codegenHistory" :key="item.id" class="history-item" :disabled="codegenBusy" @click="openCodegenHistory(item)">{{ item.requirement }} · {{ item.model }} · {{ item.created_at }}</button>',
     '    </section>',
+    '    <section v-else-if="page === \'assistant\'" class="assistant-page">',
+    '      <header class="page-header">',
+    "        <div>",
+    "          <h1>运维助手</h1>",
+    '          <p>基于本地知识库（命令 / 配置 / 脚本历史）回答；回答中的来源可点击跳转</p>',
+    "        </div>",
+    '        <span class="result-count">模型推断，请以官方文档为准</span>',
+    "      </header>",
+    '      <div class="asst-layout">',
+    '        <aside class="asst-sessions" aria-label="会话列表">',
+    '          <button class="copy-button" type="button" @click="newAsstSession" :disabled="asstBusy">＋ 新建对话</button>',
+    '          <p v-if="!asstSessions.length" class="empty-state">暂无历史会话</p>',
+    '          <div v-for="s in asstSessions" :key="s.id" class="asst-session-item">',
+    '            <button type="button" class="history-item" :class="{ active: asstSessionId === s.id }" @click="openAsstSession(s)">',
+    "              <strong>{{ s.title }}</strong>",
+    '              <span class="wb-meta">{{ s.updated_at }}</span>',
+    "            </button>",
+    '            <button v-if="pendingDeleteAsstId === s.id" class="copy-button danger-button asst-del" type="button" @click="deleteAsstSession(s)" :disabled="asstBusy">确认</button>',
+    '            <button v-else class="copy-button asst-del" type="button" @click="pendingDeleteAsstId = s.id" :disabled="asstBusy">删除</button>',
+    "          </div>",
+    "        </aside>",
+    '        <section class="asst-chat" aria-label="对话消息流">',
+    '          <div class="asst-messages">',
+    '            <div v-for="m in asstMessages" :key="m.key" :class="m.role === \'user\' ? \'asst-user\' : \'asst-item\'">',
+    '              <div v-if="m.role === \'tool\'" class="asst-tool">',
+    '                <span class="asst-tool-name">{{ m.tool || "工具" }}</span>',
+    "                <code>{{ JSON.stringify(m.args) }}</code>",
+    "                <p>{{ m.result }}</p>",
+    "              </div>",
+    '              <div v-else-if="m.role === \'user\'" class="asst-bubble-user">{{ m.content }}</div>',
+    '              <template v-else>',
+    '                <div v-for="(t,i) in m.tools" :key="\'t\'+i" class="asst-tool">',
+    '                  <span class="asst-tool-name">{{ t.tool }}</span>',
+    "                  <code>{{ JSON.stringify(t.args) }}</code>",
+    "                  <p>{{ t.result }}</p>",
+    "                </div>",
+    '                <article v-if="m.content" class="markdown-body asst-bubble-bot" v-html="assistantMarkdown(m.content)"></article>',
+    "              </template>",
+    "            </div>",
+    '            <p v-if="!asstMessages.length" class="empty-state">问一个运维问题，例如：nginx 怎么平滑重载？<br>助手只依据本地知识库检索结果回答，检索不到会明说；配置工坊中开启共享的配置可被引用。</p>',
+    "          </div>",
+    '          <p v-if="asstError" class="regex-error" role="alert">{{ asstError }} <a href="#/settings">前往模型设置</a></p>',
+    '          <form class="asst-composer" @submit.prevent="sendAsstMessage">',
+    '            <textarea v-model="asstInput" rows="2" :disabled="asstBusy" placeholder="输入运维问题，Enter 发送" @keydown.enter.exact.prevent="askKeydown"></textarea>',
+    '            <button class="copy-button" type="submit" :disabled="asstBusy || !asstInput.trim()">{{ asstBusy ? "回答中…" : "发送" }}</button>',
+    '            <button v-if="asstBusy" class="copy-button" type="button" @click="asstAbort.abort()">停止</button>',
+    "          </form>",
+    "        </section>",
+    "      </div>",
+    "    </section>",
     '    <section v-else-if="page === \'settings\'" class="settings-page">',
     '      <h1>模型设置</h1>',
     '      <p class="placeholder dim">配置 OpenAI 兼容模型服务，保存后再测试连通。</p>',

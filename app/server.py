@@ -15,6 +15,8 @@ from app.codegen.routes import router as codegen_router
 from app.logs.routes import router as logs_router
 from app.logs.store import init_store
 from app.kb.workbench import init_workbench
+from app.assistant.routes import router as assistant_router
+from app.assistant.service import init_assistant
 
 VERSION = "1.0.0"
 
@@ -24,6 +26,7 @@ def create_app() -> FastAPI:
     config.ensure_dirs()
     init_store()
     init_workbench()
+    init_assistant()
     app = FastAPI(title="OpsMate", version=VERSION)
 
     @app.exception_handler(RequestValidationError)
@@ -43,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(llm_router)
     app.include_router(codegen_router)
     app.include_router(logs_router)
+    app.include_router(assistant_router)
 
     # 静态托管前端（零构建，Vue3/marked 为 vendored 全局构建）
     app.mount("/", StaticFiles(directory=str(config.WEB_DIR), html=True), name="web")

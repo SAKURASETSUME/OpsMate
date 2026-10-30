@@ -908,3 +908,42 @@
 ### Phase 状态
 
 **修复完成，随 `style(web): 统一按钮控件高度并对齐日志工具栏` 提交。Phase 8 仍待用户确认后开工。**
+
+## 2026-10-30 · Phase 8 · 运维助手（验收通过）
+
+### 步骤 1：契约确认与后端
+
+- 用户确认"继续"；重读 §8 Phase 8、§6 assistant API、§4.4 DDL、§7 #/assistant 视图、§9.3 引擎。
+- `app/assistant/service.py`：DDL 建 assistant_sessions/assistant_messages（create_app 调 init_assistant）；list/get/delete/conversation_history（只取 user/assistant 作上下文）；`save_turn` 单事务原子写入（user + 每工具一行 tool 轨迹 JSON + assistant，标题=首条用户消息截断 50 字）。
+- `app/agent/engine.py` 新增 `run_assistant`：白名单 search_commands/search_kb/search_history/read_user_config，循环温度 0.1、六步上限、三次解析失败退回无工具直答；终答 chat_stream 流式温度 0.5；模型规划轮直接给出完整 answer 时按单段 delta 使用；工具在线程执行。
+- `app/assistant/routes.py`：/api/assistant/chat SSE（过程事件→delta→done{session_id}；无 key/会话不存在/LLMError/意外异常均转明确 error 事件，失败不落半份）+ sessions CRUD；ASSISTANT_SYSTEM_PROMPT 定义回答纪律与来源标记规则。
+
+决策：失败轮不写库（用户气泡也不留），与日志分析"不存半份报告"同口径。（理由：避免悬空 user 消息污染下一轮上下文；UI 当场已展示错误。）
+决策：`read_user_config` 场景白名单在此接入（Phase 7 只入注册表）。（理由：按施工文档 Phase 8 工具集要求；用户已共享配置即可被问答引用。）
+
+### 步骤 2：前端 #/assistant 与深链
+
+- 导航 6 项（运维助手插入日志中心与设置之间）；左会话列表（标题/时间/两步删除确认）+ 右消息流：用户右气泡、助手左 markdown 气泡（安全渲染：活动 HTML/远程图片禁用）、工具轨迹灰卡（SSE 实时插入）、底部输入框（Enter 发送、输入法组词回车不误发、可停止）。
+- 来源标记渲染：【命令：x】→ `#/commands/x`、【配置：sw/name】→ `#/kb/sw/name`；深链处理 `#/commands/<name>`（选中命令）与 `#/kb/<software>/<entry>`（打开详情、按条目所在 category 自动选 Tab 并展开条目）。
+- 决策：站内 `#/` 链接放行、外部链接仍按文本显示。（理由：跳转需求仅限站内；模型输出不可信，外部链接不渲染为可点。）
+
+### 步骤 3：隔离验收与回归
+
+- 新增 `tools/verify_assistant.py`：SSE 顺序（tool→delta→done）、原子落库（user/tool/assistant + 标题截断）、同会话第二轮历史进模型上下文、直接作答路径、无密钥明确引导且不建会话、不存在会话、流中断 LLMError 与意外异常均转 error 且不落库、三次解析失败降级、会话删除连带消息。全部通过。
+- 回归：verify_workbench / verify_logs / verify_analysis / verify_codegen 全 PASS；compileall 与 node --check 通过。
+
+### 步骤 4：真实验收（GLM-5.3）与两处提示词修正
+
+- 首轮实测暴露问题一：模型把"nginx 重载"整句当检索词，子串检索必然空手而归后谎称"知识库未收录"。修正：提示词要求 q 用单个简短关键词 + 引擎在 search_* 空结果时回填定向提示（换短词重试）。复测模型自主完成 "磁盘占用 排查 命令"→"磁盘"→"du" 的降级检索链。
+- 问题二：kb 条目（nginx -s reload）被误标【命令：】导致跳命令文档 404；未检索过的 df 被谎称未收录。修正：标记选择规则写死（search_commands 结果→【命令：】；search_kb 结果无论 cli/conf→【配置：软件/条目】）+ "声称未收录前必须先检索过该关键词；对比多个命令逐一检索并标记"。复测全部达标。
+- 最终真实验收：①"nginx 怎么平滑重载"→ 回答含 `nginx -s reload` 与【配置：nginx/nginx -s reload】，点击跳配置速查 nginx 详情、命令 Tab、目标条目自动展开；②"磁盘占用排查用什么命令"→ df/du 均带【命令：df】【命令：du】，点击 df 跳 `#/commands/df` 详情；③同会话追问"那它和 systemctl reload nginx 有什么区别"→ 正确理解"它"指 nginx -s reload，对比表+来源标记齐全；④会话列表回看（含 tool 轨迹）与两步删除实测通过；⑤无 key 路径在冻结包实测（error 事件明确引导设置页）；⑥SSE 流式 markdown 逐段渲染实测正常。
+- 隔离与真实测试期间未发送用户私有日志/配置；共享配置工具未被模型主动调用（无共享场景问题，机制经 Phase 7 验收）。
+
+### 步骤 5：打包冒烟
+
+- PyInstaller onedir（白名单 app/commands/kb + winforms，ASCII 构建目录）成功；载荷扫描 config.json/model_profiles.json/opsmate.db/data/logs 数量为 0。
+- 冻结进程（隔离 OPSMATE_DATA_DIR，127.0.0.1:26629）：health、kb 六软件、commands=621、assistant sessions 空列表、chat 无密钥 error 事件全部通过；进程清理与构建产物清理完成。
+
+### Phase 状态
+
+**验收通过，随 `feat(assistant): 完成运维问答智能体与会话持久化` 提交封账。停工汇报，未经用户确认不进入 Phase 9（打磨与打包）。**

@@ -576,6 +576,46 @@ a.copy-button, label.copy-button { text-decoration: none; }
   to { opacity: 1; transform: none; }
 }
 
+/* ============ Phase 8：运维助手 ============ */
+
+.assistant-page { height: 100%; display: flex; flex-direction: column; min-height: 520px; }
+.asst-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; }
+.asst-sessions { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
+.asst-session-item { display: flex; gap: 6px; align-items: stretch; }
+.asst-session-item .history-item { flex: 1; min-width: 0; }
+.asst-del { flex: none; padding: 0 10px; font-size: 12px; }
+
+.asst-chat { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.asst-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 4px 16px; display: flex; flex-direction: column; gap: 12px; }
+.asst-user { align-self: flex-end; }
+.asst-bubble-user {
+  max-width: 78%; padding: 10px 14px;
+  background: var(--primary-soft); border: 1px solid rgba(79, 140, 255, 0.35);
+  color: var(--text); border-radius: 12px 12px 2px 12px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.asst-item { max-width: 92%; display: flex; flex-direction: column; gap: 6px; }
+.asst-bubble-bot {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px 12px 12px 2px; padding: 12px 16px; font-size: 13.5px;
+}
+.asst-bubble-bot a { color: var(--primary-bright); }
+.asst-tool {
+  background: var(--raised); border: 1px solid var(--border);
+  border-radius: var(--r-chip); padding: 8px 12px;
+  font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere;
+}
+.asst-tool-name { font-family: var(--mono); color: var(--primary-bright); margin-right: 8px; }
+.asst-tool code { font-family: var(--mono); color: var(--text-faint); }
+.asst-tool p { margin: 4px 0 0; color: var(--text-faint); }
+.asst-composer { display: flex; gap: 10px; align-items: flex-end; margin-top: 12px; }
+.asst-composer textarea {
+  flex: 1; resize: vertical; min-height: 58px; max-height: 160px; padding: 10px 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-card);
+  background: var(--inset); color: var(--text); font: inherit; outline: none;
+}
+.asst-composer textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+
 /* ============ 响应式 ============ */
 
 @media (max-width: 1050px) { .codegen-output { grid-template-columns: 1fr; } }
@@ -584,4 +624,5 @@ a.copy-button, label.copy-button { text-decoration: none; }
   .command-browser { grid-template-columns: 260px minmax(0, 1fr); }
   .kb-cards { grid-template-columns: 1fr; }
   .wb-layout { grid-template-columns: 1fr; }
+  .asst-layout { grid-template-columns: 1fr; }
 }
