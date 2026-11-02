@@ -147,6 +147,61 @@ ASSISTANT_TOOLS = ("search_commands", "search_kb", "search_history", "read_user_
                    "web_search", "web_fetch")
 
 
+def _strip_leading_protocol(text: str) -> tuple[str, bool]:
+    """剥掉文本开头的协议/工具结果泄露（裸 JSON 或 ```json 围栏）。
+
+    仅当解析出的对象带协议特征键（action/tool、ok+result、ok+error）才剥离；
+    {"action":"final","answer":...} 会还原出 answer 文本。返回 (剩余文本, 是否修改)。
+    """
+    stripped = text.lstrip()
+    if not stripped:
+        return text, False
+    fence = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```", stripped)
+    candidates: list[tuple[str, str]] = []
+    if fence:
+        candidates.append((fence.group(1), stripped[fence.end():]))
+    if stripped.startswith("{"):
+        depth, in_string, escaped, end = 0, False, False, -1
+        for index, char in enumerate(stripped):
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                if in_string:
+                    escaped = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        if end > 0:
+            candidates.append((stripped[:end], stripped[end:]))
+    whitespace = text[:len(text) - len(stripped)]
+    for candidate, rest in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except ValueError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        keys = set(parsed)
+        is_protocol = ({"action", "tool"} & keys) or keys == {"ok"} or keys >= {"ok", "result"} or keys >= {"ok", "error"}
+        if not is_protocol:
+            continue
+        if parsed.get("action") == "final" and isinstance(parsed.get("answer"), str):
+            return whitespace + parsed["answer"] + rest, True
+        return whitespace + rest, True
+    return text, False
+
+
 async def run_assistant(client: LLMClient, system: str,
                         conversation: list[dict[str, Any]],
                         image_parts: list[str] | None = None,
@@ -224,9 +279,12 @@ async def run_assistant(client: LLMClient, system: str,
             failures += 1
             messages.append({"role": "user", "content": '格式错误，请输出 {"action":"tool","tool":"search_kb","args":{"q":"nginx","limit":5}} 或 {"action":"final"}。'})
     if direct_answer is not None:
-        yield {"delta": direct_answer}
-        yield {"final": direct_answer}
-        return
+        cleaned, _ = _strip_leading_protocol(direct_answer)
+        if cleaned.strip():
+            yield {"delta": cleaned}
+            yield {"final": cleaned.strip()}
+            return
+        # 直接回答本身是协议文本 → 丢弃，走最终流式生成
     # 终答上下文剔除协议轮 assistant 原文（避免模型模仿 JSON 协议作答），保留检索结果消息
     exchanges = list(conversation) if failures >= 3 else [
         item for item in messages[1:] if item.get("role") != "assistant"]
@@ -237,19 +295,74 @@ async def run_assistant(client: LLMClient, system: str,
         target["content"] = [{"type": "text", "text": str(target["content"])},
                              *[{"type": "image_url", "image_url": {"url": part}} for part in image_parts]]
     final_messages = [{"role": "system", "content": system}, *exchanges,
-                      {"role": "user", "content": "现在依据以上资料直接输出完整中文 markdown 回答；来源标记规则按 system 执行；本地资料没有的内容如实说明，不要编造。禁止输出 JSON 或以 {\"action\" 开头的协议文本，也不要再调用工具。"}]
-    parts: list[str] = []
-    async for kind, text in stream_with_reasoning(client, final_messages, temperature=0.5, timeout=120,
-                                                    effort=effort):
-        if kind == "thinking":
-            yield {"thinking": text}
-            continue
-        parts.append(text)
-        yield {"delta": text}
-    answer = "".join(parts).strip()
-    if not answer:
-        raise LLMError("模型未返回回答")
-    yield {"final": answer}
+                      {"role": "user", "content": "现在依据以上资料直接输出完整中文 markdown 回答；来源标记规则按 system 执行；本地资料没有的内容如实说明，不要编造。禁止输出 JSON 或以 {\"action\" 开头的协议文本，也不要再调用工具；不要复述工具调用的参数或工具返回的原始内容，直接给面向用户的结论与解释。"}]
+    for attempt in range(2):
+        parts: list[str] = []
+        pending = ""
+        guarding = True
+        async for kind, text in stream_with_reasoning(client, final_messages, temperature=0.5, timeout=120,
+                                                        effort=effort):
+            if kind == "thinking":
+                yield {"thinking": text}
+                continue
+            if guarding:
+                pending += text
+                probe = pending.lstrip()
+                if not probe:
+                    continue
+                if probe[0] not in "{`":
+                    guarding = False
+                    parts.append(pending)
+                    yield {"delta": pending}
+                    pending = ""
+                    continue
+                remaining, changed = _strip_leading_protocol(pending)
+                if changed:
+                    pending = remaining
+                    probe = remaining.lstrip()
+                    if not probe or probe[0] not in "{`":
+                        if probe:
+                            guarding = False
+                            parts.append(pending)
+                            yield {"delta": pending}
+                            pending = ""
+                        continue
+                if len(probe) > 400:
+                    # 剥不动且过长：视为正文本身以 JSON 开头（如用户索取 JSON），原样放行
+                    guarding = False
+                    parts.append(pending)
+                    yield {"delta": pending}
+                    pending = ""
+                continue
+            parts.append(text)
+            yield {"delta": text}
+        if pending.strip():
+            remaining, _ = _strip_leading_protocol(pending)
+            if remaining.strip():
+                parts.append(remaining)
+                yield {"delta": remaining}
+        answer = "".join(parts).strip()
+        if answer:
+            yield {"final": answer}
+            return
+        if attempt == 0:
+            final_messages = [{"role": "system", "content": system},
+                              {"role": "user", "content": user_prompt_for_retry(conversation)}]
+        else:
+            raise LLMError("模型未返回有效回答")
+    raise LLMError("模型未返回有效回答")
+
+
+def user_prompt_for_retry(conversation: list[dict[str, Any]]) -> str:
+    """协议泄露重试：脱离工具上下文，只要面向用户的回答。"""
+    question = ""
+    for item in reversed(conversation):
+        if item.get("role") == "user":
+            value = item.get("content")
+            question = value if isinstance(value, str) else str(value)
+            break
+    return ("针对用户问题直接输出面向用户的中文 markdown 回答（问题：" + question[:2000]
+            + "）。禁止输出 JSON、协议文本或工具返回原文；缺少资料就如实说明。")
 
 
 async def plan_log_analysis(client: LLMClient, system: str, user: str, log_id: int) -> AsyncIterator[dict[str, Any]]:

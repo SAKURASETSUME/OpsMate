@@ -235,6 +235,37 @@ def main() -> None:
         client.put("/api/assistant/workspace", json={"directories": []})  # 清空授权
         assert not execute_tool("list_dir", {"path": ""})["ok"]
 
+        # J：终答协议泄露守卫——流式开头的工具 JSON/围栏不进入 delta 与最终回答
+        def saved_answer(events) -> str:
+            sid = [e for e in events if e.get("done")][0]["session_id"]
+            rows = client.get(f"/api/assistant/sessions/{sid}").json()["messages"]
+            return [m["content"] for m in rows if m["role"] == "assistant"][-1]
+        leak = '{"action":"tool","tool":"search_kb","args":{"q":"nginx","limit":3}}\n\n'
+        with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
+             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
+             patch.object(LLMClient, "chat_stream", new=stream_of(leak, "真正的回答内容")):
+            events = parse_sse(client.post("/api/assistant/chat", json={"message": "测试泄露"}))
+        deltas = "".join(e["delta"] for e in events if "delta" in e)
+        assert '"action"' not in deltas and "真正的回答内容" in deltas, deltas[:100]
+        assert saved_answer(events).strip() == "真正的回答内容"
+        # 纯协议输出 → 纠正重试一次成功
+        calls = {"n": 0}
+        async def leak_then_ok(self, messages, **kwargs):
+            calls["n"] += 1
+            yield '{"ok": true, "result": []}' if calls["n"] == 1 else "重试后的回答"
+        with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
+             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
+             patch.object(LLMClient, "chat_stream", new=leak_then_ok):
+            events = parse_sse(client.post("/api/assistant/chat", json={"message": "纯协议测试"}))
+        assert saved_answer(events).strip() == "重试后的回答" and calls["n"] == 2
+        # 直接回答本身是协议 JSON → 转最终流式生成
+        with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
+             patch.object(LLMClient, "chat", side_effect=[
+                 result({"action": "final", "answer": '{"tool": "search_kb", "args": {}}'})]), \
+             patch.object(LLMClient, "chat_stream", new=stream_of("最终生成的回答")):
+            events = parse_sse(client.post("/api/assistant/chat", json={"message": "直答协议测试"}))
+        assert saved_answer(events).strip() == "最终生成的回答"
+
     print("assistant ok")
 
 
