@@ -1269,12 +1269,18 @@ const App = {
     asstMessagesScrolled(event) {
       // 用户主动上翻离开底部后暂停跟随；再翻回底部附近自动恢复
       const el = event.target;
-      this.asstPinned = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      this.asstPinned = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     },
     scrollAsstBottom(force) {
       const el = this.$refs.asstMessages;
       if (!el || (!force && !this.asstPinned)) return;
       this.$nextTick(() => { el.scrollTop = el.scrollHeight; });
+    },
+    scrollThinkingBottom() {
+      // 思考框封顶 240px 内部滚动：跟随到最新思考文本，避免长思考期页面静止
+      const boxes = document.querySelectorAll(".agent-thinking-body");
+      const el = boxes[boxes.length - 1];
+      if (el) el.scrollTop = el.scrollHeight;
     },
     parseAsstRow(row) {
       if (row.role === "user") {
@@ -1395,7 +1401,7 @@ const App = {
             if (event.tool) live.tools.push({ tool: event.tool, args: event.args, result: event.result });
             if (event.proposal) live.proposals.push({ filename: event.proposal.filename, note: event.proposal.note,
               content: event.proposal.content, status: "pending" });
-            if (event.thinking) live.thinking += event.thinking;
+            if (event.thinking) { live.thinking += event.thinking; this.scrollThinkingBottom(); }
             if (event.delta) live.content += event.delta;
             if (event.done) { completed = true; this.asstSessionId = event.session_id; }
             this.scrollAsstBottom();
