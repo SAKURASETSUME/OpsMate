@@ -249,6 +249,8 @@ const App = {
       asstSessions: [], asstMessages: [], asstSessionId: null, asstInput: "", asstQueue: [],
       asstBusy: false, asstAbort: null, asstError: "", pendingDeleteAsstId: null, asstKeySeq: 0,
       asstDraftFiles: [], asstDragOver: false,
+      asstWorkspaceDirs: [], asstWsInput: "", asstWsEditing: false, asstWsBusy: false,
+      asstEffort: "low",
       analysisThinking: "",
       paneWidths: { commands: 320, wb: 300, asst: 260, codegen: 0.5, side: 200 },
       themePref: "auto",
@@ -304,7 +306,7 @@ const App = {
       }
       if (nextPage === "settings" && !this.settingsLoaded) this.loadSettings();
       if (nextPage === "codegen") this.loadCodegenHistory();
-      if (nextPage === "assistant" && !this.asstSessions.length) this.loadAsstSessions();
+      if (nextPage === "assistant" && !this.asstSessions.length) { this.loadAsstSessions(); this.loadAsstWorkspace(); }
     },
   },
   methods: {
@@ -792,6 +794,11 @@ const App = {
       finally { this.wbBusy = false; }
     },
     /* ============ 主题与可拖拽分割条 ============ */
+    /* ============ 思考强度 ============ */
+    setAsstEffort(value) {
+      this.asstEffort = value;
+      try { localStorage.setItem("opsmate-asst-effort", value); } catch (err) { /* 忽略 */ }
+    },
     applyTheme() {
       try { localStorage.setItem("opsmate-theme", this.themePref); } catch (err) { /* 忽略持久化失败 */ }
       const preferDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -837,6 +844,35 @@ const App = {
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", cleanup);
       window.addEventListener("blur", cleanup);
+    },
+    /* ============ 工作目录授权 ============ */
+    async loadAsstWorkspace() {
+      try { this.asstWorkspaceDirs = (await apiFetch("/api/assistant/workspace")).directories; }
+      catch (err) { /* 统一提示 */ }
+    },
+    async saveAsstWorkspace(list) {
+      this.asstWsBusy = true;
+      try {
+        const data = await apiFetch("/api/assistant/workspace", {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ directories: list }),
+        });
+        this.asstWorkspaceDirs = data.directories;
+        showToast("工作目录已更新（智能体获得范围内读写与执行授权）");
+      } catch (err) { /* apiFetch 统一提示 */ }
+      finally { this.asstWsBusy = false; }
+    },
+    async addAsstWorkspaceDir() {
+      const value = this.asstWsInput.trim();
+      if (!value) return;
+      if (this.asstWorkspaceDirs.includes(value)) { showToast("该目录已在列表中", "err"); return; }
+      await this.saveAsstWorkspace([...this.asstWorkspaceDirs, value]);
+      this.asstWsInput = "";
+    },
+    removeAsstWorkspaceDir(index) {
+      const next = this.asstWorkspaceDirs.slice();
+      next.splice(index, 1);
+      this.saveAsstWorkspace(next);
     },
     /* ============ 运维助手（Phase 8） ============ */
     async loadAsstSessions() {
@@ -948,7 +984,7 @@ const App = {
         await apiFetch("/api/assistant/chat", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: message, session_id: this.asstSessionId,
-            attachments: drafts.map((d) => d.id) }),
+            attachments: drafts.map((d) => d.id), effort: this.asstEffort }),
           signal: controller.signal,
         }, 305000, async (response) => {
           const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8"); let buffer = ""; let completed = false;
@@ -1100,6 +1136,7 @@ const App = {
       if (pre) this.copyText(pre.textContent, "代码已复制");
     });
     try { this.themePref = localStorage.getItem("opsmate-theme") || "auto"; } catch (err) { /* 默认跟随系统 */ }
+    try { this.asstEffort = localStorage.getItem("opsmate-asst-effort") || "low"; } catch (err) { /* 默认低 */ }
     this.applyTheme();
     if (window.matchMedia) {
       window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
@@ -1113,13 +1150,13 @@ const App = {
     if (this.page === "logs") this.refreshLogsRoute();
     if (this.page === "codegen") this.loadCodegenHistory();
     if (this.page === "settings") this.loadSettings();
-    if (this.page === "assistant") this.loadAsstSessions();
+      if (this.page === "assistant") { this.loadAsstSessions(); this.loadAsstWorkspace(); }
     window.addEventListener("hashchange", () => {
       if (this.analysisAbort) this.analysisAbort.abort();
       this.page = parseRoute();
       if (this.page === "logs") this.refreshLogsRoute();
       if (this.page === "assistant" && !this.asstSessions.length) this.loadAsstSessions();
-      this.handleDeepLink();
+      if (this.page === "assistant" && !this.asstWorkspaceDirs.length) this.loadAsstWorkspace();
     });
     if (this.page === "commands") this.loadCommands();
     if (this.page === "kb") this.loadKbList();
@@ -1394,13 +1431,27 @@ const App = {
     '      <header class="page-header">',
     "        <div>",
     "          <h1>运维助手</h1>",
-    '          <p>基于本地知识库（命令 / 配置 / 脚本历史）回答；回答中的来源可点击跳转</p>',
+    '          <p>本地知识 + 工作目录{{ asstWorkspaceDirs.length ? "（已授权读写/执行）" : "" }} + 联网；来源可点击跳转</p>',
     "        </div>",
     '        <span class="result-count">模型推断，请以官方文档为准</span>',
     "      </header>",
     '      <div class="asst-layout" :style="gridPaneStyle(\'asst\')">',
     '        <aside class="asst-sessions" aria-label="会话列表">',
     '          <button class="copy-button" type="button" @click="newAsstSession" :disabled="asstBusy">＋ 新建对话</button>',
+    '          <div class="asst-ws-panel">',
+    '            <button class="asst-ws-toggle" type="button" @click="asstWsEditing = !asstWsEditing">📁 工作目录（{{ asstWorkspaceDirs.length }}）</button>',
+    '            <div v-if="asstWsEditing" class="asst-ws-editor">',
+    '              <p class="placeholder dim">授权后智能体可对这些目录及其子目录读写文件与执行命令</p>',
+    '              <div v-for="(dir,i) in asstWorkspaceDirs" :key="dir" class="asst-ws-item">',
+    '                <code :title="dir">{{ dir }}</code>',
+    '                <button class="asst-attach-remove" type="button" title="移除目录" :disabled="asstWsBusy" @click="removeAsstWorkspaceDir(i)">×</button>',
+    "              </div>",
+    '              <form class="asst-ws-add" @submit.prevent="addAsstWorkspaceDir">',
+    '                <input v-model="asstWsInput" :disabled="asstWsBusy" placeholder="输入绝对路径，如 E:\\projects\\demo">',
+    '                <button class="copy-button" type="submit" :disabled="asstWsBusy || !asstWsInput.trim()">添加</button>',
+    "              </form>",
+    "            </div>",
+    "          </div>",
     '          <p v-if="!asstSessions.length" class="empty-state">暂无历史会话</p>',
     '          <div v-for="s in asstSessions" :key="s.id" class="asst-session-item">',
     '            <button type="button" class="history-item" :class="{ active: asstSessionId === s.id }" @click="openAsstSession(s)">',
@@ -1461,7 +1512,10 @@ const App = {
     '          <p v-if="asstError" class="regex-error" role="alert">{{ asstError }} <a href="#/settings">前往模型设置</a></p>',
     '          <form class="asst-composer" @submit.prevent="trySendAsst">',
     '            <label class="copy-button asst-attach-btn" title="添加附件">📎<input type="file" multiple accept=".txt,.md,.log,.conf,.cfg,.ini,.yaml,.yml,.json,.properties,.toml,.csv,.sh,.bash,.py,.pl,.rb,.go,.js,.ts,.java,.sql,.xml,.html,.css,.env,.service,image/png,image/jpeg,image/gif,image/webp,image/bmp" @change="chooseAsstFile"></label>',
-    '            <textarea v-model="asstInput" rows="2" :placeholder="asstBusy ? \'回答中…可继续输入，回车加入队列\' : \'输入运维问题，Enter 发送；可拖入/粘贴文件\'" @keydown.enter.exact.prevent="askKeydown" @paste="pasteAsstFiles"></textarea>',
+    '            <textarea v-model="asstInput" rows="2" :placeholder="asstBusy ? \'回答中…可继续输入，回车加入队列\' : \'输入问题，Enter 发送；可拖入/粘贴文件\'" @keydown.enter.exact.prevent="askKeydown" @paste="pasteAsstFiles"></textarea>',
+    '            <select class="asst-effort" :value="asstEffort" title="思考强度：影响质量与速度" @change="setAsstEffort($event.target.value)">',
+    '              <option value="low">思考·低</option><option value="medium">思考·中</option>',
+    '              <option value="high">思考·高</option><option value="max">思考·最高</option></select>',
     '            <button class="copy-button" type="submit" :disabled="!asstInput.trim()">{{ asstBusy ? "排队" : "发送" }}</button>',
     '            <button v-if="asstBusy" class="copy-button" type="button" @click="asstAbort.abort()">停止</button>',
     "          </form>",

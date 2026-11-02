@@ -200,6 +200,41 @@ def main() -> None:
         assert not agent_dir.joinpath("tmp.yaml").exists()
         assert execute_tool("write_file", {"filename": "x.conf", "content": "y"})["ok"] is False  # 直接调用防线
 
+        # I：工作目录授权（读写/生成/执行）与联网工具
+        ws_dir = Path(folder) / "ws"; ws_dir.mkdir()
+        (ws_dir / "sub").mkdir()
+        assert client.put("/api/assistant/workspace", json={"directories": [str(ws_dir), "Z:\\不存在"]}).status_code == 400
+        put = client.put("/api/assistant/workspace", json={"directories": [str(ws_dir)]})
+        assert put.status_code == 200 and put.json()["directories"] == [str(ws_dir)]
+        assert client.get("/api/assistant/workspace").json()["directories"] == [str(ws_dir)]
+        import app.agent.tools as agent_tools
+        from unittest.mock import patch as _patch
+        listing = execute_tool("list_dir", {"path": ""})
+        assert listing["ok"] and any(e["name"] == "sub" for e in listing["result"]["entries"])
+        assert not execute_tool("read_workspace_file", {"path": "../evil.txt"})["ok"]  # 越界拒绝
+        written = execute_tool("write_workspace_file", {"path": "sub/a.conf", "content": "k=v\n"})
+        assert written["ok"] and (ws_dir / "sub" / "a.conf").read_text(encoding="utf-8") == "k=v\n"
+        assert execute_tool("read_workspace_file", {"path": "sub/a.conf"})["result"]["content"] == "k=v\n"
+        assert not execute_tool("write_workspace_file", {"path": str(Path(folder) / "escape.txt"), "content": "x"})["ok"]
+        run = execute_tool("run_command", {"command": "echo opsmate-ws-ok"})
+        assert run["ok"] and "opsmate-ws-ok" in run["result"]["stdout"], run
+        # 联网：搜索解析（mock HTML）与内网防护
+        fake_bing = ('<li class="b_algo"><h2><a href="https://example.com/a">结果 A</a></h2>'
+                     "<p>摘要 内容</p></li><li class=\"b_algo\"><h2><a href=\"https://example.com/b\">结果 B</a></h2></li>")
+        class _FakeResp:
+            status_code = 200
+            headers = {"content-type": "text/html"}
+            text = "<html><body>" + fake_bing + "</body></html>"
+        with _patch.object(agent_tools.httpx, "get", return_value=_FakeResp()):
+            search = execute_tool("web_search", {"q": "nginx"})
+            assert search["ok"] and search["result"][0]["title"] == "结果 A" and "摘要" in search["result"][0]["snippet"]
+            fetched = execute_tool("web_fetch", {"url": "https://example.com/page"})
+            assert fetched["ok"] and "结果 A" in fetched["result"]["content"]
+        assert not execute_tool("web_fetch", {"url": "http://127.0.0.1:5731/api/health"})["ok"]  # SSRF 防护
+        assert not execute_tool("web_fetch", {"url": "file:///etc/passwd"})["ok"]
+        client.put("/api/assistant/workspace", json={"directories": []})  # 清空授权
+        assert not execute_tool("list_dir", {"path": ""})["ok"]
+
     print("assistant ok")
 
 

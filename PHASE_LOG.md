@@ -1084,3 +1084,26 @@
 ### Phase 状态
 
 **修复完成，随 `style(web): markdown 表格通用样式` 提交。Phase 9 仍待用户确认后开工。**
+
+## 2026-10-30 · 设计变更 · 工作目录授权 / 联网 / 思考强度（用户授权第三次扩展 §9.3）
+
+用户要求：①运维助手可指定多个工作目录并获读写/生成/执行授权；②前端去掉侧栏箭头；③联网查询；④可选思考强度（低/中/高/最高）。
+
+### 落地
+
+- **工作目录**：`data/agent_workspace.json`（gitignore）存目录列表；助手会话栏新增「📁 工作目录」管理面板（输入绝对路径添加/移除，PUT 校验存在性并规范化）；新工具 `list_dir`/`read_workspace_file`/`write_workspace_file`（≤200KB 读 / ≤1MB 写，子目录自动创建，直接生效无需确认——用户已授权）/`run_command`（cwd 限工作目录，5-120s 超时，stdout 4KB/stderr 2KB 截断，UTF-8→GBK 解码降级）。所有路径 resolve + 大小写规范前缀校验，越界一律拒绝。
+- **联网**：`web_search`（Bing HTML 正则解析标题/链接/摘要 ×5）与 `web_fetch`（网页正文抽取 ≤8KB）；SSRF 防护——仅 http/https、拒 localhost/127./10./192.168./169.254./172.*/file 协议；网络错误转结构化失败。
+- **思考强度**：前端输入框旁选择器（思考·低/中/高/最高 → low/medium/high/max，localStorage 持久化），随 chat body.effort 传入；provider chat/chat_stream/_adapt_request 全链路贯通（GLM-5.3 官方端点生效，其余模型静默忽略）；run_assistant 规划轮与终答轮均携带。
+- **侧栏**：去掉导航项 `> ` 提示符前缀（保留等宽字体与激活样式）。
+
+### 验收
+
+- verify_assistant 新增 I 段：workspace PUT 校验（不存在 400）、list_dir/read/write（含子目录）、越界读写拒绝、`run_command` echo 实测、web_search/web_fetch（mock Bing HTML 解析）、SSRF/协议拒绝、清空授权后工具不可用。全套 verify + compileall + node --check 通过。
+- 真实验收（GLM-5.3，授权临时目录）：问"看看我工作目录里有什么文件，然后联网搜 nginx 当前稳定版本"→ 模型依次调用 list_dir（发现 demo.conf）→ web_search（命中 nginx.org）→ web_fetch（下载页正文）→ 输出文件表格 + **稳定版 1.30.6 / 主线 1.31.8** 及来源 URL。导航箭头已去除、四档思考强度选择器就位。
+
+决策：工作目录内写入不逐个确认、命令执行不需审批。（理由：用户明确授权"有权限进行读写、生成、执行"；护栏为范围限定+超时+截断+全程留痕，命令与输出均入会话轨迹可回溯。）
+决策：联网走 Bing HTML 解析而非引入搜索 API 依赖。（理由：Never 清单外依赖禁止；Bing 大陆可达；解析失败时降级提示模型改用 web_fetch 直接抓搜索页。）
+
+### Phase 状态
+
+**完成，随 `feat(assistant): 工作目录授权联网与思考强度` 提交。Phase 9 仍待用户确认后开工。**

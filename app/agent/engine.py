@@ -142,18 +142,22 @@ async def run_agent(client: LLMClient, system: str, user: str,
     raise AgentFormatError("未生成结果")
 
 
-ASSISTANT_TOOLS = ("search_commands", "search_kb", "search_history", "read_user_config", "write_file")
+ASSISTANT_TOOLS = ("search_commands", "search_kb", "search_history", "read_user_config", "write_file",
+                   "list_dir", "read_workspace_file", "write_workspace_file", "run_command",
+                   "web_search", "web_fetch")
 
 
 async def run_assistant(client: LLMClient, system: str,
                         conversation: list[dict[str, Any]],
-                        image_parts: list[str] | None = None) -> AsyncIterator[dict[str, Any]]:
-    """运维问答：只读工具循环（0.1）→ 流式 markdown 终答（0.5）。
+                        image_parts: list[str] | None = None,
+                        effort: str | None = None) -> AsyncIterator[dict[str, Any]]:
+    """运维问答：工具循环（规划低温低强度）→ 流式 markdown 终答。
 
     yield 顺序：{"tool","args","result"} 过程事件（可多条）→ {"proposal"} 文件提案
     （write_file 不直接执行，等待用户确认）→ {"thinking"} 思考分片 → {"delta"} 逐段 →
     {"final": 全文}；错误以 LLMError 抛给调用方转 SSE error 事件。
     image_parts：本轮用户附件图片的 data URL，只并入终答请求（多模态模型识别）。
+    effort：思考强度 low/medium/high/max，作用于模型调用（影响质量与速度）。
     模型在规划轮直接给出完整回答时按单段 delta 原样使用；累计三次协议
     解析失败后退回无工具直答。
     """
@@ -170,7 +174,8 @@ async def run_assistant(client: LLMClient, system: str,
     direct_answer: str | None = None
     failures = 0
     while len(steps) < 6 and failures < 3:
-        response = await client.chat(messages, temperature=0.1, timeout=25, max_tokens=1200)
+        response = await client.chat(messages, temperature=0.1, timeout=25, max_tokens=1200,
+                                     reasoning_effort=effort)
         if response.get("ok") is False:
             raise LLMError(response["error"])
         raw = response["content"]
@@ -234,7 +239,8 @@ async def run_assistant(client: LLMClient, system: str,
     final_messages = [{"role": "system", "content": system}, *exchanges,
                       {"role": "user", "content": "现在依据以上资料直接输出完整中文 markdown 回答；来源标记规则按 system 执行；本地资料没有的内容如实说明，不要编造。禁止输出 JSON 或以 {\"action\" 开头的协议文本，也不要再调用工具。"}]
     parts: list[str] = []
-    async for kind, text in stream_with_reasoning(client, final_messages, temperature=0.5, timeout=120):
+    async for kind, text in stream_with_reasoning(client, final_messages, temperature=0.5, timeout=120,
+                                                    effort=effort):
         if kind == "thinking":
             yield {"thinking": text}
             continue

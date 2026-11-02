@@ -1,10 +1,11 @@
-"""运维助手会话、消息、附件与文件提案持久化（SQLite，DDL 按施工文档 §4.4 及后续扩展）。"""
+"""运维助手会话、消息、附件、文件提案与工作目录持久化。"""
 from __future__ import annotations
 
 import json
 import re
 import sqlite3
 from contextlib import closing
+from pathlib import Path
 from typing import Any
 
 from app import config
@@ -260,3 +261,40 @@ def sanitize_agent_filename(filename: str) -> str:
     if not name or len(name) > 120 or "/" in name or "\\" in name or UNSAFE_NAME.search(name):
         raise ValueError("文件名仅支持中文/字母/数字/空格/点/下划线/连字符，且不能包含路径")
     return name
+
+
+# ---------------- 工作目录授权（2026-10-30 用户授权：读写/生成/执行） ----------------
+
+WORKSPACE_JSON = config.DATA_DIR / "agent_workspace.json"
+
+
+def load_workspace_dirs() -> list[str]:
+    """读取用户配置的工作目录列表（原样返回，不做存在性过滤）。"""
+    try:
+        data = json.loads(WORKSPACE_JSON.read_text(encoding="utf-8"))
+        dirs = data.get("directories")
+        return [str(item) for item in dirs if isinstance(item, str)] if isinstance(dirs, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def save_workspace_dirs(directories: list[str]) -> None:
+    config.ensure_dirs()
+    temporary = WORKSPACE_JSON.with_name(WORKSPACE_JSON.name + ".tmp")
+    temporary.write_text(json.dumps({"directories": directories}, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+    temporary.replace(WORKSPACE_JSON)
+
+
+def workspace_roots() -> list[str]:
+    """已配置且实际存在的工作目录（规范化绝对路径）。"""
+    roots = []
+    for item in load_workspace_dirs():
+        path = Path(item).expanduser()
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved.is_dir():
+            roots.append(str(resolved))
+    return roots

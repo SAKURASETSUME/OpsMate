@@ -378,6 +378,8 @@ CREATE TABLE IF NOT EXISTS user_configs (
 | GET | `/api/assistant/files/{id}/content` | - | 附件原始内容（图片回显缩略图用） |
 | POST | `/api/assistant/files/apply` | `{"session_id","filename"}` | `{"ok":true,"outcome":"…已写入 agent_files/<name>"}`；以服务端存档内容写入 `data/agent_files/`；无待确认提案 404、文件名非法 400 |
 | POST | `/api/assistant/files/cancel` | `{"session_id","filename"}` | `{"ok":true,"outcome":"用户已取消，未写入"}` |
+| GET | `/api/assistant/workspace` | - | `{"directories":[绝对路径]}`（用户授权的智能体工作目录） |
+| PUT | `/api/assistant/workspace` | `{"directories":[绝对路径]}`（≤16 个，须存在） | `{"ok":true,"directories":[规范化路径]}`；非法路径 400。设置后智能体获得范围内读写/生成/执行授权 |
 | GET | `/api/kb/workbench/configs` | - | `{"items":[{id,name,format,shared,size_bytes,updated_at}]}`（倒序） |
 | POST | `/api/kb/workbench/configs` | `{"name","format","content"}` | `{"id","name","format"}`；content >2MB 返回 413 |
 | PUT | `/api/kb/workbench/configs/{id}` | body 同上 | `{"ok":true}` |
@@ -546,7 +548,7 @@ user 模板：日志材料组装（§8 Phase 6）+ 可选 `重点关注：{focus
 - **步数上限 6**：达到上限后追加 user 消息"工具调用次数已用完，请基于已有信息直接给出最终结果"，不再接受 tool 动作。
 - **解析容错**：复用统一顺序——剥 ``` 围栏 → 取首个 `{` 到末个 `}` 子串 → `json.loads`；失败重试请求 1 次；**累计 3 轮失败 → 整体退回单轮直接生成模式**（`steps=[]`，UI 显示"直接生成"）。
 - **工具注册表（全部只读，永不执行任何 shell）**：`search_commands(q, limit=5)`、`search_kb(q, software?, limit=5)`、`search_history(q, limit=5)`（FTS5）、`filter_log(log_id, q?, level?, regex?, limit=50)`、`get_stats(log_id)`、`get_context(log_id, line_no, around=10)`、`read_user_config(name)`（仅返回 user_configs 中 shared=1 的记录，内容截断 ~4000 字符；未共享/不存在返回 `{"ok":false}`；Phase 7 接入）。工具实现直接复用各模块 service 层函数，注册表集中放在 `app/agent/tools.py`。
-- **安全边界（2026-10-30 用户授权扩展后口径）**：智能体只生成、只解释、只检索；工具不执行命令、不联网、不读取任意路径。用户授权的两项例外：①运维助手可读取**用户显式提供的附件**（拖入/粘贴/选择上传，≤5MB×5，文本 UTF-8 或常见图片格式；图片以 data URL 并入终答请求，供支持视觉的模型识别）；②运维助手可经 `write_file` 工具提交**文件生成/修改提案**，提案以 SSE 事件返回界面，**必须用户逐条确认**后才写入固定目录 `data/agent_files/`（文件名白名单校验、禁路径分隔；取消即不落盘；execute_tool 直调被防线拒绝）。产出物的执行权永远在用户手中。
+- **安全边界（2026-10-30 二次扩展后口径）**：智能体默认只生成、只解释、只检索。用户显式授权的三层能力：①附件（拖入/粘贴上传，≤5MB×5，图片走多模态终答）；②确认式文件提案（write_file → agent_files/）；③**工作目录授权**——用户可配置多个工作目录（`data/agent_workspace.json`，界面管理），智能体获得范围内 `list_dir`/`read_workspace_file`/`write_workspace_file`（直接读写，无需逐个确认）与 `run_command`（工作目录为 cwd 执行系统命令，5-120s 超时、输出截断、UTF-8/GBK 解码）；④**联网**——`web_search`（Bing HTML 解析）与 `web_fetch`（网页正文抽取，禁内网/本机/file 协议，SSRF 防护）。所有路径经 resolve+前缀校验限定在授权根内；工具调用全程留痕（SSE 事件+会话 tool 行）。`reasoning_effort`（low/medium/high/max）由前端"思考强度"选择器传入，影响输出质量与速度。
 - **温度**：工具循环轮 temperature=0.1；最终生成轮按场景取值（codegen 0.3 / 日志分析 0.3 / 运维问答 0.5）。
 - **轨迹落盘**：每步 `{tool, args, result_summary}`（result 截断 300 字符）随场景入库（codegen_history.steps / SSE 过程事件），前端渲染为轨迹卡片。
 
