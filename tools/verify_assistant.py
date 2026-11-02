@@ -75,6 +75,7 @@ def main() -> None:
 
         # A：工具轨迹 + 流式终答 + 原子落库；规划轮思考分片实时透传且先于工具事件
         final_instructions: list[str] = []
+        call_efforts: list[str] = []
         base_script = scripted_llm([
             (["规划思考分片"], [result({"action": "tool", "tool": "search_kb",
                                         "args": {"q": "nginx", "limit": 3}})["content"]]),
@@ -82,6 +83,7 @@ def main() -> None:
             ["nginx -s reload", "【配置：nginx/nginx -s reload】"]])
         async def capture_script(self, messages, **kwargs):
             final_instructions.append(messages[-1]["content"])
+            call_efforts.append(str(kwargs.get("reasoning_effort")))
             async for chunk in base_script(self, messages, **kwargs):
                 yield chunk
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
@@ -98,11 +100,12 @@ def main() -> None:
         deltas = [e["delta"] for e in events if "delta" in e]
         done = [e for e in events if e.get("done")][0]
         assert "".join(deltas).startswith("nginx -s reload") and done["session_id"] == 1
-        # 终答指令重述当前问题（防串答上一轮）
+        # 终答指令重述当前问题（防串答上一轮）；规划轮强制低思考档、终答用用户档
         assert len(final_instructions) == 3, final_instructions
         assert "当前需要回答的是用户最后一个问题" in final_instructions[-1]
         assert "nginx 怎么平滑重载" in final_instructions[-1]
         assert "不要重复或重新回答" in final_instructions[-1]
+        assert call_efforts == ["low", "low", "None"], call_efforts
 
         messages = client.get("/api/assistant/sessions/1").json()["messages"]
         assert [m["role"] for m in messages] == ["user", "tool", "assistant"]
