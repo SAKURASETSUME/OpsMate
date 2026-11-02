@@ -126,6 +126,22 @@ def _relaunch_frozen_from_ascii_shadow() -> bool:
     return True
 
 
+class NativeApi:
+    """注入到前端 window.pywebview.api 的原生能力（浏览器降级态不可用）。"""
+
+    def pick_folder(self) -> str:
+        """打开系统文件夹选择对话框；返回所选绝对路径，取消返回空串。"""
+        import webview
+
+        try:
+            result = webview.windows[0].create_file_dialog(webview.FOLDER_DIALOG)
+        except Exception:  # noqa: BLE001 —— 对话框任何异常都按取消处理
+            return ""
+        if isinstance(result, (list, tuple)) and result:
+            return str(result[0])
+        return str(result or "")
+
+
 def main() -> None:
     try:
         if _relaunch_frozen_from_ascii_shadow():
@@ -159,7 +175,7 @@ def main() -> None:
     try:
         import webview
 
-        webview.create_window("OpsMate", url, width=1280, height=860)
+        webview.create_window("OpsMate", url, width=1280, height=860, js_api=NativeApi())
         webview.start()
         # 窗口关闭后 uvicorn 线程不会随窗口自动终止：显式结束进程
         sys.exit(0)

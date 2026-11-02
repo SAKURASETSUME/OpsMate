@@ -963,6 +963,16 @@ const App = {
       } catch (err) { /* apiFetch 统一提示 */ }
       finally { this.asstWsBusy = false; }
     },
+    async browseWorkspaceDir() {
+      if (!(window.pywebview && window.pywebview.api && window.pywebview.api.pick_folder)) {
+        showToast("当前环境不支持浏览选择，请直接输入绝对路径", "err");
+        return;
+      }
+      try {
+        const folder = await window.pywebview.api.pick_folder();
+        if (folder) { this.asstWsInput = folder; showToast("已选择：" + folder); }
+      } catch (err) { showToast("选择文件夹失败：" + String(err.message || err), "err"); }
+    },
     async addAsstWorkspaceDir() {
       const value = this.asstWsInput.trim();
       if (!value) return;
@@ -1550,7 +1560,8 @@ const App = {
     '                <button class="asst-attach-remove" type="button" title="移除目录" :disabled="asstWsBusy" @click="removeAsstWorkspaceDir(i)">×</button>',
     "              </div>",
     '              <form class="asst-ws-add" @submit.prevent="addAsstWorkspaceDir">',
-    '                <input v-model="asstWsInput" :disabled="asstWsBusy" placeholder="输入绝对路径，如 E:\\projects\\demo">',
+    '                <button class="copy-button" type="button" :disabled="asstWsBusy" @click="browseWorkspaceDir">浏览…</button>',
+    '                <input v-model="asstWsInput" :disabled="asstWsBusy" placeholder="点击浏览选择文件夹（也可手动输入绝对路径）">',
     '                <button class="copy-button" type="submit" :disabled="asstWsBusy || !asstWsInput.trim()">添加</button>',
     "              </form>",
     "            </div>",

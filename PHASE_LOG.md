@@ -1129,3 +1129,13 @@
 ### Phase 状态
 
 **完成，随 `feat(tools): 版本管理与便签待办` 提交。Phase 9 仍待用户确认后开工。**
+
+### 追加（同日）：工作目录改为浏览选择文件夹（用户需求）
+
+- WebView 出于安全不向页面暴露所选文件夹绝对路径，故走 pywebview 原生通道：`main.py` 给主窗口注入 `js_api=NativeApi()`，`pick_folder()` 调 `create_file_dialog(FOLDER_DIALOG)` 返回绝对路径（取消/异常返回空串）。
+- 前端工作目录面板加「浏览…」按钮：调用 `window.pywebview.api.pick_folder()`（Promise 等待对话框关闭），选中即回填输入框，用户点「添加」走既有 PUT 校验（存在性/去重）；手动输入路径保留为降级手段（浏览器调试态无 pywebview.api 时按钮给出明确提示）。
+- compileall / node --check 通过；桌面程序已重启待用户在原生窗口实测浏览选择。
+
+### Phase 状态
+
+**完成，随 `feat(assistant): 工作目录支持浏览选择文件夹` 提交。Phase 9 仍待用户确认后开工。**
