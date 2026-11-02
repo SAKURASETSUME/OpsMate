@@ -30,6 +30,31 @@ def stream_of(*chunks: str):
     return generator
 
 
+def scripted_llm(calls: list):
+    """按调用次序消费脚本的 chat_stream mock（规划轮与终答流共用同一序列）。
+
+    元素：字符串 = 该轮正文整段；元组 (思考分片列表, 正文分片列表) 用于模拟思考型模型。
+    """
+    queue = []
+    for item in calls:
+        if isinstance(item, tuple):
+            queue.append(item)
+        elif isinstance(item, list):
+            queue.append(([], item))
+        else:
+            queue.append(([], [item]))
+
+    async def fake_stream(self, messages, **kwargs):
+        thinking, chunks = queue.pop(0)
+        callback = kwargs.get("on_reasoning")
+        for piece in thinking:
+            if callback:
+                callback(piece)
+        for chunk in chunks:
+            yield chunk
+    return fake_stream
+
+
 def parse_sse(response) -> list[dict]:
     events = []
     for line in response.text.splitlines():
@@ -48,16 +73,22 @@ def main() -> None:
             patch.object(assistant_service_module, "WORKSPACE_JSON", Path(folder) / "agent_workspace.json"):
         client = TestClient(create_app())
 
-        # A：工具轨迹 + 流式终答 + 原子落库
-        chat_replies = [result({"action": "tool", "tool": "search_kb", "args": {"q": "nginx", "limit": 3}}),
-                        result({"action": "final"})]
+        # A：工具轨迹 + 流式终答 + 原子落库；规划轮思考分片实时透传且先于工具事件
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=chat_replies), \
-             patch.object(LLMClient, "chat_stream", new=stream_of("nginx -s reload", "【配置：nginx/nginx -s reload】")):
+             patch.object(LLMClient, "chat_stream", new=scripted_llm([
+                 (["规划思考分片"], [result({"action": "tool", "tool": "search_kb",
+                                             "args": {"q": "nginx", "limit": 3}})["content"]]),
+                 result({"action": "final"})["content"],
+                 ["nginx -s reload", "【配置：nginx/nginx -s reload】"]])):
             response = client.post("/api/assistant/chat", json={"message": "nginx 怎么平滑重载"})
         assert response.status_code == 200 and "text/event-stream" in response.headers["content-type"]
         events = parse_sse(response)
-        assert events[0]["tool"] == "search_kb" and events[0]["args"] == {"q": "nginx", "limit": 3}
+        tool_events = [e for e in events if e.get("tool")]
+        assert tool_events and tool_events[0]["tool"] == "search_kb" \
+            and tool_events[0]["args"] == {"q": "nginx", "limit": 3}
+        thinking_at = next(i for i, e in enumerate(events) if "thinking" in e)
+        tool_at = events.index(tool_events[0])
+        assert thinking_at < tool_at and events[thinking_at]["thinking"] == "规划思考分片"
         deltas = [e["delta"] for e in events if "delta" in e]
         done = [e for e in events if e.get("done")][0]
         assert "".join(deltas).startswith("nginx -s reload") and done["session_id"] == 1
@@ -70,11 +101,11 @@ def main() -> None:
 
         # B：同会话第二轮，历史上下文进入模型请求；直接作答路径
         captured: list[list[dict]] = []
-        async def capture_chat(self, messages, **kwargs):
+        async def capture_and_answer(self, messages, **kwargs):
             captured.append(messages)
-            return result({"action": "final", "answer": "结合上下文的直接回答"})
+            yield result({"action": "final", "answer": "结合上下文的直接回答"})["content"]
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", new=capture_chat):
+             patch.object(LLMClient, "chat_stream", new=capture_and_answer):
             response = client.post("/api/assistant/chat", json={"message": "那它和 du 的区别呢", "session_id": 1})
         events = parse_sse(response)
         assert [e.get("delta") for e in events if "delta" in e] == ["结合上下文的直接回答"]
@@ -92,28 +123,29 @@ def main() -> None:
 
         # D：不存在的会话 / 模型中途失败 → error 且不落库
         assert parse_sse(client.post("/api/assistant/chat", json={"message": "x", "session_id": 99}))[0].get("error")
-        async def broken_stream(*args, **kwargs):
-            from app.llm.provider import LLMError
-            yield "半句"
-            raise LLMError("连接模型服务失败")
-        async def crashed_stream(*args, **kwargs):
-            yield "半"
-            raise RuntimeError("boom")
+        from app.llm.provider import LLMError as _LLMError
+        def failing_after_planning(exc):
+            state = {"n": 0}
+            async def generator(self, messages, **kwargs):
+                state["n"] += 1
+                if state["n"] == 1:
+                    yield result({"action": "final"})["content"]
+                    return
+                yield "半句"
+                raise exc
+            return generator
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
-             patch.object(LLMClient, "chat_stream", new=broken_stream):
+             patch.object(LLMClient, "chat_stream", new=failing_after_planning(_LLMError("连接模型服务失败"))):
             events = parse_sse(client.post("/api/assistant/chat", json={"message": "你好"}))
         assert any(e.get("delta") == "半句" for e in events) and events[-1].get("error") == "连接模型服务失败"
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
-             patch.object(LLMClient, "chat_stream", new=crashed_stream):
+             patch.object(LLMClient, "chat_stream", new=failing_after_planning(RuntimeError("boom"))):
             events = parse_sse(client.post("/api/assistant/chat", json={"message": "意外"}))
         assert events[-1].get("error", "").startswith("回答生成失败")
         assert len(client.get("/api/assistant/sessions").json()["items"]) == 1  # 失败轮未建会话
 
         # E：三次协议解析失败 → 退回无工具直答
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[result("bad")] * 3), \
              patch.object(LLMClient, "chat_stream", new=stream_of("降级回答")):
             events = parse_sse(client.post("/api/assistant/chat", json={"message": "再问一个"}))
         assert [e.get("delta") for e in events if "delta" in e] == ["降级回答"] and events[-1]["done"]
@@ -138,15 +170,14 @@ def main() -> None:
         captured_stream: list[list[dict]] = []
         async def capture_stream(self, messages, **kwargs):
             captured_stream.append(messages)
-            yield "收到"
+            yield result({"action": "final"})["content"] if len(captured_stream) == 1 else "收到"
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
              patch.object(LLMClient, "chat_stream", new=capture_stream):
             events = parse_sse(client.post("/api/assistant/chat",
                                            json={"message": "看看这两个文件", "attachments": [text_id, image_id]}))
         done = [e for e in events if e.get("done")][0]
         attach_session = done["session_id"]
-        multimodal = [m for m in captured_stream[0] if isinstance(m.get("content"), list)]
+        multimodal = [m for m in captured_stream[-1] if isinstance(m.get("content"), list)]
         assert multimodal, "图片未并入终答消息"
         parts = multimodal[0]["content"]
         assert any(p.get("type") == "image_url" and p["image_url"]["url"].startswith("data:image/png;base64,") for p in parts)
@@ -161,11 +192,11 @@ def main() -> None:
 
         # H：write_file 提案 → 用户确认落盘 / 取消 / 穿越与直接调用防线
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[
+             patch.object(LLMClient, "chat_stream", new=scripted_llm([
                  result({"action": "tool", "tool": "write_file",
-                         "args": {"filename": "deploy.conf", "content": "key=value\n", "note": "部署配置"}}),
-                 result({"action": "final"})]), \
-             patch.object(LLMClient, "chat_stream", new=stream_of("已提交提案，", "说明用途")):
+                         "args": {"filename": "deploy.conf", "content": "key=value\n", "note": "部署配置"}})["content"],
+                 result({"action": "final"})["content"],
+                 ["已提交提案，", "说明用途"]])):
             events = parse_sse(client.post("/api/assistant/chat",
                                            json={"message": "帮我生成部署配置文件", "session_id": attach_session}))
         proposals = [e for e in events if "proposal" in e]
@@ -180,20 +211,20 @@ def main() -> None:
         assert client.post("/api/assistant/files/apply",
                            json={"session_id": attach_session, "filename": "../evil"}).status_code == 400
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[
+             patch.object(LLMClient, "chat_stream", new=scripted_llm([
                  result({"action": "tool", "tool": "write_file",
-                         "args": {"filename": "../evil.txt", "content": "x"}}),
-                 result({"action": "final"})]), \
-             patch.object(LLMClient, "chat_stream", new=stream_of("ok")):
+                         "args": {"filename": "../evil.txt", "content": "x"}})["content"],
+                 result({"action": "final"})["content"],
+                 "ok"])):
             events = parse_sse(client.post("/api/assistant/chat",
                                            json={"message": "穿越测试", "session_id": attach_session}))
         assert not [e for e in events if "proposal" in e] and not agent_dir.parent.joinpath("evil.txt").exists()
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[
+             patch.object(LLMClient, "chat_stream", new=scripted_llm([
                  result({"action": "tool", "tool": "write_file",
-                         "args": {"filename": "tmp.yaml", "content": "a: 1"}}),
-                 result({"action": "final"})]), \
-             patch.object(LLMClient, "chat_stream", new=stream_of("ok")):
+                         "args": {"filename": "tmp.yaml", "content": "a: 1"}})["content"],
+                 result({"action": "final"})["content"],
+                 "ok"])):
             parse_sse(client.post("/api/assistant/chat",
                                   json={"message": "再来一个", "session_id": attach_session}))
         cancelled = client.post("/api/assistant/files/cancel",
@@ -207,14 +238,14 @@ def main() -> None:
         ws_b = Path(folder) / "ws_b"; ws_b.mkdir()
         client.put("/api/assistant/workspace", json={"directories": [str(ws_a), str(ws_b)]})
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
-             patch.object(LLMClient, "chat_stream", new=stream_of("A 目录的回答")):
+             patch.object(LLMClient, "chat_stream", new=scripted_llm([
+                 result({"action": "final"})["content"], "A 目录的回答"])):
             events = parse_sse(client.post("/api/assistant/chat",
                                            json={"message": "A 目录的问题", "workspace": str(ws_a)}))
         sid_a = [e for e in events if e.get("done")][0]["session_id"]
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
-             patch.object(LLMClient, "chat_stream", new=stream_of("B 目录的回答")):
+             patch.object(LLMClient, "chat_stream", new=scripted_llm([
+                 result({"action": "final"})["content"], "B 目录的回答"])):
             events = parse_sse(client.post("/api/assistant/chat",
                                            json={"message": "B 目录的问题", "workspace": str(ws_b)}))
         sid_b = [e for e in events if e.get("done")][0]["session_id"]
@@ -281,8 +312,8 @@ def main() -> None:
             return [m["content"] for m in rows if m["role"] == "assistant"][-1]
         leak = '{"action":"tool","tool":"search_kb","args":{"q":"nginx","limit":3}}\n\n'
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
-             patch.object(LLMClient, "chat_stream", new=stream_of(leak, "真正的回答内容")):
+             patch.object(LLMClient, "chat_stream", new=scripted_llm([
+                 result({"action": "final"})["content"], [leak, "真正的回答内容"]])):
             events = parse_sse(client.post("/api/assistant/chat", json={"message": "测试泄露"}))
         deltas = "".join(e["delta"] for e in events if "delta" in e)
         assert '"action"' not in deltas and "真正的回答内容" in deltas, deltas[:100]
@@ -291,17 +322,21 @@ def main() -> None:
         calls = {"n": 0}
         async def leak_then_ok(self, messages, **kwargs):
             calls["n"] += 1
-            yield '{"ok": true, "result": []}' if calls["n"] == 1 else "重试后的回答"
+            if calls["n"] == 1:
+                yield result({"action": "final"})["content"]
+            elif calls["n"] == 2:
+                yield '{"ok": true, "result": []}'
+            else:
+                yield "重试后的回答"
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
              patch.object(LLMClient, "chat_stream", new=leak_then_ok):
             events = parse_sse(client.post("/api/assistant/chat", json={"message": "纯协议测试"}))
-        assert saved_answer(events).strip() == "重试后的回答" and calls["n"] == 2
+        assert saved_answer(events).strip() == "重试后的回答" and calls["n"] == 3
         # 直接回答本身是协议 JSON → 转最终流式生成
         with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
-             patch.object(LLMClient, "chat", side_effect=[
-                 result({"action": "final", "answer": '{"tool": "search_kb", "args": {}}'})]), \
-             patch.object(LLMClient, "chat_stream", new=stream_of("最终生成的回答")):
+             patch.object(LLMClient, "chat_stream", new=scripted_llm([
+                 result({"action": "final", "answer": '{"tool": "search_kb", "args": {}}'})["content"],
+                 "最终生成的回答"])):
             events = parse_sse(client.post("/api/assistant/chat", json={"message": "直答协议测试"}))
         assert saved_answer(events).strip() == "最终生成的回答"
 

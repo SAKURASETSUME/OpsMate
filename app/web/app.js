@@ -1804,6 +1804,7 @@ const App = {
     "                </div>",
     "              </div>",
     '              <template v-else>',
+    '                <p v-if="asstBusy && !m.thinking && !m.content && !m.tools.length && !(m.proposals || []).length" class="asst-waiting">思考中…</p>',
     '                <details v-if="m.thinking" class="agent-thinking" open><summary>思考过程</summary><div class="agent-thinking-body">{{ m.thinking }}</div></details>',
     '                <div v-for="(t,i) in m.tools" :key="\'t\'+i" class="asst-tool">',
     '                  <span class="asst-tool-name">{{ t.tool }}</span>',

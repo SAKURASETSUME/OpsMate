@@ -229,11 +229,20 @@ async def run_assistant(client: LLMClient, system: str,
     direct_answer: str | None = None
     failures = 0
     while len(steps) < 6 and failures < 3:
-        response = await client.chat(messages, temperature=0.1, timeout=25, max_tokens=1200,
-                                     reasoning_effort=effort)
-        if response.get("ok") is False:
-            raise LLMError(response["error"])
-        raw = response["content"]
+        # 规划轮同样走流式：思考型模型的 reasoning_content 实时透传给界面，
+        # 避免整个工具检索阶段用户只能干等；正文累积为完整 JSON 动作。
+        parts: list[str] = []
+        async for kind, text in stream_with_reasoning(client, messages, temperature=0.1,
+                                                       timeout=60, effort=effort):
+            if kind == "thinking":
+                yield {"thinking": text}
+            else:
+                parts.append(text)
+        raw = "".join(parts).strip()
+        if not raw:
+            failures += 1
+            messages.append({"role": "user", "content": "未收到有效输出，请输出 JSON 动作。"})
+            continue
         try:
             action = parse_object(raw)
             if action.get("action") == "final":

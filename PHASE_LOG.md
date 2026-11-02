@@ -1239,3 +1239,15 @@
 ### Phase 状态
 
 **完成，随 `feat(assistant): 分组折叠与右键菜单` 提交。Phase 9 仍待用户确认后开工。**
+
+### 追加（同日）：回答全程可见思考链路（用户需求：不要只能干等）
+
+- **根因**：`run_assistant` 的工具规划循环用阻塞式 `client.chat`——思考型模型（GLM-5.3）检索阶段的 reasoning_content 被整个丢弃，用户在发出问题后的最长静默期（规划+检索，可达数十秒）什么都看不到；只有终答阶段才流式 thinking/delta。
+- **engine**：规划轮改走 `stream_with_reasoning`（temperature 0.1、timeout 60）——思考分片实时 `yield {"thinking"}` 透传（路由层全量转发 SSE，无需改动），正文分片累积为完整 JSON 动作；正文为空按协议失败计数重试。错误语义不变（LLMError 直传路由转 error 事件）。
+- **前端**：等待占位——回答中且尚无思考/工具/正文/提案时显示脉冲"思考中…"，覆盖模型不思考的轮次（GLM-5.3 对极简问题可能全程无 reasoning）。
+- **verify_assistant**：mock 全面脚本化（`scripted_llm`：规划轮与终答流共用同一调用序列，支持思考分片元组）；A 段新增断言"规划思考事件先于工具事件"；B/D/G/H/J/K 段随流式化改写；全套 6 个 verify 回归通过。
+- 真实 GLM-5.3 实测：medium 强度"redis 持久化"——thinking 首现 3.4s（266 分片）、正文 8.2s 起，等待期全程有输出；浏览器端到端确认占位符→思考框实时增长→正文流出。决策：`chat_stream` 不加 max_tokens 参数（规划 JSON 极短、GLM-5.3 侧 _adapt 已强制 ≥4096，避免死参数）（理由：保持接口最小）。
+
+### Phase 状态
+
+**完成，随 `feat(assistant): 规划轮流式思考透传` 提交。Phase 9 仍待用户确认后开工。**
