@@ -256,7 +256,7 @@ const App = {
       asstActiveWorkspace: "",
       asstWorkspaceDirs: [], asstWsInput: "", asstWsEditing: false, asstWsBusy: false,
       asstCollapsed: {}, asstCtx: { show: false, x: 0, y: 0, workspace: "" },
-      asstEffort: "low",
+      asstEffort: "high",
       verItems: [], verLoading: false, verBusy: false, verEditingId: null,
       verForm: { package: "", version: "", description: "", release_date: "" },
       verFilters: { package: "", version: "", description: "" }, verFilterTimer: null,
@@ -973,6 +973,48 @@ const App = {
       this.asstEffort = value;
       try { localStorage.setItem("opsmate-asst-effort", value); } catch (err) { /* 忽略 */ }
     },
+    cleanThinking(text) {
+      // 思考型模型在思考中会逐字组织协议 JSON；展示前转成可读的工具调用意图。
+      // 平衡花括号扫描定位完整对象（嵌套 args 会让惰性正则提前截断）。
+      const source = String(text || "");
+      let out = "", index = 0;
+      while (index < source.length) {
+        const keyAt = source.indexOf('"action"', index);
+        if (keyAt < 0) { out += source.slice(index); break; }
+        let start = -1;
+        for (let i = keyAt - 1; i >= 0; i--) {
+          const ch = source[i];
+          if (ch === "{") { start = i; break; }
+          if (!/\s/.test(ch)) break;
+        }
+        if (start < 0) { out += source.slice(index, keyAt + 8); index = keyAt + 8; continue; }
+        let depth = 0, inString = false, escaped = false, end = -1;
+        for (let i = start; i < source.length; i++) {
+          const ch = source[i];
+          if (escaped) { escaped = false; continue; }
+          if (ch === "\\") { if (inString) escaped = true; continue; }
+          if (ch === '"') { inString = !inString; continue; }
+          if (inString) continue;
+          if (ch === "{") depth += 1;
+          else if (ch === "}") { depth -= 1; if (depth === 0) { end = i; break; } }
+        }
+        if (end < 0) { out += source.slice(index); break; } // JSON 未思考完，原样保留
+        let piece = source.slice(start, end + 1);
+        try {
+          const action = JSON.parse(piece);
+          if (action.action === "tool" && action.tool) {
+            const args = Object.entries(action.args || {})
+              .map(([k, v]) => k + "=" + String(v)).join("，");
+            piece = "（准备调用 " + action.tool + (args ? "：" + args : "") + "）";
+          } else if (action.action === "final") {
+            piece = "（资料已足够，准备作答）";
+          }
+        } catch (err) { /* 解析失败保留原文 */ }
+        out += source.slice(index, start) + piece;
+        index = end + 1;
+      }
+      return out;
+    },
     applyTheme() {
       try { localStorage.setItem("opsmate-theme", this.themePref); } catch (err) { /* 忽略持久化失败 */ }
       const preferDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -1425,7 +1467,7 @@ const App = {
       if (pre) this.copyText(pre.textContent, "代码已复制");
     });
     try { this.themePref = localStorage.getItem("opsmate-theme") || "auto"; } catch (err) { /* 默认跟随系统 */ }
-    try { this.asstEffort = localStorage.getItem("opsmate-asst-effort") || "low"; } catch (err) { /* 默认低 */ }
+    try { this.asstEffort = localStorage.getItem("opsmate-asst-effort") || "high"; } catch (err) { /* 默认高 */ }
     try { this.asstActiveWorkspace = localStorage.getItem("opsmate-asst-ws") || ""; } catch (err) { /* 默认未分组 */ }
     this.applyTheme();
     if (window.matchMedia) {
@@ -1805,7 +1847,7 @@ const App = {
     "              </div>",
     '              <template v-else>',
     '                <p v-if="asstBusy && !m.thinking && !m.content && !m.tools.length && !(m.proposals || []).length" class="asst-waiting">思考中…</p>',
-    '                <details v-if="m.thinking" class="agent-thinking" open><summary>思考过程</summary><div class="agent-thinking-body">{{ m.thinking }}</div></details>',
+    '                <details v-if="m.thinking" class="agent-thinking" open><summary>思考过程</summary><div class="agent-thinking-body">{{ cleanThinking(m.thinking) }}</div></details>',
     '                <div v-for="(t,i) in m.tools" :key="\'t\'+i" class="asst-tool">',
     '                  <span class="asst-tool-name">{{ t.tool }}</span>',
     "                  <code>{{ JSON.stringify(t.args) }}</code>",

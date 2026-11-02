@@ -303,8 +303,17 @@ async def run_assistant(client: LLMClient, system: str,
         target = exchanges[-1]
         target["content"] = [{"type": "text", "text": str(target["content"])},
                              *[{"type": "image_url", "image_url": {"url": part}} for part in image_parts]]
+    # 终答指令必须重述当前问题：多轮上下文里堆着历史问答与工具结果，
+    # 不点名的话模型容易回头去答更早的问题（串答上一轮）。
+    current_question = ""
+    for item in reversed(conversation):
+        if item.get("role") == "user" and isinstance(item.get("content"), str):
+            current_question = item["content"][:800]
+            break
+    anchor = (f"当前需要回答的是用户最后一个问题：{current_question}\n"
+              "以上更早的问答已经完成，只作为背景上下文，不要重复或重新回答它们。\n") if current_question else ""
     final_messages = [{"role": "system", "content": system}, *exchanges,
-                      {"role": "user", "content": "现在依据以上资料直接输出完整中文 markdown 回答；来源标记规则按 system 执行；本地资料没有的内容如实说明，不要编造。禁止输出 JSON 或以 {\"action\" 开头的协议文本，也不要再调用工具；不要复述工具调用的参数或工具返回的原始内容，直接给面向用户的结论与解释。"}]
+                      {"role": "user", "content": anchor + "现在依据以上资料直接输出完整中文 markdown 回答；来源标记规则按 system 执行；本地资料没有的内容如实说明，不要编造。禁止输出 JSON 或以 {\"action\" 开头的协议文本，也不要再调用工具；不要复述工具调用的参数或工具返回的原始内容，直接给面向用户的结论与解释。"}]
     for attempt in range(2):
         parts: list[str] = []
         pending = ""
