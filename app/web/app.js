@@ -252,7 +252,7 @@ const App = {
       analysisFocus: "", analysisAbort: null, logReports: [], selectedReportId: "", analysisSaved: false,
       asstSessions: [], asstMessages: [], asstSessionId: null, asstInput: "", asstQueue: [],
       asstBusy: false, asstAbort: null, asstError: "", pendingDeleteAsstId: null, asstKeySeq: 0,
-      asstDraftFiles: [], asstDragOver: false, asstSummaryOpen: false,
+      asstDraftFiles: [], asstDragOver: false, asstSummaryOpen: false, asstPinned: true,
       asstActiveWorkspace: "",
       asstWorkspaceDirs: [], asstWsInput: "", asstWsEditing: false, asstWsBusy: false,
       asstCollapsed: {}, asstCtx: { show: false, x: 0, y: 0, workspace: "" },
@@ -1212,6 +1212,16 @@ const App = {
       if (this.asstBusy) return;
       this.asstSessionId = null; this.asstMessages = []; this.asstError = ""; this.pendingDeleteAsstId = null;
     },
+    asstMessagesScrolled(event) {
+      // 用户主动上翻离开底部后暂停跟随；再翻回底部附近自动恢复
+      const el = event.target;
+      this.asstPinned = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    },
+    scrollAsstBottom(force) {
+      const el = this.$refs.asstMessages;
+      if (!el || (!force && !this.asstPinned)) return;
+      this.$nextTick(() => { el.scrollTop = el.scrollHeight; });
+    },
     parseAsstRow(row) {
       if (row.role === "user") {
         return { key: "u" + row.id, role: "user", content: row.content, summary: row.summary || "",
@@ -1236,6 +1246,7 @@ const App = {
         this.asstMessages = data.messages.map((row) => this.parseAsstRow(row));
         this.asstError = ""; this.pendingDeleteAsstId = null;
         this.setDefaultWorkspace(item.workspace || "");
+        this.scrollAsstBottom(true);
       } catch (err) { /* 统一提示 */ }
     },
     async deleteAsstSession(item) {
@@ -1308,6 +1319,8 @@ const App = {
         attachments: drafts.map((d) => ({ name: d.name, kind: d.kind, url: d.url })) });
       const live = { key: "a" + (++this.asstKeySeq), role: "assistant", content: "", thinking: "", tools: [], proposals: [] };
       this.asstMessages.push(live);
+      this.asstPinned = true;
+      this.scrollAsstBottom(true);
       const controller = new AbortController(); this.asstAbort = controller;
       this.asstBusy = true;
       try {
@@ -1329,6 +1342,7 @@ const App = {
             if (event.thinking) live.thinking += event.thinking;
             if (event.delta) live.content += event.delta;
             if (event.done) { completed = true; this.asstSessionId = event.session_id; }
+            this.scrollAsstBottom();
           };
           try {
             while (true) {
@@ -1823,7 +1837,7 @@ const App = {
     '        <div class="edge-handle" title="拖拽调整宽度" :style="{ left: paneWidths.asst + \'px\' }" @mousedown="startPaneDrag($event, \'asst\')"></div>',
     '        <section class="asst-chat" aria-label="对话消息流" @dragover.prevent="asstDragOver = true" @dragleave="asstDragOver = false" @drop.prevent="dropAsstFiles">',
     '          <div v-if="asstDragOver" class="asst-drop-overlay">松开鼠标，把文件添加为附件</div>',
-    '          <div class="asst-messages">',
+    '          <div class="asst-messages" ref="asstMessages" @scroll="asstMessagesScrolled">',
     '            <div v-for="m in asstMessages" :key="m.key" :data-key="m.key" :class="m.role === \'user\' ? \'asst-user\' : \'asst-item\'">',
     '              <template v-if="m.role === \'tool\'">',
     '                <file-proposal-card v-if="m.tool === \'write_file\'"',
