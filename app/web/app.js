@@ -1394,17 +1394,32 @@ const App = {
           signal: controller.signal,
         }, 305000, async (response) => {
           const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8"); let buffer = ""; let completed = false;
+          // 流式内容节流批量刷入：每 120ms 才触发一次响应式更新——每个事件都更新
+          // 会让整页 vdom 重渲染+全量 markdown 重解析打满主线程（卡顿、点击失灵、文字成坨跳出）
+          let deltaBuf = "", thinkBuf = "", flushTimer = null;
+          const flush = () => {
+            flushTimer = null;
+            if (thinkBuf) { live.thinking += thinkBuf; thinkBuf = ""; this.scrollThinkingBottom(); }
+            if (deltaBuf) { live.content += deltaBuf; deltaBuf = ""; }
+            this.scrollAsstBottom();
+          };
+          const scheduleFlush = () => { if (flushTimer === null) flushTimer = setTimeout(flush, 120); };
           const accept = (line) => {
             if (!line.startsWith("data:")) return;
             const event = JSON.parse(line.slice(5).trim());
             if (event.error) throw new Error(event.error);
-            if (event.tool) live.tools.push({ tool: event.tool, args: event.args, result: event.result });
-            if (event.proposal) live.proposals.push({ filename: event.proposal.filename, note: event.proposal.note,
-              content: event.proposal.content, status: "pending" });
-            if (event.thinking) { live.thinking += event.thinking; this.scrollThinkingBottom(); }
-            if (event.delta) live.content += event.delta;
+            if (event.tool || event.proposal) {
+              if (flushTimer !== null) { clearTimeout(flushTimer); flush(); }
+              if (event.tool) live.tools.push({ tool: event.tool, args: event.args, result: event.result });
+              if (event.proposal) live.proposals.push({ filename: event.proposal.filename, note: event.proposal.note,
+                content: event.proposal.content, status: "pending" });
+              this.scrollAsstBottom();
+              return;
+            }
+            if (event.thinking) thinkBuf += event.thinking;
+            if (event.delta) deltaBuf += event.delta;
             if (event.done) { completed = true; this.asstSessionId = event.session_id; }
-            this.scrollAsstBottom();
+            scheduleFlush();
           };
           try {
             while (true) {
@@ -1414,7 +1429,11 @@ const App = {
               if (done) { if (buffer.trim()) accept(buffer); break; }
             }
             if (!completed) throw new Error("回答连接中断，本轮未保存");
-          } finally { if (!completed) { try { await reader.cancel(); } catch (err) { /* 已断开的连接 */ } reader.releaseLock(); } }
+            if (flushTimer !== null) { clearTimeout(flushTimer); flush(); }
+          } finally {
+            if (flushTimer !== null) { clearTimeout(flushTimer); flush(); }
+            if (!completed) { try { await reader.cancel(); } catch (err) { /* 已断开的连接 */ } reader.releaseLock(); }
+          }
         });
         await this.loadAsstSessions();
       } catch (err) {
