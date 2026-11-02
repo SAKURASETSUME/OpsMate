@@ -254,7 +254,7 @@ const App = {
       asstBusy: false, asstAbort: null, asstError: "", pendingDeleteAsstId: null, asstKeySeq: 0,
       asstDraftFiles: [], asstDragOver: false, asstSummaryOpen: false,
       asstActiveWorkspace: "",
-      asstWorkspaceDirs: [], asstWsInput: "", asstWsEditing: false, asstWsBusy: false,
+      asstWorkspaceDirs: [], asstWsInput: "", asstWsEditing: false, asstWsBusy: false, pendingRemoveWsDir: "",
       asstEffort: "low",
       verItems: [], verLoading: false, verBusy: false, verEditingId: null,
       verForm: { package: "", version: "", description: "", release_date: "" },
@@ -291,6 +291,17 @@ const App = {
         .filter((m) => m.role === "user")
         .map((m) => ({ key: m.key,
           summary: (m.summary || m.content).replace(/\s+/g, " ").trim().slice(0, 26) }));
+    },
+    asstSessionGroups() {
+      // 会话按工作目录直接分组展示：目录即使没有会话也可见；归属目录已不存在/未设置归入「未分组」
+      const groups = this.asstWorkspaceDirs.map((dir) => ({ workspace: dir, name: this.wsDirName(dir), sessions: [] }));
+      const fallback = { workspace: "", name: "未分组", sessions: [] };
+      for (const s of this.asstSessions) {
+        const group = groups.find((g) => g.workspace === s.workspace);
+        (group || fallback).sessions.push(s);
+      }
+      groups.push(fallback);
+      return groups;
     },
     filteredNotes() {
       if (this.noteFilter === "open") return this.noteItems.filter((n) => n.done !== 1);
@@ -1020,27 +1031,38 @@ const App = {
     async loadAsstWorkspace() {
       try {
         this.asstWorkspaceDirs = (await apiFetch("/api/assistant/workspace")).directories;
-        // 记忆的选中目录若已被移除，回落到未分组
+        // 记忆的新建归属目录若已被移除，回落到未分组
         if (this.asstActiveWorkspace && !this.asstWorkspaceDirs.includes(this.asstActiveWorkspace)) {
-          this.setActiveWorkspace("");
+          this.setDefaultWorkspace("");
         }
       } catch (err) { /* 统一提示 */ }
     },
-    setActiveWorkspace(value) {
+    setDefaultWorkspace(value) {
       this.asstActiveWorkspace = value;
       try { localStorage.setItem("opsmate-asst-ws", value); } catch (err) { /* 忽略 */ }
+    },
+    newAsstSessionIn(workspace) {
+      if (this.asstBusy) return;
+      this.setDefaultWorkspace(workspace);
       this.newAsstSession();
-      this.loadAsstSessions();
     },
     wsDirName(dir) {
       const parts = String(dir || "").split(/[\\/]/).filter(Boolean);
       return parts.length ? parts[parts.length - 1] : String(dir);
     },
+    relTime(value) {
+      const stamp = Date.parse(String(value || "").replace(" ", "T"));
+      if (!stamp) return String(value || "");
+      const diff = Date.now() - stamp;
+      if (diff < 60 * 1000) return "刚刚";
+      if (diff < 60 * 60 * 1000) return Math.floor(diff / 60000) + " 分钟";
+      if (diff < 24 * 60 * 60 * 1000) return Math.floor(diff / 3600000) + " 小时";
+      if (diff < 7 * 24 * 60 * 60 * 1000) return Math.floor(diff / 86400000) + " 天";
+      return String(value).slice(0, 10);
+    },
     async loadAsstSessions() {
       try {
-        const params = this.asstActiveWorkspace
-          ? "?workspace=" + encodeURIComponent(this.asstActiveWorkspace) : "";
-        this.asstSessions = (await apiFetch("/api/assistant/sessions" + params)).items;
+        this.asstSessions = (await apiFetch("/api/assistant/sessions")).items;
       } catch (err) { /* 统一提示 */ }
     },
     async saveAsstWorkspace(list) {
@@ -1052,7 +1074,7 @@ const App = {
         });
         this.asstWorkspaceDirs = data.directories;
         if (this.asstActiveWorkspace && !this.asstWorkspaceDirs.includes(this.asstActiveWorkspace)) {
-          this.setActiveWorkspace("");
+          this.setDefaultWorkspace("");
         }
         await this.loadAsstSessions();
         showToast("工作目录已更新（智能体获得范围内读写与执行授权）");
@@ -1079,6 +1101,7 @@ const App = {
     removeAsstWorkspaceDir(index) {
       const next = this.asstWorkspaceDirs.slice();
       next.splice(index, 1);
+      this.pendingRemoveWsDir = "";
       this.saveAsstWorkspace(next);
     },
     /* ============ 运维助手（Phase 8） ============ */
@@ -1109,6 +1132,7 @@ const App = {
         this.asstSessionId = item.id;
         this.asstMessages = data.messages.map((row) => this.parseAsstRow(row));
         this.asstError = ""; this.pendingDeleteAsstId = null;
+        this.setDefaultWorkspace(item.workspace || "");
       } catch (err) { /* 统一提示 */ }
     },
     async deleteAsstSession(item) {
@@ -1654,37 +1678,41 @@ const App = {
     "      </header>",
     '      <div class="asst-layout" :style="gridPaneStyle(\'asst\')">',
     '        <aside class="asst-sessions" aria-label="会话列表">',
-    '          <label class="asst-ws-select" title="会话归属的工作目录；新会话将创建在当前目录下">',
-    "            <span>当前工作目录</span>",
-    '            <select :value="asstActiveWorkspace" @change="setActiveWorkspace($event.target.value)">',
-    '              <option value="">未分组</option>',
-    '              <option v-for="dir in asstWorkspaceDirs" :key="dir" :value="dir">{{ wsDirName(dir) }}</option>',
-    "            </select>",
-    "          </label>",
-    '          <button class="copy-button" type="button" @click="newAsstSession" :disabled="asstBusy">＋ 新建对话</button>',
-    '          <div class="asst-ws-panel">',
-    '            <button class="asst-ws-toggle" type="button" @click="asstWsEditing = !asstWsEditing">📁 工作目录（{{ asstWorkspaceDirs.length }}）</button>',
-    '            <div v-if="asstWsEditing" class="asst-ws-editor">',
-    '              <p class="placeholder dim">授权后智能体可对这些目录及其子目录读写文件与执行命令</p>',
-    '              <div v-for="(dir,i) in asstWorkspaceDirs" :key="dir" class="asst-ws-item">',
-    '                <code :title="dir">{{ dir }}</code>',
-    '                <button class="asst-attach-remove" type="button" title="移除目录" :disabled="asstWsBusy" @click="removeAsstWorkspaceDir(i)">×</button>',
-    "              </div>",
-    '              <form class="asst-ws-add" @submit.prevent="addAsstWorkspaceDir">',
-    '                <button class="copy-button" type="button" :disabled="asstWsBusy" @click="browseWorkspaceDir">浏览…</button>',
-    '                <input v-model="asstWsInput" :disabled="asstWsBusy">',
-    '                <button class="copy-button" type="submit" :disabled="asstWsBusy || !asstWsInput.trim()">添加</button>',
-    "              </form>",
-    "            </div>",
+    '          <div class="asst-side-head">',
+    '            <span class="asst-side-title">会话</span>',
+    '            <button class="asst-head-add" type="button" title="新建对话（归属当前分组）" :disabled="asstBusy" @click="newAsstSession">＋</button>',
     "          </div>",
-    '          <p v-if="!asstSessions.length" class="empty-state">暂无历史会话</p>',
-    '          <div v-for="s in asstSessions" :key="s.id" class="asst-session-item">',
-    '            <button type="button" class="history-item" :class="{ active: asstSessionId === s.id }" @click="openAsstSession(s)">',
-    "              <strong>{{ s.title }}</strong>",
-    '              <span class="wb-meta">{{ s.updated_at }}<em v-if="s.workspace" class="asst-session-ws" :title="s.workspace">📂{{ wsDirName(s.workspace) }}</em></span>',
-    "            </button>",
-    '            <button v-if="pendingDeleteAsstId === s.id" class="copy-button danger-button asst-del" type="button" @click="deleteAsstSession(s)" :disabled="asstBusy">确认</button>',
-    '            <button v-else class="copy-button asst-del" type="button" @click="pendingDeleteAsstId = s.id" :disabled="asstBusy">删除</button>',
+    '          <div class="asst-groups">',
+    '            <div v-for="g in asstSessionGroups" :key="g.workspace || \'__none__\'" class="asst-group">',
+    '              <div class="asst-group-head" :title="g.workspace || \'未绑定工作目录的会话\'">',
+    '                <span class="asst-group-icon">📁</span>',
+    '                <span class="asst-group-name">{{ g.name }}</span>',
+    '                <span class="asst-group-count">{{ g.sessions.length }}</span>',
+    '                <button class="asst-group-act" type="button" title="在此分组新建对话" :disabled="asstBusy" @click="newAsstSessionIn(g.workspace)">⊕</button>',
+    '                <template v-if="g.workspace">',
+    '                  <button v-if="pendingRemoveWsDir === g.workspace" class="asst-group-act danger" type="button" title="再次点击确认移除；会话将归入未分组" :disabled="asstWsBusy" @click="removeAsstWorkspaceDir(asstWorkspaceDirs.indexOf(g.workspace))">确认移除</button>',
+    '                  <button v-else class="asst-group-act" type="button" title="移除工作目录" :disabled="asstWsBusy" @click="pendingRemoveWsDir = g.workspace">✕</button>',
+    "                </template>",
+    "              </div>",
+    '              <div v-for="s in g.sessions" :key="s.id" class="asst-session-item">',
+    '                <button type="button" class="history-item asst-session" :class="{ active: asstSessionId === s.id }" @click="openAsstSession(s)" :title="s.title">',
+    "                  <strong>{{ s.title }}</strong>",
+    '                  <span class="asst-session-time">{{ relTime(s.updated_at) }}</span>',
+    "                </button>",
+    '                <button v-if="pendingDeleteAsstId === s.id" class="copy-button danger-button asst-del" type="button" @click="deleteAsstSession(s)" :disabled="asstBusy">确认</button>',
+    '                <button v-else class="copy-button asst-del" type="button" @click="pendingDeleteAsstId = s.id" :disabled="asstBusy">删除</button>',
+    "              </div>",
+    "            </div>",
+    '            <p v-if="!asstSessions.length" class="empty-state">暂无历史会话</p>',
+    "          </div>",
+    '          <div class="asst-ws-addbar">',
+    '            <button class="asst-ws-add-toggle" type="button" @click="asstWsEditing = !asstWsEditing">＋ 添加工作目录</button>',
+    '            <form v-if="asstWsEditing" class="asst-ws-add" @submit.prevent="addAsstWorkspaceDir">',
+    '              <input v-model="asstWsInput" :disabled="asstWsBusy" placeholder="目录绝对路径">',
+    '              <button class="copy-button" type="button" :disabled="asstWsBusy" @click="browseWorkspaceDir">浏览…</button>',
+    '              <button class="copy-button" type="submit" :disabled="asstWsBusy || !asstWsInput.trim()">添加</button>',
+    "            </form>",
+    '            <p v-if="asstWsEditing" class="placeholder dim">授权后智能体可对这些目录及其子目录读写文件与执行命令</p>',
     "          </div>",
     "        </aside>",
     '        <div class="edge-handle" title="拖拽调整宽度" :style="{ left: paneWidths.asst + \'px\' }" @mousedown="startPaneDrag($event, \'asst\')"></div>',
