@@ -29,7 +29,7 @@ OpsMate/                    # 本目录即项目根（含中文路径，注意 s
 ├── app/web/                # index.html + app.js + style.css + vendor/(vue/marked)
 ├── data/                   # 运行时数据（.gitignore；打包后随 exe）
 │   ├── commands/           # 621 个命令 md
-│   ├── kb/                 # nginx/zabbix/keepalived/kafka/redis/docker 六软件 YAML（后四个 Phase 7 扩充）
+│   ├── kb/                 # 15 软件 YAML：nginx/zabbix/keepalived/kafka/redis/docker + mysql/postgresql/rabbitmq/elasticsearch/prometheus/haproxy/tomcat/zookeeper/firewalld（后九个 2026-11-02 扩充）
 │   ├── opsmate.db          # SQLite
 │   └── config.json         # {provider, base_url, model, api_key}
 ├── tools/import_commands.py  # 数据导入（三级降级）

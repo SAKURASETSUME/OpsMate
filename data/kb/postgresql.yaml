@@ -1,0 +1,408 @@
+software: postgresql
+label: PostgreSQL
+version_ref: PostgreSQL 14/15（参考配置）
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://www.postgresql.org/docs/14/runtime-config.html
+- https://www.postgresql.org/docs/14/auth-pg-hba-conf.html
+- https://www.postgresql.org/docs/14/backup-dump.html
+templates:
+- name: 生产基线（postgresql.conf）
+  desc: 16G 内存专用库参考：连接、内存、WAL/checkpoint、日志与自动清理；按业务并发调整。
+  content: |
+    # 网络
+    listen_addresses = '192.0.2.60'
+    port = 5432
+    max_connections = 300
+
+    # 内存
+    shared_buffers = 4GB
+    effective_cache_size = 12GB
+    work_mem = 16MB
+    maintenance_work_mem = 512MB
+
+    # WAL 与 checkpoint
+    wal_level = replica
+    max_wal_size = 4GB
+    min_wal_size = 1GB
+    checkpoint_timeout = 15min
+    synchronous_commit = on
+
+    # 查询行为
+    shared_preload_libraries = 'pg_stat_statements'
+    track_io_timing = on
+
+    # 日志
+    logging_collector = on
+    log_directory = 'log'
+    log_min_duration_statement = 1000
+    log_line_prefix = '%m [%p] %u@%d '
+
+    # 超时
+    lock_timeout = '5s'
+    statement_timeout = '5min'
+    idle_in_transaction_session_timeout = '10min'
+
+    # 自动清理
+    autovacuum = on
+    autovacuum_vacuum_scale_factor = 0.05
+    autovacuum_analyze_scale_factor = 0.02
+- name: 访问控制基线（pg_hba.conf）
+  desc: 本机 peer + 内网 scram 密码 + 复制账号专用行；顺序即匹配顺序。
+  content: |
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    local   all             postgres                                peer
+    host    all             postgres        127.0.0.1/32            scram-sha-256
+    host    all             app             192.0.2.0/24            scram-sha-256
+    host    replication     replicator      192.0.2.0/24            scram-sha-256
+    # 拒绝其余全部
+    host    all             all             0.0.0.0/0               reject
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: systemctl start postgresql
+    syntax: systemctl start postgresql
+    example: systemctl start postgresql-14
+    desc: 启动 PostgreSQL 服务（包名可能带大版本）。
+    notes: 多实例用 postgresql@14-main 之类的 unit。
+    danger: medium
+    tags: [运行命令]
+  - name: systemctl stop postgresql
+    syntax: systemctl stop postgresql
+    example: systemctl stop postgresql-14
+    desc: 停止服务。
+    notes: 默认等活跃会话结束；强停用 -m immediate（有崩溃恢复成本）。
+    danger: high
+    tags: [运行命令]
+  - name: pg_ctl 启停
+    syntax: pg_ctl -D 数据目录 start|stop|status -l 日志
+    example: pg_ctl -D /var/lib/pgsql/14/data status
+    desc: 源码安装/单实例场景的启停控制。
+    notes: stop -m fast 为推荐模式；smart 等待客户端断开，immediate 类似 kill -9。
+    danger: medium
+    tags: [运行命令]
+  - name: psql 登录
+    syntax: psql -h 主机 -p 端口 -U 用户 -d 库
+    example: psql -h 192.0.2.60 -U app -d appdb
+    desc: 客户端连接。
+    notes: 本机 postgres 系统用户可 peer 免密；密码放 ~/.pgpass 或 PGPASSWORD。
+    danger: low
+    tags: [连接]
+  - name: pg_isready 探活
+    syntax: pg_isready -h 主机 -p 端口
+    example: pg_isready -h 192.0.2.60 -p 5432
+    desc: 探测服务是否可接受连接。
+    notes: 监控/启动脚本常用，不做鉴权。
+    danger: false
+    tags: [状态]
+  - name: psql 元命令
+    syntax: psql -c "\l"（\du \dt \x 等）
+    example: psql -U postgres -c "\l+"
+    desc: 库/角色/表清单与切换输出格式。
+    notes: \x 竖排显示宽结果；\timing 显示语句耗时。
+    danger: false
+    tags: [排查]
+  - name: 查看活跃会话
+    syntax: psql -c "SELECT * FROM pg_stat_activity"
+    example: psql -U postgres -c "SELECT pid,usename,state,wait_event_type,query FROM pg_stat_activity WHERE state<>'idle'"
+    desc: 查看连接、等待事件与正在执行的 SQL。
+    notes: 停掉会话用 SELECT pg_terminate_backend(pid)；取消查询用 pg_cancel_backend。
+    danger: low
+    tags: [排查]
+  - name: 重载配置
+    syntax: psql -c "SELECT pg_reload_conf()"
+    example: psql -U postgres -c "SELECT pg_reload_conf()"
+    desc: 重载 postgresql.conf/pg_hba.conf 中可动态生效的参数。
+    notes: postmaster 级参数（shared_buffers 等）仍需重启；pg_hba 修改重载即生效。
+    danger: low
+    tags: [维护]
+  - name: ALTER SYSTEM 设参
+    syntax: psql -c "ALTER SYSTEM SET 参数 = 值"
+    example: psql -U postgres -c "ALTER SYSTEM SET work_mem = '32MB'"
+    desc: 参数写入 postgresql.auto.conf，优先级高于主配置。
+    notes: 查看来源用 SELECT * FROM pg_settings; 撤销用 ALTER SYSTEM RESET。
+    danger: medium
+    tags: [维护]
+  - name: pg_dump 单库备份
+    syntax: pg_dump -h 主机 -U 用户 -Fc 库名 > 文件.dump
+    example: pg_dump -h 192.0.2.60 -U postgres -Fc appdb > appdb_$(date +%F).dump
+    desc: 单库自定义格式逻辑备份。
+    notes: -Fc 支持并行恢复与压缩；纯文本用 -Fp。
+    danger: low
+    tags: [备份]
+  - name: pg_dumpall 全局备份
+    syntax: pg_dumpall -U postgres --globals-only > globals.sql
+    example: pg_dumpall -U postgres --globals-only > globals_$(date +%F).sql
+    desc: 备份角色/表空间等全局对象（pg_dump 不含）。
+    notes: 迁移/重建集群必做；全库备份用 pg_dumpall > all.sql。
+    danger: low
+    tags: [备份]
+  - name: pg_restore 恢复
+    syntax: pg_restore -h 主机 -U 用户 -d 库 文件.dump
+    example: pg_restore -h 192.0.2.60 -U postgres -d appdb -j 4 appdb_2026-01-01.dump
+    desc: 恢复自定义格式备份，-j 并行。
+    notes: 恢复到新库先 CREATE DATABASE；报错中断加 --exit-on-error 便于发现。
+    danger: high
+    tags: [备份]
+  - name: pg_basebackup 物理备份/搭从库
+    syntax: pg_basebackup -h 主库 -U replicator -D 目录 -X stream -P -R
+    example: pg_basebackup -h 192.0.2.61 -U replicator -D /var/lib/pgsql/14/data -X stream -P -R
+    desc: 基础物理备份，也用于流复制从库初始化。
+    notes: -R 自动生成 standby.signal 与 primary_conninfo；需先建复制账号与 pg_hba 放行。
+    danger: high
+    tags: [备份, 复制]
+  - name: VACUUM 清理
+    syntax: psql -c "VACUUM 表名"
+    example: psql -U postgres -d appdb -c "VACUUM (ANALYZE) orders"
+    desc: 回收死元组并更新统计。
+    notes: 常规 VACUUM 不锁表；VACUUM FULL 重写整表锁独占，优先用 pg_repack。
+    danger: medium
+    tags: [维护]
+  - name: REINDEX 重建索引
+    syntax: psql -c "REINDEX TABLE 表名"
+    example: psql -U postgres -d appdb -c "REINDEX TABLE orders"
+    desc: 重建损坏/膨胀的索引。
+    notes: 在线场景用 REINDEX CONCURRENTLY（锁要求低但耗时更久）。
+    danger: medium
+    tags: [维护]
+  - name: 创建用户与授权
+    syntax: psql -c "CREATE ROLE ... LOGIN PASSWORD ...; GRANT ..."
+    example: psql -U postgres -c "CREATE ROLE app LOGIN PASSWORD '***'; GRANT CONNECT ON DATABASE appdb TO app; GRANT USAGE ON SCHEMA public TO app"
+    desc: 建角色并按最小权限授权。
+    notes: 库级/模式级/表级三层授权；默认 PUBLIC 对 public schema 有 CREATE（15 起收回）。
+    danger: medium
+    tags: [账号]
+  - name: 流复制状态
+    syntax: psql -c "SELECT * FROM pg_stat_replication"
+    example: psql -U postgres -c "SELECT application_name,state,sync_state,write_lag,flush_lag FROM pg_stat_replication"
+    desc: 主库查看从库复制状态与延迟。
+    notes: 从库侧看 pg_stat_wal_receiver；延迟关注 replay_lag。
+    danger: false
+    tags: [复制]
+  - name: 提升从库为主
+    syntax: pg_ctl -D 数据目录 promote
+    example: pg_ctl -D /var/lib/pgsql/14/data promote
+    desc: 故障切换时把从库提升为主库。
+    notes: 不可逆；切换前确认原主库已隔离，避免脑裂。
+    danger: high
+    tags: [复制]
+- id: conf
+  label: 配置参数
+  entries:
+  - name: listen_addresses
+    default: localhost
+    section: 连接
+    syntax: listen_addresses = '*'
+    example: listen_addresses = '192.0.2.60'
+    desc: 监听地址，* 为全部接口。
+    notes: 配合 pg_hba.conf 控制；改后需重启。
+    danger: medium
+    tags: [网络]
+  - name: port
+    default: '5432'
+    section: 连接
+    syntax: port = 5432
+    example: port = 5433
+    desc: 监听端口。
+    notes: 多实例区分；改后需重启。
+    danger: medium
+    tags: [网络]
+  - name: max_connections
+    default: '100'
+    section: 连接
+    syntax: max_connections = 300
+    example: max_connections = 300
+    desc: 最大并发连接数。
+    notes: 每连接有私有内存开销，高并发优先上 PgBouncer；改后需重启。
+    danger: medium
+    tags: [容量]
+  - name: shared_buffers
+    default: 128MB
+    section: 内存
+    syntax: shared_buffers = 4GB
+    example: shared_buffers = 4GB
+    desc: 共享缓冲池大小。
+    notes: 专用机常见为内存 25%；需重启生效。
+    danger: medium
+    tags: [性能]
+  - name: effective_cache_size
+    default: 4GB
+    section: 内存
+    syntax: effective_cache_size = 12GB
+    example: effective_cache_size = 12GB
+    desc: 告知规划器可用的 OS 缓存规模（不分配内存）。
+    notes: 影响执行计划选择，常配内存的 50%~75%。
+    danger: low
+    tags: [性能]
+  - name: work_mem
+    default: 4MB
+    section: 内存
+    syntax: work_mem = 16MB
+    example: work_mem = 32MB
+    desc: 单排序/哈希操作内存上限。
+    notes: 是每操作每连接的量，调大前先评估并发×复杂度；会话级可调。
+    danger: medium
+    tags: [性能]
+  - name: maintenance_work_mem
+    default: 64MB
+    section: 内存
+    syntax: maintenance_work_mem = 512MB
+    example: maintenance_work_mem = 1GB
+    desc: VACUUM/建索引等维护操作内存。
+    notes: 大库 autovacuum 慢时优先调大（autovacuum 单 worker 只用其 1/3）。
+    danger: low
+    tags: [维护]
+  - name: wal_level
+    default: replica
+    section: 复制
+    syntax: wal_level = replica
+    example: wal_level = logical
+    desc: WAL 记录级别：minimal/replica/logical。
+    notes: 流复制需 replica 及以上；逻辑订阅需 logical；改后需重启。
+    danger: medium
+    tags: [复制]
+  - name: max_wal_size
+    default: 1GB
+    section: 复制
+    syntax: max_wal_size = 4GB
+    example: max_wal_size = 4GB
+    desc: checkpoint 之间允许的 WAL 上限。
+    notes: 写密集库调大减少 checkpoint 频率；磁盘要留够余量。
+    danger: low
+    tags: [性能]
+  - name: checkpoint_timeout
+    default: 5min
+    section: 复制
+    syntax: checkpoint_timeout = 15min
+    example: checkpoint_timeout = 15min
+    desc: checkpoint 最大间隔。
+    notes: 与 max_wal_size 配合；过长会拉长崩溃恢复时间。
+    danger: low
+    tags: [性能]
+  - name: synchronous_commit
+    default: 'on'
+    section: 可靠性
+    syntax: synchronous_commit = on
+    example: synchronous_commit = remote_apply
+    desc: 事务提交的 WAL 落盘/复制同步级别。
+    notes: off 换性能可能丢最近事务；同步复制用 remote_write/remote_apply。
+    danger: medium
+    tags: [可靠性]
+  - name: shared_preload_libraries
+    default: 空
+    section: 扩展
+    syntax: shared_preload_libraries = 'pg_stat_statements'
+    example: shared_preload_libraries = 'pg_stat_statements,pg_cron'
+    desc: 预加载扩展库。
+    notes: 需重启；pg_stat_statements 是 SQL 审计调优基石，加载后还需 CREATE EXTENSION。
+    danger: medium
+    tags: [扩展]
+  - name: logging_collector
+    default: 'off'
+    section: 日志
+    syntax: logging_collector = on
+    example: logging_collector = on
+    desc: 后台收集日志进程，写入 log_directory。
+    notes: 需重启；配合 log_rotation_age/size 做切割。
+    danger: low
+    tags: [日志]
+  - name: log_min_duration_statement
+    default: '-1（关闭）'
+    section: 日志
+    syntax: log_min_duration_statement = 1000
+    example: log_min_duration_statement = 500
+    desc: 超过毫秒数的语句记入日志。
+    notes: PG 版慢查询日志；0 记录全部语句（仅排障用）。
+    danger: low
+    tags: [日志]
+  - name: log_line_prefix
+    default: '%m [%p] '
+    section: 日志
+    syntax: log_line_prefix = '%m [%p] %u@%d '
+    example: log_line_prefix = '%m [%p] %u@%d %a '
+    desc: 日志行前缀格式（时间/进程/用户/库/应用名）。
+    notes: 采集进 ELK 时补齐 %a 应用名便于按业务过滤。
+    danger: low
+    tags: [日志]
+  - name: autovacuum
+    default: 'on'
+    section: 维护
+    syntax: autovacuum = on
+    example: autovacuum = on
+    desc: 自动清理死元组与统计更新。
+    notes: 永不建议全局关闭；单表可用 ALTER TABLE ... SET (autovacuum_enabled=false)。
+    danger: low
+    tags: [维护]
+  - name: autovacuum_vacuum_scale_factor
+    default: '0.2'
+    section: 维护
+    syntax: autovacuum_vacuum_scale_factor = 0.05
+    example: autovacuum_vacuum_scale_factor = 0.02
+    desc: 触发 vacuum 的表变化比例。
+    notes: 大表调小避免延迟过大；14+ 可用 vacuum_failsafe_age 兜底。
+    danger: low
+    tags: [维护]
+  - name: statement_timeout
+    default: '0（无限制）'
+    section: 超时
+    syntax: statement_timeout = '5min'
+    example: statement_timeout = '30s'
+    desc: 语句执行超时，超时自动取消。
+    notes: 按角色/库设置更精细；防单条烂 SQL 拖垮连接池。
+    danger: medium
+    tags: [超时]
+  - name: idle_in_transaction_session_timeout
+    default: '0（无限制）'
+    section: 超时
+    syntax: idle_in_transaction_session_timeout = '10min'
+    example: idle_in_transaction_session_timeout = '5min'
+    desc: 事务中空闲超时，防长事务阻碍 vacuum。
+    notes: 长事务是膨胀与锁问题的常见根源，建议设置。
+    danger: medium
+    tags: [超时]
+  - name: lock_timeout
+    default: '0（无限制）'
+    section: 超时
+    syntax: lock_timeout = '5s'
+    example: lock_timeout = '3s'
+    desc: 等锁超时。
+    notes: DDL 脚本里设小值，避免排队锁放大故障。
+    danger: low
+    tags: [超时]
+  - name: pg_hba 访问规则
+    default: local 全 peer + host 127.0.0.1 trust
+    section: pg_hba.conf
+    syntax: host 库 角色 网段 方法
+    example: host all app 192.0.2.0/24 scram-sha-256
+    desc: 每行一条访问规则，顺序匹配。
+    notes: 方法推荐 scram-sha-256；复制账号单独一行 database=replication；改完 pg_reload_conf 生效。
+    danger: high
+    tags: [安全]
+  - name: password_encryption
+    default: scram-sha-256（14+）
+    section: 安全
+    syntax: password_encryption = scram-sha-256
+    example: password_encryption = scram-sha-256
+    desc: 建用户时的默认口令加密方式。
+    notes: 旧 md5 账号需重设密码升级到 scram。
+    danger: low
+    tags: [安全]
+  - name: primary_conninfo（从库）
+    default: 空
+    section: 复制
+    syntax: primary_conninfo = 'host=主库 port=5432 user=replicator password=***'
+    example: primary_conninfo = 'host=192.0.2.61 port=5432 user=replicator application_name=standby1'
+    desc: 流复制从库连接主库的参数。
+    notes: pg_basebackup -R 自动写入；密码建议放 ~/.pgpass 或单独文件引用。
+    danger: medium
+    tags: [复制]
+  - name: hot_standby
+    default: 'on'
+    section: 复制
+    syntax: hot_standby = on
+    example: hot_standby = on
+    desc: 从库恢复期间允许只读查询。
+    notes: 与主库冲突的查询受 hot_standby_feedback/max_standby_* 影响。
+    danger: low
+    tags: [复制]

@@ -1,0 +1,337 @@
+software: elasticsearch
+label: Elasticsearch
+version_ref: Elasticsearch 8.x（参考配置）
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://www.elastic.co/guide/en/elasticsearch/reference/current/settings.html
+- https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-cluster.html
+- https://www.elastic.co/guide/en/elasticsearch/reference/current/snapshot-restore.html
+templates:
+- name: 三节点集群（elasticsearch.yml，node-1 示例）
+  desc: 内网绑定 + 安全认证 + 三节点发现与选主；每个节点改 node.name 与地址。
+  content: |
+    cluster.name: logs-prod
+    node.name: es-node-1
+    node.roles: [ master, data ]
+
+    path.data: /data/es/data
+    path.logs: /data/es/logs
+
+    network.host: 192.0.2.80
+    http.port: 9200
+    transport.port: 9300
+
+    discovery.seed_hosts:
+      - 192.0.2.80:9300
+      - 192.0.2.81:9300
+      - 192.0.2.82:9300
+    cluster.initial_master_nodes:
+      - es-node-1
+      - es-node-2
+      - es-node-3
+
+    xpack.security.enabled: true
+    xpack.security.transport.ssl:
+      enabled: true
+      verification_mode: certificate
+      keystore.path: certs/elastic-certificates.p12
+      truststore.path: certs/elastic-certificates.p12
+
+    gateway.recover_after_nodes: 2
+    gateway.expected_nodes: 3
+    action.auto_create_index: "logs-*,app-*,false"
+- name: JVM 与 systemd 内存锁定（命令块）
+  desc: jvm.options 堆设置 + systemd LimitMEMLOCK；堆为机器内存一半且 ≤31GB。
+  content: |
+    # /etc/elasticsearch/jvm.options.d/heap.options
+    -Xms16g
+    -Xmx16g
+
+    # systemd drop-in：/etc/systemd/system/elasticsearch.service.d/memlock.conf
+    [Service]
+    LimitMEMLOCK=infinity
+
+    # 启用后验证：
+    # curl -s -u elastic:*** localhost:9200/_nodes?filter_path=**.mlockall
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: systemctl start elasticsearch
+    syntax: systemctl start elasticsearch
+    example: systemctl start elasticsearch
+    desc: 启动 Elasticsearch 服务。
+    notes: 堆内存与 mmap 限制配置错误时启动失败，先看日志。
+    danger: medium
+    tags: [运行命令]
+  - name: systemctl stop elasticsearch
+    syntax: systemctl stop elasticsearch
+    example: systemctl stop elasticsearch
+    desc: 停止服务。
+    notes: 停止会触发分片重平衡，滚动维护建议先排除节点（_cluster/settings allocation exclude）。
+    danger: high
+    tags: [运行命令]
+  - name: 集群健康
+    syntax: curl -u 用户:密码 localhost:9200/_cluster/health
+    example: curl -s -u elastic:*** 'localhost:9200/_cluster/health?pretty&wait_for_status=yellow'
+    desc: 查看集群状态（green/yellow/red）与分片概况。
+    notes: red 表示有主分片丢失需立即处理；排查先看 unassigned_shards。
+    danger: false
+    tags: [状态]
+  - name: 节点列表
+    syntax: curl localhost:9200/_cat/nodes?v
+    example: curl -s -u elastic:*** 'localhost:9200/_cat/nodes?v&h=name,ip,heap.percent,disk.used_percent,node.role'
+    desc: 查看节点、堆与磁盘占用。
+    notes: heap.percent 长期 >85% 需要扩容或调堆。
+    danger: false
+    tags: [状态]
+  - name: 索引列表
+    syntax: curl localhost:9200/_cat/indices?v
+    example: curl -s -u elastic:*** '_cat/indices/logs-*?v&s=store.size:desc'
+    desc: 查看索引文档数与体积。
+    notes: 配合 ILM/定期 DELETE 控制磁盘增长。
+    danger: false
+    tags: [状态]
+  - name: 分片分布
+    syntax: curl localhost:9200/_cat/shards?v
+    example: curl -s -u elastic:*** '_cat/shards/logs-2026.11.02?v'
+    desc: 查看分片主副与所在节点。
+    notes: UNASSIGNED 分片用 _cluster/allocation/explain 定位原因。
+    danger: false
+    tags: [排查]
+  - name: 创建/删除索引
+    syntax: curl -XPUT/DELETE localhost:9200/索引名
+    example: curl -s -u elastic:*** -X DELETE localhost:9200/logs-2026-10-01
+    desc: 管理索引生命周期。
+    notes: 删除不可恢复；按日期滚动命名便于整段清理。
+    danger: high
+    tags: [维护]
+  - name: 索引设置更新
+    syntax: curl -XPUT localhost:9200/索引/_settings -d '{...}'
+    example: "curl -s -u elastic:*** -X PUT localhost:9200/logs-2026.11.02/_settings -H 'Content-Type: application/json' -d '{\"index.number_of_replicas\": 1}'"
+    desc: 动态调整副本数等索引设置。
+    notes: 磁盘吃紧临时副本清零应急：number_of_replicas=0。
+    danger: medium
+    tags: [维护]
+  - name: 磁盘水位调整
+    syntax: _cluster/settings 更新 watermark
+    example: "curl -s -u elastic:*** -X PUT localhost:9200/_cluster/settings -H 'Content-Type: application/json' -d '{\"transient\":{\"cluster.routing.allocation.disk.watermark.low\":\"85%\",\"cluster.routing.allocation.disk.watermark.high\":\"90%\",\"cluster.routing.allocation.disk.watermark.flood_stage\":\"95%\"}}'"
+    desc: 磁盘水位阈值（低/高/洪峰）。
+    notes: 洪峰触发后索引只读（read_only_allow_delete），清理磁盘后需手动解除。
+    danger: medium
+    tags: [维护]
+  - name: _reindex 迁移
+    syntax: POST _reindex
+    example: "curl -s -u elastic:*** -X POST localhost:9200/_reindex -H 'Content-Type: application/json' -d '{\"source\":{\"index\":\"old-logs\"},\"dest\":{\"index\":\"new-logs\"}}'"
+    desc: 索引数据迁移/重建（改映射必须走 reindex）。
+    notes: 大索引耗时长，可加 slices=auto 并行；完成前双写或别名切换。
+    danger: medium
+    tags: [维护]
+  - name: 快照仓库与备份
+    syntax: PUT _snapshot/仓库名
+    example: "curl -s -u elastic:*** -X PUT localhost:9200/_snapshot/backup -H 'Content-Type: application/json' -d '{\"type\":\"fs\",\"settings\":{\"location\":\"/data/es/backup\"}}'"
+    desc: 注册共享文件系统快照仓库。
+    notes: path.repo 需预先在 elasticsearch.yml 声明；多节点要求共享存储（NFS）。
+    danger: medium
+    tags: [备份]
+  - name: 创建/恢复快照
+    syntax: PUT _snapshot/仓库/快照名；POST _snapshot/仓库/快照名/_restore
+    example: curl -s -u elastic:*** -X PUT 'localhost:9200/_snapshot/backup/snap-20261102?wait_for_completion=false'
+    desc: 打快照与按快照恢复索引。
+    notes: 恢复目标索引需先关闭/删除；快照是集群级容灾手段。
+    danger: high
+    tags: [备份]
+  - name: 重置内置账号密码
+    syntax: elasticsearch-reset-password -u 用户
+    example: /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic -i
+    desc: 重置 elastic 等内置账号密码（8.x 安全默认开启）。
+    notes: 改后同步更新 Kibana/Logstash/采集端凭据。
+    danger: high
+    tags: [账号]
+  - name: 查看节点热线程
+    syntax: GET _nodes/<节点>/hot_threads
+    example: curl -s -u elastic:*** 'localhost:9200/_nodes/es-node-1/hot_threads?threads=5'
+    desc: CPU 高时定位热点线程。
+    notes: 结合 GET _tasks 看长任务。
+    danger: false
+    tags: [排查]
+  - name: 强制合并
+    syntax: POST 索引/_forcemerge?max_num_segments=1
+    example: curl -s -u elastic:*** -X POST 'localhost:9200/logs-2026.10/_forcemerge?max_num_segments=1'
+    desc: 合并段减少句柄与查询开销。
+    notes: 只对只读索引执行；进行中会拉高 IO。
+    danger: medium
+    tags: [维护]
+- id: conf
+  label: 配置参数
+  entries:
+  - name: cluster.name
+    default: elasticsearch
+    section: 集群
+    syntax: "cluster.name: logs-prod"
+    example: "cluster.name: logs-prod"
+    desc: 集群名称，同网段多集群必须区分。
+    notes: 组播发现已移除，但名称混淆仍会导致客户端连错。
+    danger: low
+    tags: [集群]
+  - name: node.name
+    default: 主机名
+    section: 集群
+    syntax: "node.name: es-node-1"
+    example: "node.name: es-node-1"
+    desc: 节点名，集群内唯一。
+    notes: initial_master_nodes 与各项引用均使用该名。
+    danger: low
+    tags: [集群]
+  - name: node.roles
+    default: master,data,ingest,...
+    section: 集群
+    syntax: "node.roles: [ master, data ]"
+    example: "node.roles: [ data_hot, data_content ]"
+    desc: 节点角色（选主/数据/协调/ML 等）。
+    notes: 大集群拆专职节点；冷热分层用 data_hot/data_cold 角色配合 ILM。
+    danger: medium
+    tags: [集群]
+  - name: path.data
+    default: /var/lib/elasticsearch
+    section: 存储
+    syntax: "path.data: /data/es/data"
+    example: "path.data: /data/es/data"
+    desc: 数据目录。
+    notes: 建议独立数据盘；目录属主 elasticsearch。
+    danger: high
+    tags: [存储]
+  - name: network.host
+    default: _site_
+    section: 网络
+    syntax: "network.host: 192.0.2.80"
+    example: "network.host: 192.0.2.80"
+    desc: 绑定地址，非回环即进入生产模式（强制 Bootstrap 校验）。
+    notes: 生产模式要求显式配置 discovery.seed_hosts 等才能组网。
+    danger: medium
+    tags: [网络]
+  - name: http.port / transport.port
+    default: 9200 / 9300
+    section: 网络
+    syntax: 'http.port: 9200
+
+      transport.port: 9300'
+    example: 'http.port: 9201
+
+      transport.port: 9301'
+    desc: HTTP API 与节点间通信端口。
+    notes: 同机多实例需要错开两个端口。
+    danger: medium
+    tags: [网络]
+  - name: discovery.seed_hosts
+    default: 127.0.0.1:9300
+    section: 集群
+    syntax: "discovery.seed_hosts: [192.0.2.80:9300, 192.0.2.81:9300]"
+    example: 'discovery.seed_hosts:
+
+      - 192.0.2.80:9300
+
+      - 192.0.2.81:9300
+
+      - 192.0.2.82:9300'
+    desc: 种子节点列表，用于集群发现。
+    notes: 列出全部具备 master 角色的节点更稳；DNS 名也支持。
+    danger: medium
+    tags: [集群]
+  - name: cluster.initial_master_nodes
+    default: 无
+    section: 集群
+    syntax: "cluster.initial_master_nodes: [es-node-1, es-node-2, es-node-3]"
+    example: 'cluster.initial_master_nodes:
+
+      - es-node-1
+
+      - es-node-2
+
+      - es-node-3'
+    desc: 首次组网时的选主候选，仅 bootstrap 一次。
+    notes: 集群成型后必须删除该项，否则重启有脑裂风险。
+    danger: high
+    tags: [集群]
+  - name: xpack.security.enabled
+    default: 'true（8.x）'
+    section: 安全
+    syntax: "xpack.security.enabled: true"
+    example: "xpack.security.enabled: true"
+    desc: 开启认证与传输加密。
+    notes: 8.x 默认开启；关闭仅限隔离测试环境。
+    danger: high
+    tags: [安全]
+  - name: xpack.security.transport.ssl
+    default: 无
+    section: 安全
+    syntax: 'xpack.security.transport.ssl.enabled: true
+
+      xpack.security.transport.ssl.keystore.path: certs/elastic-certificates.p12'
+    example: 'xpack.security.transport.ssl:
+
+      enabled: true
+
+      verification_mode: certificate
+
+      keystore.path: certs/elastic-certificates.p12
+
+      truststore.path: certs/elastic-certificates.p12'
+    desc: 节点间 TLS 证书配置。
+    notes: 证书用 elasticsearch-certutil 生成并分发到全部节点。
+    danger: medium
+    tags: [安全]
+  - name: gateway.recover_after_nodes
+    default: '2'
+    section: 集群
+    syntax: "gateway.recover_after_nodes: 2"
+    example: "gateway.recover_after_nodes: 2"
+    desc: 至少多少节点在场才开始恢复分片。
+    notes: 配合 expected_nodes 避免滚动重启时的反复重平衡。
+    danger: low
+    tags: [集群]
+  - name: action.auto_create_index
+    default: 'true'
+    section: 索引
+    syntax: "action.auto_create_index: \"logs-*,false\""
+    example: "action.auto_create_index: \"logs-*,app-*,false\""
+    desc: 自动建索引白名单，false 结尾兜底禁止其余。
+    notes: 防拼写错误的索引名泛滥。
+    danger: low
+    tags: [索引]
+  - name: cluster.routing.allocation.disk.watermark.*
+    default: 85%/90%/95%
+    section: 分配
+    syntax: "cluster.routing.allocation.disk.watermark.low: 85%"
+    example: "cluster.routing.allocation.disk.watermark.high: 92%"
+    desc: 磁盘水位三级阈值，控制分片分配与写入。
+    notes: 基于磁盘占用百分比；小盘建议改 absolute（如 20gb）避免误触发。
+    danger: medium
+    tags: [资源]
+  - name: indices.fielddata.cache.size
+    default: 无界
+    section: 性能
+    syntax: "indices.fielddata.cache.size: 30%"
+    example: "indices.fielddata.cache.size: 25%"
+    desc: fielddata 缓存上限，防堆被拖爆。
+    notes: text 字段排序/聚合会用到；优先改映射 doc_values。
+    danger: medium
+    tags: [性能]
+  - name: http.max_content_size
+    default: 100mb
+    section: 网络
+    syntax: "http.max_content_size: 100mb"
+    example: "http.max_content_size: 50mb"
+    desc: HTTP 请求体上限（bulk 批大小相关）。
+    notes: 采集端报 413 时调整；同时评估 bulk 最佳批次（5-15MB）。
+    danger: low
+    tags: [容量]
+  - name: bootstrap.memory_lock
+    default: 'false'
+    section: 性能
+    syntax: "bootstrap.memory_lock: true"
+    example: "bootstrap.memory_lock: true"
+    desc: 锁定堆内存禁止交换。
+    notes: 需配 systemd LimitMEMLOCK=infinity，否则启动失败。
+    danger: medium
+    tags: [性能]

@@ -1,0 +1,282 @@
+software: rabbitmq
+label: RabbitMQ
+version_ref: RabbitMQ 3.12（参考配置）
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://www.rabbitmq.com/configure.html
+- https://www.rabbitmq.com/rabbitmqctl.8.html
+- https://www.rabbitmq.com/cluster-formation.html
+templates:
+- name: 单节点基线（rabbitmq.conf）
+  desc: 管理界面 + 内存/磁盘水位 + 内网监听；账号权限用 rabbitmqctl 初始化。
+  content: |
+    listeners.tcp.default = 5672
+    management.tcp.port = 15672
+    management.tcp.ip   = 192.0.2.70
+
+    vm_memory_high_watermark.relative = 0.6
+    disk_free_limit.absolute = 2GB
+
+    heartbeat = 60
+    channel_max = 2047
+    max_message_size = 16777216
+
+    log.file.level = info
+    log.console = false
+
+    # 循环用户默认仅本机可登录管理界面；需要远程管理员时放行：
+    loopback_users.guest = false
+- name: 账号与权限初始化（命令块）
+  desc: 首次部署后创建业务账号、虚拟主机并授权；禁用默认 guest。
+  content: |
+    rabbitmqctl add_vhost appvhost
+    rabbitmqctl add_user app '***'
+    rabbitmqctl set_permissions -p appvhost app '.*' '.*' '.*'
+    rabbitmqctl set_user_tags app management
+    # 移除默认账号（或改复杂密码后限制本机）
+    rabbitmqctl delete_user guest
+    # 开启管理界面插件
+    rabbitmq-plugins enable rabbitmq_management
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: systemctl start rabbitmq-server
+    syntax: systemctl start rabbitmq-server
+    example: systemctl start rabbitmq-server
+    desc: 启动 RabbitMQ 服务。
+    notes: 节点名受 /etc/rabbitmq/rabbitmq-env.conf 的 RABBITMQ_NODENAME 影响。
+    danger: medium
+    tags: [运行命令]
+  - name: systemctl stop rabbitmq-server
+    syntax: systemctl stop rabbitmq-server
+    example: systemctl stop rabbitmq-server
+    desc: 停止服务。
+    notes: 先确认队列无积压、消费者已下线通知。
+    danger: high
+    tags: [运行命令]
+  - name: rabbitmqctl status
+    syntax: rabbitmqctl status
+    example: rabbitmqctl status
+    desc: 查看节点运行状态、版本、监听与水位。
+    notes: 排障第一入口；加 [-n 节点] 看远端节点。
+    danger: false
+    tags: [状态]
+  - name: rabbitmq-diagnostics
+    syntax: rabbitmq-diagnostics <检查项>
+    example: rabbitmq-diagnostics check_running && rabbitmq-diagnostics check_local_alarms
+    desc: 健康检查命令族（新版本替代旧 rabbitmqctl health）。
+    notes: 常用 check_port_connectivity、check_virtual_hosts、observer。
+    danger: false
+    tags: [状态]
+  - name: rabbitmqctl list_queues
+    syntax: rabbitmqctl list_queues name messages consumers
+    example: rabbitmqctl list_queues -p appvhost name messages messages_ready messages_unacknowledged consumers
+    desc: 查看队列深度与消费者数。
+    notes: 积压排查核心命令；加 --formatter pretty 表格输出。
+    danger: false
+    tags: [排查]
+  - name: rabbitmqctl list_connections
+    syntax: rabbitmqctl list_connections <字段>
+    example: rabbitmqctl list_connections user peer_host state channels
+    desc: 查看客户端连接。
+    notes: 定位异常连接后用 close_connection 处理。
+    danger: false
+    tags: [排查]
+  - name: rabbitmqctl close_connection
+    syntax: rabbitmqctl close_connection <pid> <原因>
+    example: rabbitmqctl close_connection '<rabbit@node.1.2345.1>' 'force cleanup'
+    desc: 强制断开指定连接。
+    notes: pid 来自 list_connections 输出。
+    danger: high
+    tags: [排查]
+  - name: rabbitmqctl purge_queue
+    syntax: rabbitmqctl purge_queue <队列>
+    example: rabbitmqctl purge_queue -p appvhost orders.dead
+    desc: 清空队列全部消息。
+    notes: 不可恢复；确认死信/重试策略后再清。
+    danger: high
+    tags: [维护]
+  - name: rabbitmqctl add_user
+    syntax: rabbitmqctl add_user <用户> <密码>
+    example: rabbitmqctl add_user app '***'
+    desc: 创建账号。
+    notes: 改密码用 change_password；生产建议配合 TLS 与内网网段限制。
+    danger: medium
+    tags: [账号]
+  - name: rabbitmqctl set_permissions
+    syntax: rabbitmqctl set_permissions -p <vhost> <用户> <conf> <write> <read>
+    example: rabbitmqctl set_permissions -p appvhost app '.*' '.*' '.*'
+    desc: 设置用户在 vhost 上的配置/写/读权限（正则）。
+    notes: 只读消费者把 write 收紧为 '^$'。
+    danger: medium
+    tags: [账号]
+  - name: rabbitmq-plugins
+    syntax: rabbitmq-plugins enable <插件>
+    example: rabbitmq-plugins enable rabbitmq_management
+    desc: 启用插件（管理界面、 shovel、federation 等）。
+    notes: offline 启用避免运行期告警：rabbitmq-plugins enable --offline。
+    danger: medium
+    tags: [插件]
+  - name: rabbitmqctl stop_app / start_app
+    syntax: rabbitmqctl stop_app
+    example: rabbitmqctl stop_app && rabbitmqctl reset && rabbitmqctl start_app
+    desc: 停/启 RabbitMQ 应用（Erlang VM 仍在）。
+    notes: reset 会清空节点全部数据，仅重搭节点时用。
+    danger: high
+    tags: [集群]
+  - name: rabbitmqctl join_cluster
+    syntax: rabbitmqctl stop_app && rabbitmqctl join_cluster <已有节点>
+    example: rabbitmqctl stop_app && rabbitmqctl join_cluster rabbit@mq01 && rabbitmqctl start_app
+    desc: 将当前节点加入集群。
+    notes: 各节点先统一 Erlang Cookie（/var/lib/rabbitmq/.erlang.cookie）与主机名解析。
+    danger: high
+    tags: [集群]
+  - name: rabbitmqctl cluster_status
+    syntax: rabbitmqctl cluster_status
+    example: rabbitmqctl cluster_status
+    desc: 查看集群成员与分区状态。
+    notes: 出现 partition 告警按 cluster_partition_handling 策略处理。
+    danger: false
+    tags: [集群]
+  - name: rabbitmqctl set_policy
+    syntax: rabbitmqctl set_policy <名> <模式> <定义JSON> -p <vhost>
+    example: rabbitmqctl set_policy ha-all '^orders\.' '{"ha-mode":"exactly","ha-params":2,"ha-sync-mode":"automatic"}' -p appvhost
+    desc: 对匹配队列应用策略（副本数、TTL、死信、镜像等）。
+    notes: 经典队列镜像（ha-mode）已声明淘汰，3.9+ 优先仲裁队列或单副本+持久化。
+    danger: medium
+    tags: [策略]
+  - name: rabbitmqctl environment
+    syntax: rabbitmqctl environment
+    example: rabbitmqctl environment | grep -A2 memory
+    desc: 查看节点全部生效配置。
+    notes: 排查配置未生效时使用。
+    danger: false
+    tags: [排查]
+  - name: 日志查看
+    syntax: journalctl -u rabbitmq-server 或 tail /var/log/rabbitmq/*
+    example: tail -f /var/log/rabbitmq/rabbit@mq01.log
+    desc: 运行日志位置与跟踪。
+    notes: 升级后日志目录可能变化；log.file.level 可调详细度。
+    danger: false
+    tags: [日志]
+- id: conf
+  label: 配置参数
+  entries:
+  - name: listeners.tcp.default
+    default: '5672'
+    section: 网络
+    syntax: listeners.tcp.default = 5672
+    example: listeners.tcp.default = 5672
+    desc: AMQP 监听端口。
+    notes: 绑定特定地址用 listeners.tcp.1 = 192.0.2.70:5672 形式。
+    danger: medium
+    tags: [网络]
+  - name: management.tcp.port
+    default: '15672'
+    section: 管理
+    syntax: management.tcp.port = 15672
+    example: management.tcp.port = 15672
+    desc: 管理界面端口（需启用 rabbitmq_management 插件）。
+    notes: 管理界面不应暴露公网；可用 management.tcp.ip 限定地址。
+    danger: medium
+    tags: [管理]
+  - name: loopback_users
+    default: guest 仅本机
+    section: 安全
+    syntax: loopback_users.guest = false
+    example: loopback_users.guest = false
+    desc: 是否允许 guest 远程登录。
+    notes: 生产建议删掉 guest；确需放行时配合防火墙与强密码。
+    danger: high
+    tags: [安全]
+  - name: default_user / default_pass
+    default: 首次启动生成
+    section: 安全
+    syntax: default_user = app
+    example: "default_user = app\ndefault_pass = ***"
+    desc: 仅在节点首次初始化时创建的内置账号。
+    notes: 只对全新数据目录生效；事后账号一律走 rabbitmqctl。
+    danger: medium
+    tags: [安全]
+  - name: vm_memory_high_watermark
+    default: relative 0.6
+    section: 资源
+    syntax: vm_memory_high_watermark.relative = 0.6
+    example: vm_memory_high_watermark.absolute = 8GB
+    desc: 内存水位线，触发后阻塞发布者。
+    notes: relative 按识别到的总内存比例，absolute 固定值；容器环境建议 absolute。
+    danger: medium
+    tags: [资源]
+  - name: disk_free_limit
+    default: 50MB
+    section: 资源
+    syntax: disk_free_limit.absolute = 2GB
+    example: disk_free_limit.absolute = 2GB
+    desc: 磁盘下限，低于后触发告警并阻塞写入。
+    notes: 默认值过小，生产必须调大。
+    danger: medium
+    tags: [资源]
+  - name: heartbeat
+    default: '60'
+    section: 网络
+    syntax: heartbeat = 60
+    example: heartbeat = 30
+    desc: 心跳超时秒数。
+    notes: 网络不稳出现频繁断连时调整；客户端也可自行设置。
+    danger: low
+    tags: [网络]
+  - name: channel_max
+    default: '2047'
+    section: 网络
+    syntax: channel_max = 2047
+    example: channel_max = 4095
+    desc: 单连接最大信道数。
+    notes: 信道泄漏告警时先查客户端未关闭的 channel 再考虑调大。
+    danger: low
+    tags: [容量]
+  - name: max_message_size
+    default: 134217728（128MB）
+    section: 容量
+    syntax: max_message_size = 16777216
+    example: max_message_size = 16777216
+    desc: 单条消息大小上限（字节）。
+    notes: 大消息建议拆分或走对象存储+引用。
+    danger: low
+    tags: [容量]
+  - name: cluster_partition_handling
+    default: ignore
+    section: 集群
+    syntax: cluster_partition_handling = pause_minority
+    example: cluster_partition_handling = pause_minority
+    desc: 网络分区处理策略：ignore/pause_minority/pause_if_all_down。
+    notes: 多数派部署（3/5 节点）推荐 pause_minority，避免双主。
+    danger: high
+    tags: [集群]
+  - name: log.file.level
+    default: info
+    section: 日志
+    syntax: log.file.level = info
+    example: log.file.level = debug
+    desc: 文件日志级别。
+    notes: debug 只在排障期短开，量很大。
+    danger: low
+    tags: [日志]
+  - name: cluster_formation（经典静态集群）
+    default: 无
+    section: 集群
+    syntax: "cluster_formation.peer_discovery_backend = classic_config\ncluster_formation.classic_config.nodes.1 = rabbit@mq01"
+    example: "cluster_formation.peer_discovery_backend = classic_config\ncluster_formation.classic_config.nodes.1 = rabbit@mq01\ncluster_formation.classic_config.nodes.2 = rabbit@mq02\ncluster_formation.classic_config.nodes.3 = rabbit@mq03"
+    desc: 节点重启后自动重新加入集群。
+    notes: 前提是各节点 Erlang Cookie 一致且主机名可解析。
+    danger: medium
+    tags: [集群]
+  - name: RABBITMQ_NODENAME（rabbitmq-env.conf）
+    default: rabbit@主机名
+    section: 环境
+    syntax: RABBITMQ_NODENAME=rabbit@mq01
+    example: RABBITMQ_NODENAME=rabbit@mq01
+    desc: 节点命名，集群内必须唯一。
+    notes: 主机名变更前先改这里，否则元数据错乱。
+    danger: medium
+    tags: [集群]

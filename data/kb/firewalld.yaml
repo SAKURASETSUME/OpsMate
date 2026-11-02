@@ -1,0 +1,218 @@
+software: firewalld
+label: firewalld
+version_ref: firewalld（RHEL 7+ / 9.x 参考）
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://firewalld.org/documentation/man-pages/firewall-cmd.html
+- https://firewalld.org/documentation/zone/options.html
+templates:
+- name: 放行 Web/SSH 端口（命令块）
+  desc: 永久放行服务与自定义端口，最后统一 reload 生效。
+  content: |
+    # 放行标准服务
+    firewall-cmd --permanent --add-service=http
+    firewall-cmd --permanent --add-service=https
+    # 自定义端口
+    firewall-cmd --permanent --add-port=8080/tcp
+    # 限定来源网段（rich rule）
+    firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="192.0.2.0/24" port port="3306" protocol="tcp" accept'
+    # 生效（不断连接）
+    firewall-cmd --reload
+    # 核对
+    firewall-cmd --list-all
+- name: 自定义服务（/etc/firewalld/services/app.xml）
+  desc: 把应用端口沉淀为服务对象，便于按名管理。
+  content: |
+    <?xml version="1.0" encoding="utf-8"?>
+    <service>
+      <short>app</short>
+      <description>业务应用端口组</description>
+      <port protocol="tcp" port="8080"/>
+      <port protocol="tcp" port="8443"/>
+    </service>
+    # 保存后：
+    # firewall-cmd --permanent --add-service=app && firewall-cmd --reload
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: systemctl start firewalld
+    syntax: systemctl start firewalld
+    example: systemctl start firewalld && systemctl enable firewalld
+    desc: 启动并设置开机自启。
+    notes: 远程操作先放行 SSH 端口再动防火墙，防自锁。
+    danger: high
+    tags: [运行命令]
+  - name: systemctl stop firewalld
+    syntax: systemctl stop firewalld
+    example: systemctl stop firewalld
+    desc: 停止防火墙服务。
+    notes: 停止即放开全部端口；排查时可临时 mask iptables/nftables 后必须恢复。
+    danger: high
+    tags: [运行命令]
+  - name: firewall-cmd --state
+    syntax: firewall-cmd --state
+    example: firewall-cmd --state
+    desc: 查看运行状态。
+    notes: not running 说明服务未起；配合 systemctl status 看。
+    danger: false
+    tags: [状态]
+  - name: firewall-cmd --list-all
+    syntax: firewall-cmd --list-all [--zone=public]
+    example: firewall-cmd --list-all --zone=public
+    desc: 查看指定区域全部放行项（服务/端口/富规则/来源）。
+    notes: 加 --permanent 查永久配置（两者可能不一致）。
+    danger: false
+    tags: [状态]
+  - name: firewall-cmd --add-service
+    syntax: firewall-cmd --permanent --add-service=服务
+    example: firewall-cmd --permanent --add-service=https
+    desc: 按服务名放行（预定义 + /etc/firewalld/services 自定义）。
+    notes: --permanent 写盘但不即时生效，需 --reload；不加则只在运行期生效到重启。
+    danger: medium
+    tags: [放行]
+  - name: firewall-cmd --add-port
+    syntax: firewall-cmd --permanent --add-port=端口/协议
+    example: firewall-cmd --permanent --add-port=8080/tcp
+    desc: 直接按端口放行。
+    notes: 优先沉淀为 service 便于批量管理；remove-port 对应移除。
+    danger: medium
+    tags: [放行]
+  - name: firewall-cmd --remove-port
+    syntax: firewall-cmd --permanent --remove-port=端口/协议
+    example: firewall-cmd --permanent --remove-port=8080/tcp
+    desc: 移除端口放行。
+    notes: 收紧操作先在运行期试 (--runtime-to-permanent 满意后固化)。
+    danger: medium
+    tags: [放行]
+  - name: firewall-cmd --add-rich-rule
+    syntax: firewall-cmd --permanent --add-rich-rule='rule ...'
+    example: firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="192.0.2.0/24" port port="5432" protocol="tcp" accept'
+    desc: 富规则：来源+端口+动作的精细控制。
+    notes: 支持 forward-port、log、reject/accept/drop；list-rich-rules 查看。
+    danger: medium
+    tags: [放行]
+  - name: firewall-cmd --add-source
+    syntax: firewall-cmd --permanent --zone=trusted --add-source=网段
+    example: firewall-cmd --permanent --zone=trusted --add-source=192.0.2.0/24
+    desc: 把来源网段整体划入某区域。
+    notes: 内网管理网段入 trusted、其余入 public 是常见分区分法。
+    danger: high
+    tags: [区域]
+  - name: firewall-cmd --reload
+    syntax: firewall-cmd --reload
+    example: firewall-cmd --reload
+    desc: 重载永久配置到运行期（不中断现有连接）。
+    notes: 会丢弃未固化的运行期规则；完全重载用 --complete-reload。
+    danger: medium
+    tags: [维护]
+  - name: 运行期规则固化
+    syntax: firewall-cmd --runtime-to-permanent
+    example: firewall-cmd --runtime-to-permanent
+    desc: 把当前运行期规则写入永久配置。
+    notes: 先试后存的推荐工作流：运行期 add → 验证 → 固化。
+    danger: low
+    tags: [维护]
+  - name: 区域查看与默认区
+    syntax: firewall-cmd --get-zones / --get-default-zone / --set-default-zone
+    example: firewall-cmd --set-default-zone=public && firewall-cmd --get-default-zone
+    desc: 查看全部区域与设置默认区域。
+    notes: 网卡未显式绑定时进入默认区；get-active-zones 看实际映射。
+    danger: medium
+    tags: [区域]
+  - name: panic 模式
+    syntax: firewall-cmd --panic-on / --panic-off
+    example: firewall-cmd --panic-on
+    desc: 紧急断网模式（丢弃全部包）。
+    notes: 应急隔离用；恢复用 --panic-off，查询用 --query-panic。
+    danger: high
+    tags: [应急]
+  - name: 接口绑定区域
+    syntax: firewall-cmd --permanent --zone=internal --change-interface=eth1
+    example: firewall-cmd --permanent --zone=internal --change-interface=eth1
+    desc: 把网卡划入指定区域。
+    notes: 固化绑定也可写网卡 ifcfg 的 ZONE=；reload 后生效。
+    danger: medium
+    tags: [区域]
+  - name: 端口转发
+    syntax: firewall-cmd --permanent --add-forward-port=...
+    example: firewall-cmd --permanent --add-forward-port=port=80:proto=tcp:toport=8080:toaddr=192.0.2.130
+    desc: 端口/地址转发。
+    notes: 需内核转发开启（net.ipv4.ip_forward=1）；富规则 forward-port 表达力更强。
+    danger: medium
+    tags: [转发]
+- id: conf
+  label: 配置参数
+  entries:
+  - name: DefaultZone
+    default: public
+    section: firewalld.conf
+    syntax: DefaultZone=public
+    example: DefaultZone=internal
+    desc: 未绑定区域接口的默认区域。
+    notes: 改 /etc/firewalld/firewalld.conf 后 reload；接口级绑定优先于此。
+    danger: medium
+    tags: [全局]
+  - name: 区域文件（zones/*.xml）
+    default: public.xml
+    section: /etc/firewalld/zones
+    syntax: '<zone><short>..</short><service name="ssh"/><port protocol="tcp" port="8080"/></zone>'
+    example: /etc/firewalld/zones/public.xml
+    desc: 每个区域一个 XML：服务/端口/富规则/接口的持久化形态。
+    notes: 手改 XML 后 reload；推荐 firewall-cmd 管理，文件格式留作备份迁移。
+    danger: medium
+    tags: [区域]
+  - name: 自定义服务（services/*.xml）
+    default: 无
+    section: /etc/firewalld/services
+    syntax: '<service><port protocol="tcp" port="8080"/></service>'
+    example: /etc/firewalld/services/app.xml
+    desc: 把应用端口组定义为服务对象。
+    notes: 与预定义服务同名时覆盖 /usr/lib 副本；迁移机器直接拷文件。
+    danger: low
+    tags: [服务]
+  - name: CleanupOnExit
+    default: 'yes'
+    section: firewalld.conf
+    syntax: CleanupOnExit=yes
+    example: CleanupOnExit=yes
+    desc: 服务退出时是否清空防火墙规则。
+    notes: 保持 yes（退出即放开）或按合规要求评估。
+    danger: low
+    tags: [全局]
+  - name: Lockdown
+    default: 'no'
+    section: firewalld.conf
+    syntax: Lockdown=no
+    example: Lockdown=yes
+    desc: 锁定模式：仅白名单上下文可改防火墙。
+    notes: 防本地其他服务乱加规则；开启前先配置 lockdown-whitelist。
+    danger: high
+    tags: [安全]
+  - name: IndividualCalls
+    default: 'no'
+    section: firewalld.conf
+    syntax: IndividualCalls=no
+    example: IndividualCalls=yes
+    desc: 逐条而非批量下发规则（兼容性开关）。
+    notes: 老 iptables 后端异常时尝试；nftables 后端一般保持 no。
+    danger: low
+    tags: [全局]
+  - name: ipset（ipsets/*.xml）
+    default: 无
+    section: /etc/firewalld/ipsets
+    syntax: '<ipset type="hash:net"><entry>192.0.2.0/24</entry></ipset>'
+    example: firewall-cmd --permanent --new-ipset=mgmt --type=hash:net
+    desc: IP 集合对象，富规则引用。
+    notes: 大量地址时比逐条 rich-rule 高效；entry 增删可运行期操作。
+    danger: medium
+    tags: [对象]
+  - name: nftables 后端
+    default: nftables（RHEL8+）
+    section: 后端
+    syntax: FirewallBackend=nftables（/etc/firewalld/firewalld.conf）
+    example: FirewallBackend=nftables
+    desc: 规则后端选择：nftables 或 iptables。
+    notes: 与宿主上手工 iptables 规则冲突时才考虑 iptables 后端；直接看规则用 nft list ruleset。
+    danger: medium
+    tags: [后端]

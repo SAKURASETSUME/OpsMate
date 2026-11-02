@@ -1,0 +1,247 @@
+software: zookeeper
+label: ZooKeeper
+version_ref: Apache ZooKeeper 3.8（参考配置）
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://zookeeper.apache.org/doc/current/zookeeperAdmin.html
+- https://zookeeper.apache.org/doc/current/zookeeperCLI.html
+templates:
+- name: 三节点集群（zoo.cfg + myid）
+  desc: 通用 tick/数据目录/清理 + 三节点 server 列表；每台 myid 填自己的编号。
+  content: |
+    # /etc/zookeeper/conf/zoo.cfg（或 conf/zoo.cfg）
+    tickTime=2000
+    initLimit=10
+    syncLimit=5
+    dataDir=/data/zookeeper
+    clientPort=2181
+    maxClientCnxns=200
+
+    # 4lw 只放行只读命令
+    4lw.commands.whitelist=ruok,stat,srvr,mntr,conf
+
+    # 事务与快照自动清理（保留 5 个快照）
+    autopurge.snapRetainCount=5
+    autopurge.purgeInterval=24
+
+    # 集群成员（host:同步端口:选举端口）
+    server.1=192.0.2.121:2888:3888
+    server.2=192.0.2.122:2888:3888
+    server.3=192.0.2.123:2888:3888
+
+    # 每台机器执行：echo 本机编号 > /data/zookeeper/myid
+    # 例：192.0.2.121 上执行 echo 1 > /data/zookeeper/myid
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: zkServer.sh start
+    syntax: zkServer.sh start
+    example: /opt/zookeeper/bin/zkServer.sh start
+    desc: 启动 ZooKeeper。
+    notes: 包安装用 systemctl start zookeeper；先确认 myid 已写。
+    danger: medium
+    tags: [运行命令]
+  - name: zkServer.sh status
+    syntax: zkServer.sh status
+    example: /opt/zookeeper/bin/zkServer.sh status
+    desc: 查看角色（leader/follower/standalone）与端口。
+    notes: 报 "Error contacting service" 时查四字命令白名单与防火墙。
+    danger: false
+    tags: [状态]
+  - name: zkServer.sh stop
+    syntax: zkServer.sh stop
+    example: /opt/zookeeper/bin/zkServer.sh stop
+    desc: 停止服务。
+    notes: 先停依赖方（Kafka 等）再滚动停 ZK；过半节点存活集群才可用。
+    danger: high
+    tags: [运行命令]
+  - name: zkServer.sh 四字命令探活
+    syntax: echo ruok | nc 主机 2181
+    example: echo ruok | nc 192.0.2.121 2181
+    desc: 健康探针，正常回 imok。
+    notes: 3.5+ 也可用 HTTP AdminServer（:8080/commands/ruok）；四字命令默认不在白名单。
+    danger: false
+    tags: [状态]
+  - name: mntr 监控
+    syntax: echo mntr | nc 主机 2181
+    example: echo mntr | nc 192.0.2.121 2181 | egrep 'zk_avg_latency|zk_outstanding|zk_mode|zk_znode_count'
+    desc: 关键运行指标（延迟/堆积/角色/节点数）。
+    notes: Prometheus 采集用 zookeeper_exporter；kafka 3.x 内置 KRaft 可免 ZK。
+    danger: false
+    tags: [监控]
+  - name: zkCli.sh 连接
+    syntax: zkCli.sh -server 主机:2181
+    example: /opt/zookeeper/bin/zkCli.sh -server 192.0.2.121:2181
+    desc: 命令行客户端连接。
+    notes: 集群任一节点均可连；操作前确认目标 znode 路径。
+    danger: low
+    tags: [客户端]
+  - name: ls / get 查看节点
+    syntax: ls /路径 ; get /路径
+    example: ls /brokers/ids ; get /brokers/ids/0
+    desc: 列子节点 / 查看节点数据与 stat。
+    notes: get 的 stat 含版本号与 mtime；Kafka 迁移排查常用。
+    danger: false
+    tags: [客户端]
+  - name: create / set 写入
+    syntax: create /路径 数据 ; set /路径 数据
+    example: create /app/config "v1" ; set /app/config "v2"
+    desc: 创建/更新节点数据。
+    notes: set 带版本可做乐观锁：set /app/config "v3" <version>。
+    danger: medium
+    tags: [客户端]
+  - name: delete 删除节点
+    syntax: delete /路径 [版本]
+    example: delete /app/old-config
+    desc: 删除节点（有子节点会失败）。
+    notes: 级联删除用 deleteall；影响 Kafka 元数据的路径删除前先快照 dataDir。
+    danger: high
+    tags: [客户端]
+  - name: 事务日志工具
+    syntax: java -cp ... org.apache.zookeeper.server.LogFormatter
+    example: java -cp /opt/zookeeper/lib/*:/opt/zookeeper/* org.apache.zookeeper.server.LogFormatter /data/zookeeper/version-2/log.1
+    desc: 解析事务日志排查写入。
+    notes: 快照用 SnapshotFormatter；排抖动/回滚问题用。
+    danger: low
+    tags: [排查]
+  - name: 备份
+    syntax: 冷备或快照目录打包
+    example: tar czf zk-snap-$(date +%F).tgz -C /data/zookeeper version-2
+    desc: 备份快照与事务日志目录。
+    notes: 一致性备份先停节点或用 zookeeper-restart 前打包；恢复后核对 myid。
+    danger: medium
+    tags: [备份]
+- id: conf
+  label: 配置参数
+  entries:
+  - name: tickTime
+    default: '3000'
+    section: zoo.cfg
+    syntax: tickTime=2000
+    example: tickTime=2000
+    desc: 基本时间单位（毫秒），心跳与会话超时基于它。
+    notes: 常配 2000；客户端会话超时必须是 tickTime 的整数倍且在 min/max 之间。
+    danger: medium
+    tags: [核心]
+  - name: initLimit
+    default: '10'
+    section: zoo.cfg
+    syntax: initLimit=10
+    example: initLimit=10
+    desc: follower 同步 leader 的初始化时间上限（tick 数）。
+    notes: 启动期频繁掉线调大；磁盘慢也会触发。
+    danger: low
+    tags: [核心]
+  - name: syncLimit
+    default: '5'
+    section: zoo.cfg
+    syntax: syncLimit=5
+    example: syncLimit=5
+    desc: 运行期请求应答超时（tick 数），超时触发重选。
+    notes: 网络抖动频繁选举时适当调大并查网络。
+    danger: low
+    tags: [核心]
+  - name: dataDir
+    default: /tmp/zookeeper（源码默认）
+    section: zoo.cfg
+    syntax: dataDir=/data/zookeeper
+    example: dataDir=/data/zookeeper
+    desc: 快照与 myid 所在目录。
+    notes: 必须离开 /tmp；独立数据盘并做好清理策略。
+    danger: high
+    tags: [存储]
+  - name: dataLogDir
+    default: 同 dataDir
+    section: zoo.cfg
+    syntax: dataLogDir=/data/zookeeper-txn
+    example: dataLogDir=/data/zookeeper-txn
+    desc: 事务日志独立目录。
+    notes: 事务日志写盘是延迟关键，建议独立 SSD 与快照分离。
+    danger: medium
+    tags: [存储]
+  - name: clientPort
+    default: '2181'
+    section: zoo.cfg
+    syntax: clientPort=2181
+    example: clientPort=2181
+    desc: 客户端连接端口。
+    notes: 3.5+ 可绑定地址：clientPortAddress=192.0.2.121。
+    danger: medium
+    tags: [网络]
+  - name: maxClientCnxns
+    default: '60'
+    section: zoo.cfg
+    syntax: maxClientCnxns=200
+    example: maxClientCnxns=200
+    desc: 单客户端 IP 最大连接数。
+    notes: 客户端多且同 NAT 出口时需上调；0 为不限。
+    danger: low
+    tags: [容量]
+  - name: server.N 集群成员
+    default: 无
+    section: zoo.cfg
+    syntax: server.1=主机:2888:3888
+    example: 'server.1=192.0.2.121:2888:3888
+
+      server.2=192.0.2.122:2888:3888
+
+      server.3=192.0.2.123:2888:3888'
+    desc: 集群成员列表：编号=IP:同步口:选举口。
+    notes: 全部节点一致；编号必须与各机 dataDir/myid 对应，改拓扑需逐台滚动。
+    danger: high
+    tags: [集群]
+  - name: myid
+    default: 无
+    section: dataDir/myid
+    syntax: echo 编号 > 数据目录/myid
+    example: echo 1 > /data/zookeeper/myid
+    desc: 本机在集群中的编号文件。
+    notes: 与 server.N 的 N 对应；集群异常第一检查项。
+    danger: high
+    tags: [集群]
+  - name: autopurge.purgeInterval
+    default: '0（关闭）'
+    section: zoo.cfg
+    syntax: autopurge.purgeInterval=24
+    example: autopurge.purgeInterval=24
+    desc: 自动清理间隔（小时），0 为不清理。
+    notes: 必须配置，否则事务日志无限增长撑爆磁盘。
+    danger: medium
+    tags: [维护]
+  - name: autopurge.snapRetainCount
+    default: '3'
+    section: zoo.cfg
+    syntax: autopurge.snapRetainCount=5
+    example: autopurge.snapRetainCount=5
+    desc: 清理后保留的快照数。
+    notes: 保留数至少 3；配合备份策略评估。
+    danger: low
+    tags: [维护]
+  - name: 4lw.commands.whitelist
+    default: 空（全禁）
+    section: zoo.cfg
+    syntax: 4lw.commands.whitelist=ruok,stat,srvr,mntr,conf
+    example: 4lw.commands.whitelist=ruok,stat,srvr,mntr,conf
+    desc: 四字命令白名单。
+    notes: 只放行只读命令；* 全放行有安全与打爆风险。
+    danger: medium
+    tags: [安全]
+  - name: admin.enableServer
+    default: 'true（3.5+）'
+    section: zoo.cfg
+    syntax: admin.enableServer=false
+    example: admin.enableServer=false
+    desc: 内置 HTTP AdminServer（8080/commands）。
+    notes: 与业务端口冲突或不需要时关闭；暴露面最小化。
+    danger: medium
+    tags: [安全]
+  - name: JVM 堆（zookeeper-env.sh / java.env）
+    default: 包安装默认较小
+    section: 环境
+    syntax: SERVER_JVMFLAGS="-Xms4g -Xmx4g"
+    example: SERVER_JVMFLAGS="-Xms4g -Xmx4g"
+    desc: 服务端 JVM 堆参数。
+    notes: 大量 znode 时默认堆会 OOM；停顿影响会话超时，配 GC 日志观察。
+    danger: medium
+    tags: [JVM]

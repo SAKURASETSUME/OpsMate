@@ -1,0 +1,255 @@
+software: tomcat
+label: Tomcat
+version_ref: Apache Tomcat 9/10（参考配置）
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://tomcat.apache.org/tomcat-9.0-doc/config/http.html
+- https://tomcat.apache.org/tomcat-9.0-doc/config/connectors.html
+- https://tomcat.apache.org/tomcat-9.0-doc/security-howto.html
+templates:
+- name: 生产 Connector 段（server.xml）
+  desc: HTTP/1.1 NIO 连接器：线程池、压缩、超时；AJP 按需绑定内网。
+  content: |
+    <Executor name="tomcatThreadPool" namePrefix="catalina-exec-"
+              maxThreads="500" minSpareThreads="25"/>
+
+    <Connector executor="tomcatThreadPool"
+               port="8080" protocol="org.apache.coyote.http11.Http11NioProtocol"
+               connectionTimeout="20000"
+               maxConnections="10000" acceptCount="200"
+               maxParameterCount="2000"
+               compression="on" compressibleMimeType="text/html,text/xml,text/plain,text/css,application/json"
+               URIEncoding="UTF-8"/>
+
+    <!-- 反代场景才开 AJP，必须绑定内网并带 secret -->
+    <Connector protocol="AJP/1.3"
+               address="192.0.2.110" port="8009"
+               secretRequired="true" secret="***"
+               maxPostSize="10485760"/>
+- name: JVM 基线（setenv.sh）
+  desc: 独立 setenv.sh 管理 JVM 参数：堆、元空间、GC 日志与 OOM 处置。
+  content: |
+    #!/bin/sh
+    CATALINA_OPTS="$CATALINA_OPTS -Xms4g -Xmx4g"
+    CATALINA_OPTS="$CATALINA_OPTS -XX:MaxMetaspaceSize=512m"
+    CATALINA_OPTS="$CATALINA_OPTS -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data/app/dumps"
+    CATALINA_OPTS="$CATALINA_OPTS -Xlog:gc*:file=/data/app/logs/gc.log:time,uptime:filecount=5,filesize=20m"
+    export CATALINA_OPTS
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: startup.sh
+    syntax: $CATALINA_HOME/bin/startup.sh
+    example: /opt/tomcat/bin/startup.sh
+    desc: 后台启动 Tomcat。
+    notes: 日志在 logs/catalina.out；启动慢看 GC 与部署应用数量。
+    danger: medium
+    tags: [运行命令]
+  - name: shutdown.sh
+    syntax: $CATALINA_HOME/bin/shutdown.sh
+    example: /opt/tomcat/bin/shutdown.sh 30 -force
+    desc: 优雅停止（默认等 5s，可指定超时后强杀）。
+    notes: 端口被占/线程未退导致停不干净时 -force；先查应用挂钩子。
+    danger: high
+    tags: [运行命令]
+  - name: catalina.sh run
+    syntax: catalina.sh run
+    example: /opt/tomcat/bin/catalina.sh run
+    desc: 前台运行，便于 systemd Type=simple 或临时排障。
+    notes: systemd 托管推荐前台方式，输出直接进 journal。
+    danger: low
+    tags: [运行命令]
+  - name: catalina.sh configtest? （无原生）
+    syntax: 无原生 configtest；用启动日志校验
+    example: /opt/tomcat/bin/catalina.sh configtest 2>/dev/null || echo "Tomcat 无内建 configtest，以启动日志为准"
+    desc: Tomcat 无独立配置校验命令，语法错误在启动时报错。
+    notes: 改 server.xml 后先在低峰重启验证；也可用版本对应 schema 工具。
+    danger: low
+    tags: [维护]
+  - name: systemd 托管
+    syntax: 自建 tomcat.service（ExecStart=catalina.sh run）
+    example: systemctl start tomcat-app
+    desc: 用 systemd 统一启停与开机自启。
+    notes: User=tomcat + Restart=on-failure；环境变量写进 setenv.sh。
+    danger: medium
+    tags: [运行命令]
+  - name: 日志查看
+    syntax: tail -f logs/catalina.out
+    example: tail -f /opt/tomcat/logs/catalina.out
+    desc: 标准输出与启动日志。
+    notes: 滚动日志在 logs/catalina.yyyy-MM-dd.log；慢请求看 localhost_access_log。
+    danger: false
+    tags: [日志]
+  - name: 线程转储
+    syntax: jstack <pid>
+    example: jstack $(pgrep -f catalina) > /tmp/tomcat-jstack.txt
+    desc: 线程转储排查线程池打满/死锁。
+    notes: 卡死时 jstack -F；配合 jstat -gcutil 看 GC。
+    danger: low
+    tags: [排查]
+  - name: 堆转储
+    syntax: jmap -dump:live,format=b,file=文件 <pid>
+    example: jmap -dump:live,format=b,file=/data/app/dumps/heap.hprof $(pgrep -f catalina)
+    desc: 手工堆转储（OOM 自动转储见 setenv.sh）。
+    notes: live 会触发 full GC，生产低峰做；文件与堆等大注意磁盘。
+    danger: medium
+    tags: [排查]
+  - name: 部署应用
+    syntax: 拷贝 war 到 webapps/ 或 manager 部署
+    example: cp app.war /opt/tomcat/webapps/ && tail -f /opt/tomcat/logs/catalina.out
+    desc: war 自动解压部署（autoDeploy）。
+    notes: 生产建议 appBase 指向独立目录并关 autoDeploy，用版本目录+Context 显式指定。
+    danger: medium
+    tags: [部署]
+  - name: manager 管理接口
+    syntax: curl -u 用户:密码 "http://主机:8080/manager/text/..."（需配置角色）
+    example: curl -s -u deploy:*** "http://192.0.2.110:8080/manager/text/list"
+    desc: Manager 应用文本接口（list/reload/undeploy）。
+    notes: 必须先在 conf/tomcat-users.xml 配 manager-script 角色并限定来源。
+    danger: high
+    tags: [部署]
+  - name: keytool 生成证书
+    syntax: keytool -genkeypair -alias 名 -keyalg RSA -keystore 文件
+    example: keytool -genkeypair -alias tomcat -keyalg RSA -keysize 2048 -keystore /etc/tomcat/keystore.jks -validity 3650
+    desc: 生成 HTTPS 自签/PKI 证书库。
+    notes: 正式证书导入用 -importcert；Connector 引用 keystoreFile。
+    danger: low
+    tags: [安全]
+- id: conf
+  label: 配置参数
+  entries:
+  - name: Connector port
+    default: '8080'
+    section: server.xml/Connector
+    syntax: port="8080"
+    example: port="8080"
+    desc: HTTP 连接器端口。
+    notes: 反代场景保持 8080 由 Nginx/HAProxy 做 443 终结。
+    danger: medium
+    tags: [连接器]
+  - name: Connector protocol
+    default: HTTP/1.1（自动 NIO）
+    section: server.xml/Connector
+    syntax: protocol="org.apache.coyote.http11.Http11NioProtocol"
+    example: protocol="org.apache.coyote.http11.Http11NioProtocol"
+    desc: 显式使用 NIO 连接器。
+    notes: 高并发建议 NIO 或 APR/native；BIO 已移除。
+    danger: low
+    tags: [连接器]
+  - name: Executor maxThreads
+    default: '200'
+    section: server.xml/Executor
+    syntax: maxThreads="500"
+    example: maxThreads="500"
+    desc: 工作线程池上限。
+    notes: CPU 密集型不宜过大；观察 jstack 中 catalina-exec 线程忙闲比例调整。
+    danger: medium
+    tags: [线程池]
+  - name: connectionTimeout
+    default: '20000'
+    section: server.xml/Connector
+    syntax: connectionTimeout="20000"
+    example: connectionTimeout="20000"
+    desc: 连接建立后等待请求的超时（毫秒）。
+    notes: 慢速攻击/连接堆积时收紧；0 为无限（危险）。
+    danger: low
+    tags: [连接器]
+  - name: maxConnections / acceptCount
+    default: 8192 / 100
+    section: server.xml/Connector
+    syntax: 'maxConnections="10000"
+
+      acceptCount="200"'
+    example: 'maxConnections="10000"
+
+      acceptCount="200"'
+    desc: 最大连接数与 accept 队列长度。
+    notes: 队列满后新连接被拒；与内核 somaxconn 一起评估。
+    danger: medium
+    tags: [连接器]
+  - name: compression
+    default: 'off'
+    section: server.xml/Connector
+    syntax: compression="on"
+    example: compression="on"
+    desc: 响应 gzip 压缩。
+    notes: 已有外层反代压缩时可关；文本接口收益大。
+    danger: low
+    tags: [性能]
+  - name: AJP Connector
+    default: 注释状态
+    section: server.xml/Connector
+    syntax: '<Connector protocol="AJP/1.3" address="192.0.2.110" port="8009" secretRequired="true" secret="***"/>'
+    example: '<Connector protocol="AJP/1.3" address="192.0.2.110" port="8009" secretRequired="true" secret="***"/>'
+    desc: AJP 反代连接器。
+    notes: Ghostcat 漏洞后默认必配 address+secretRequired；无反代需求保持注释。
+    danger: high
+    tags: [安全]
+  - name: Host autoDeploy / unpackWARs
+    default: 均为 true
+    section: server.xml/Host
+    syntax: 'autoDeploy="false"
+
+      unpackWARs="true"'
+    example: 'autoDeploy="false"
+
+      unpackWARs="true"'
+    desc: 自动部署与 war 解包开关。
+    notes: 生产关 autoDeploy 防热部署误触发；deployXML 同理收紧。
+    danger: medium
+    tags: [部署]
+  - name: Host appBase
+    default: webapps
+    section: server.xml/Host
+    syntax: appBase="/data/app/webapps"
+    example: appBase="/data/app/webapps"
+    desc: 应用部署根目录（相对 CATALINA_BASE）。
+    notes: 移出安装目录便于升级；目录属主为运行用户。
+    danger: medium
+    tags: [部署]
+  - name: AccessLogValve
+    default: 有（localhost_access_log）
+    section: server.xml/Valve
+    syntax: '<Valve className="org.apache.catalina.valves.AccessLogValve" directory="logs" prefix="access" suffix=".log" pattern="%h %l %u %t &quot;%r&quot; %s %b %D" />'
+    example: pattern 含 %D（耗时毫秒）与 %I（线程名）
+    desc: 访问日志与输出格式。
+    notes: "%D 是接口耗时分析关键；配 fileDateFormat 与 rotatable 做切割。"
+    danger: low
+    tags: [日志]
+  - name: JAVA_OPTS / CATALINA_OPTS（setenv.sh）
+    default: 无（内置默认堆）
+    section: 环境
+    syntax: CATALINA_OPTS="$CATALINA_OPTS -Xms4g -Xmx4g"
+    example: CATALINA_OPTS="$CATALINA_OPTS -Xms4g -Xmx4g -XX:MaxMetaspaceSize=512m"
+    desc: JVM 参数，统一放 bin/setenv.sh 管理。
+    notes: Xms=Xmx 防堆抖动；OOM 时 HeapDumpOnOutOfMemoryError 必开。
+    danger: medium
+    tags: [JVM]
+  - name: tomcat-users.xml 角色
+    default: 全注释
+    section: 安全
+    syntax: '<user username="deploy" password="***" roles="manager-script"/>'
+    example: '<user username="deploy" password="***" roles="manager-script"/>'
+    desc: Manager 管理账号。
+    notes: 配合 Context 的 RemoteAddrValve 限定管理来源网段。
+    danger: high
+    tags: [安全]
+  - name: RemoteAddrValve
+    default: 无
+    section: server.xml/Valve
+    syntax: '<Valve className="org.apache.catalina.valves.RemoteAddrValve" allow="192\.0\.2\..*" />'
+    example: '<Valve className="org.apache.catalina.valves.RemoteAddrValve" allow="192\.0\.2\..*" />'
+    desc: 按来源地址放行/拒绝（正则）。
+    notes: 常用于 manager/host-manager 与管理后台保护。
+    danger: medium
+    tags: [安全]
+  - name: session 持久化关闭
+    default: StandardManager 持久化
+    section: conf/context.xml
+    syntax: <Manager pathname="" />
+    example: <Manager pathname="" />
+    desc: 关闭重启时的 SESSIONS.ser 持久化。
+    notes: 集群会话走外部（Redis 等）时本地序列化无意义且拖慢启停。
+    danger: low
+    tags: [性能]

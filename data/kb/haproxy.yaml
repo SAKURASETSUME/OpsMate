@@ -1,0 +1,286 @@
+software: haproxy
+label: HAProxy
+version_ref: HAProxy 2.6+（参考配置）
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://docs.haproxy.org/2.6/configuration.html
+- https://www.haproxy.com/documentation/hapee/latest/observability/runtime-api/
+templates:
+- name: 七层 HTTP 反代 + 健康检查 + stats（haproxy.cfg）
+  desc: defaults 超时基线 + 前端 VIP + 两组后端轮询探活 + 统计页；按业务改域名与后端列表。
+  content: |
+    global
+        log         127.0.0.1 local2 info
+        maxconn     20000
+        user        haproxy
+        group       haproxy
+        stats socket /var/lib/haproxy/stats mode 660 level admin
+
+    defaults
+        mode        http
+        log         global
+        option      httplog
+        option      http-keep-alive
+        option      forwardfor
+        timeout connect 5s
+        timeout client  60s
+        timeout server  60s
+        timeout http-keep-alive 15s
+
+    frontend web-vip
+        bind *:80
+        # 跳 https 或直接服务
+        default_backend app_pool
+
+    backend app_pool
+        balance roundrobin
+        option httpchk GET /healthz HTTP/1.1\r\nHost:\ example.local
+        server app1 192.0.2.101:8080 check inter 3s fall 3 rise 2
+        server app2 192.0.2.102:8080 check inter 3s fall 3 rise 2
+
+    listen stats
+        mode http
+        bind 192.0.2.100:8404
+        stats enable
+        stats uri /stats
+        stats auth admin:***
+- name: 四层 TCP 代理（MySQL 读负载）
+  desc: mode tcp + 源地址透传说明；写走主库、读走此池。
+  content: |
+    defaults
+        mode tcp
+        timeout connect 5s
+        timeout client  30m
+        timeout server  30m
+
+    listen mysql_read
+        bind *:3307
+        balance leastconn
+        # MySQL 探活需账号；简化用 tcp 探端口
+        server db1 192.0.2.51:3306 check inter 5s fall 3 rise 2
+        server db2 192.0.2.52:3306 check inter 5s fall 3 rise 2
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: systemctl start haproxy
+    syntax: systemctl start haproxy
+    example: systemctl start haproxy
+    desc: 启动 HAProxy。
+    notes: 配置错误会启动失败，先 haproxy -c 校验。
+    danger: medium
+    tags: [运行命令]
+  - name: 配置校验
+    syntax: haproxy -c -f /etc/haproxy/haproxy.cfg
+    example: haproxy -c -f /etc/haproxy/haproxy.cfg
+    desc: 语法与指令校验，reload 前必跑。
+    notes: 返回 "Configuration file is valid" 才可继续。
+    danger: false
+    tags: [维护]
+  - name: 无损重载
+    syntax: systemctl reload haproxy
+    example: systemctl reload haproxy
+    desc: master-worker 模式无缝重载配置。
+    notes: 前提 global 含 master-worker（包安装默认）；保留旧进程 drain 存量连接。
+    danger: medium
+    tags: [维护]
+  - name: 运行时状态
+    syntax: echo "show info" | socat stdio /var/lib/haproxy/stats
+    example: echo "show info" | socat stdio /var/lib/haproxy/stats | head -20
+    desc: 通过运行时 socket 查看进程概况。
+    notes: socket 路径与 global stats socket 一致；无 socat 可用 nc -U。
+    danger: false
+    tags: [状态]
+  - name: 后端健康状态
+    syntax: echo "show stat" | socat stdio .../stats
+    example: echo "show stat" | socat stdio /var/lib/haproxy/stats | cut -d, -f1,2,18,19,24 | column -t
+    desc: 查看全部后端 server 的状态与进出流量。
+    notes: 第 18 列 status（UP/DOWN/MAINT）、57 列 check status。
+    danger: false
+    tags: [状态]
+  - name: 摘除后端
+    syntax: echo "set server 池/节点 state maint" | socat ...
+    example: echo "set server app_pool/app1 state maint" | socat stdio /var/lib/haproxy/stats
+    desc: 把节点置维护态，平滑摘除流量。
+    notes: 维护完恢复 state ready；发布滚动重启的标准动作。
+    danger: high
+    tags: [维护]
+  - name: 恢复后端
+    syntax: echo "set server 池/节点 state ready" | socat ...
+    example: echo "set server app_pool/app1 state ready" | socat stdio /var/lib/haproxy/stats
+    desc: 恢复节点承接流量。
+    notes: 恢复后观察 rise 次探活转 UP。
+    danger: medium
+    tags: [维护]
+  - name: 版本与特性
+    syntax: haproxy -vv
+    example: haproxy -vv | head -15
+    desc: 查看版本、构建特性（OpenSSL/多线程等）。
+    notes: 排查特性不支持（如某些 balance 算法）时确认。
+    danger: false
+    tags: [状态]
+  - name: 前台调试
+    syntax: haproxy -f 配置 -db
+    example: haproxy -f /etc/haproxy/haproxy.cfg -db -V
+    desc: 前台运行并输出调试信息。
+    notes: 只在临时排障用；-db 不进后台。
+    danger: low
+    tags: [排查]
+- id: conf
+  label: 配置参数
+  entries:
+  - name: global.maxconn
+    default: 无默认（按版本）
+    section: global
+    syntax: maxconn 20000
+    example: maxconn 20000
+    desc: 进程级最大并发连接。
+    notes: 与 ulimit -n、后端承受力一起评估；超限连接进队列或拒绝。
+    danger: medium
+    tags: [容量]
+  - name: global.stats socket
+    default: 无
+    section: global
+    syntax: stats socket /var/lib/haproxy/stats mode 660 level admin
+    example: stats socket /var/lib/haproxy/stats mode 660 level admin
+    desc: 运行时管理 socket，供 socat/编排使用。
+    notes: level admin 才允许 set server 等写操作；目录权限收紧。
+    danger: medium
+    tags: [管理]
+  - name: global.log
+    default: 无
+    section: global
+    syntax: log 127.0.0.1 local2 info
+    example: log 127.0.0.1 local2 warning
+    desc: syslog 目标与级别。
+    notes: 配合 rsyslog $ModLoad imudp 分流到 /var/log/haproxy.log。
+    danger: low
+    tags: [日志]
+  - name: defaults.mode
+    default: tcp
+    section: defaults
+    syntax: mode http
+    example: mode http
+    desc: 代理模式 http 或 tcp。
+    notes: 四层（数据库/Redis）用 tcp；Web 用 http 才有 cookie/头部能力。
+    danger: medium
+    tags: [核心]
+  - name: defaults 超时组
+    default: 无（必须显式）
+    section: defaults
+    syntax: 'timeout connect 5s
+
+      timeout client 60s
+
+      timeout server 60s'
+    example: 'timeout connect 5s
+
+      timeout client 60s
+
+      timeout server 60s'
+    desc: 连接/客户端/服务端超时。
+    notes: 缺失会告警；长连接（DB/WS）按场景放宽 server/client。
+    danger: medium
+    tags: [核心]
+  - name: frontend.bind
+    default: 无
+    section: frontend
+    syntax: bind *:80
+    example: 'bind 192.0.2.100:443 ssl crt /etc/haproxy/certs/site.pem'
+    desc: 监听地址端口，ssl 可直接终结 TLS。
+    notes: 证书用 cat cert+key 合成 pem；多证书 bind 多段。
+    danger: medium
+    tags: [核心]
+  - name: frontend.default_backend
+    default: 无
+    section: frontend
+    syntax: default_backend app_pool
+    example: default_backend app_pool
+    desc: 默认转发后端。
+    notes: 未匹配任何 use_backend/acl 时生效。
+    danger: low
+    tags: [核心]
+  - name: acl + use_backend
+    default: 无
+    section: frontend
+    syntax: acl 主机 hdr(host) -i 域名
+    example: "acl is_api path_beg /api\nuse_backend api_pool if is_api"
+    desc: 按域名/路径等条件分流。
+    notes: 变体众多（hdr/host/path_beg/hdr_reg）；顺序即优先级。
+    danger: medium
+    tags: [路由]
+  - name: backend.balance
+    default: roundrobin
+    section: backend
+    syntax: balance roundrobin
+    example: balance leastconn
+    desc: 负载算法：roundrobin/leastconn/source/static-rr 等。
+    notes: 长连接服务选 leastconn 更均匀；需会话保持用 cookie 或 stick-table。
+    danger: low
+    tags: [负载]
+  - name: backend server 行
+    default: 无
+    section: backend
+    syntax: server 名 地址:端口 check inter 3s fall 3 rise 2
+    example: server app1 192.0.2.101:8080 check inter 3s fall 3 rise 2 weight 100
+    desc: 后端节点定义与健康检查参数。
+    notes: fall 连续失败判定 DOWN、rise 恢复判定 UP；backup 标记备份节点。
+    danger: medium
+    tags: [负载]
+  - name: option httpchk
+    default: tcp 探活
+    section: backend
+    syntax: option httpchk GET /healthz
+    example: option httpchk GET /healthz HTTP/1.1\r\nHost:\ example.local
+    desc: HTTP 应用层健康检查。
+    notes: expect status 200 可限定成功码；接口要轻量。
+    danger: low
+    tags: [负载]
+  - name: cookie 会话保持
+    default: 无
+    section: backend
+    syntax: cookie SRV insert indirect nocache + server 行 cookie 名
+    example: "cookie SRV insert indirect nocache\nserver app1 192.0.2.101:8080 check cookie app1"
+    desc: 插入 cookie 把用户固定到同一后端。
+    notes: 后端重启时配合动态 cookie 或重新分发。
+    danger: low
+    tags: [负载]
+  - name: option forwardfor
+    default: 无
+    section: defaults
+    syntax: option forwardfor
+    example: option forwardfor
+    desc: 添加 X-Forwarded-For 透传客户端真实 IP。
+    notes: 后端日志取该头部；多级代理注意 header 追加语义。
+    danger: low
+    tags: [路由]
+  - name: listen stats
+    default: 无
+    section: listen
+    syntax: 'listen stats
+
+      bind *:8404
+
+      stats enable'
+    example: 'listen stats
+
+      bind 192.0.2.100:8404
+
+      stats enable
+
+      stats uri /stats
+
+      stats auth admin:***'
+    desc: 内置统计页。
+    notes: 绑内网地址并设密码；也可 stats socket 导出给 Prometheus（haproxy_exporter）。
+    danger: medium
+    tags: [管理]
+  - name: master-worker
+    default: 包安装默认启用
+    section: global
+    syntax: master-worker
+    example: master-worker
+    desc: 主工作进程模型，支持无缝 reload。
+    notes: systemd 单元需 Type=notify；自编译确认含该特性。
+    danger: low
+    tags: [核心]

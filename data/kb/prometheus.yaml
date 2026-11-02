@@ -1,0 +1,331 @@
+software: prometheus
+label: Prometheus
+version_ref: Prometheus 2.x（参考配置）
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://prometheus.io/docs/prometheus/latest/configuration/configuration/
+- https://prometheus.io/docs/prometheus/latest/command-line/promtool/
+- https://prometheus.io/docs/alerting/latest/configuration/
+templates:
+- name: 基线配置（prometheus.yml）
+  desc: 抓取间隔 + 自身与 node_exporter 作业 + 规则文件 + Alertmanager 对接。
+  content: |
+    global:
+      scrape_interval: 30s
+      scrape_timeout: 10s
+      evaluation_interval: 30s
+      external_labels:
+        env: prod
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['192.0.2.90:9093']
+
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ['localhost:9090']
+      - job_name: node
+        static_configs:
+          - targets:
+              - '192.0.2.90:9100'
+              - '192.0.2.91:9100'
+            labels:
+              group: infra
+      - job_name: mysql
+        static_configs:
+          - targets: ['192.0.2.50:9104']
+- name: 告警规则示例（rules/host.yml）
+  desc: 主机存活/CPU/磁盘/内存四条基础告警，for 控制抖动。
+  content: |
+    groups:
+      - name: host-basic
+        rules:
+          - alert: InstanceDown
+            expr: up == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "{{ $labels.instance }} 抓取失败"
+          - alert: HighCPU
+            expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.instance }} CPU 使用率超 85%"
+          - alert: DiskWillFill
+            expr: predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs"}[1h], 4*3600) < 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.instance }} {{ $labels.mountpoint }} 预计 4 小时内写满"
+          - alert: MemoryHigh
+            expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.instance }} 内存使用率超 90%"
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: systemctl start prometheus
+    syntax: systemctl start prometheus
+    example: systemctl start prometheus
+    desc: 启动 Prometheus 服务。
+    notes: 官方二进制部署需自写 unit；容器部署另走编排。
+    danger: medium
+    tags: [运行命令]
+  - name: 配置校验
+    syntax: promtool check config prometheus.yml
+    example: promtool check config /etc/prometheus/prometheus.yml
+    desc: 校验主配置与其中引用的规则文件。
+    notes: 改配置必跑；规则单测用 promtool test rules。
+    danger: false
+    tags: [维护]
+  - name: 规则校验
+    syntax: promtool check rules 规则文件
+    example: promtool check rules /etc/prometheus/rules/*.yml
+    desc: 单独校验告警/记录规则语法。
+    notes: 表达式引用不存在的指标也会通过，需在 UI 验证。
+    danger: false
+    tags: [维护]
+  - name: 热重载
+    syntax: kill -HUP <pid> 或 curl -X POST .../-/reload
+    example: curl -s -X POST http://127.0.0.1:9090/-/reload
+    desc: 重载配置（需 --web.enable-lifecycle 启动参数）。
+    notes: 不中断抓取；校验失败时保持旧配置。
+    danger: low
+    tags: [维护]
+  - name: 指定参数启动
+    syntax: prometheus --config.file --storage.tsdb.path ...
+    example: prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/data/prometheus --storage.tsdb.retention.time=30d --web.enable-lifecycle
+    desc: 常用启动参数组合。
+    notes: retention 也可用 --storage.tsdb.retention.size 按容量控制。
+    danger: medium
+    tags: [运行命令]
+  - name: 就绪/健康探针
+    syntax: curl localhost:9090/-/ready
+    example: curl -s localhost:9090/-/ready && curl -s localhost:9090/-/healthy
+    desc: 启动完成与健康探针。
+    notes: ready 表示 WAL 回放完成可服务；启动脚本用它等待。
+    danger: false
+    tags: [状态]
+  - name: 目标状态查询
+    syntax: curl localhost:9090/api/v1/targets
+    example: "curl -s localhost:9090/api/v1/targets | python -m json.tool | grep -A2 '\"health\": \"down\"'"
+    desc: 查看全部抓取目标健康与错误原因。
+    notes: up==0 与 Targets 页面同源；排抓取失败第一站。
+    danger: false
+    tags: [排查]
+  - name: TSDB 状态
+    syntax: curl localhost:9090/api/v1/status/tsdb
+    example: curl -s localhost:9090/api/v1/status/tsdb
+    desc: 查看头块/压缩与保留占用。
+    notes: 内存异常增长时结合 Go runtime 指标看。
+    danger: false
+    tags: [排查]
+  - name: 运行时配置查询
+    syntax: curl localhost:9090/api/v1/status/config
+    example: curl -s localhost:9090/api/v1/status/config
+    desc: 查看当前生效的完整配置。
+    notes: 确认热重载是否生效。
+    danger: false
+    tags: [排查]
+  - name: 快速备份
+    syntax: snapshot 相关（需 --web.enable-admin-api）
+    example: curl -s -XPOST localhost:9090/api/v1/admin/tsdb/snapshot
+    desc: 生成 TSDB 快照目录，用于停机前备份。
+    notes: 快照目录在 data/snapshots/ 下；常规备份直接停机拷 storage 目录亦可。
+    danger: medium
+    tags: [备份]
+  - name: amtool（Alertmanager）
+    syntax: amtool <子命令>
+    example: amtool --alertmanager.url=http://192.0.2.90:9093 alert query
+    desc: Alertmanager 命令行工具。
+    notes: 校验 amtool check-config；静默规则用 amtool silence add。
+    danger: low
+    tags: [告警]
+- id: conf
+  label: 配置参数
+  entries:
+  - name: global.scrape_interval
+    default: 1m
+    section: global
+    syntax: "scrape_interval: 30s"
+    example: "scrape_interval: 15s"
+    desc: 全局抓取间隔。
+    notes: 越短存储与负载越高；单作业可在 job 级覆盖。
+    danger: low
+    tags: [global]
+  - name: global.evaluation_interval
+    default: 1m
+    section: global
+    syntax: "evaluation_interval: 30s"
+    example: "evaluation_interval: 30s"
+    desc: 告警规则求值间隔。
+    notes: 与 for 时长配合决定告警时延。
+    danger: low
+    tags: [global]
+  - name: global.scrape_timeout
+    default: 10s
+    section: global
+    syntax: "scrape_timeout: 10s"
+    example: "scrape_timeout: 5s"
+    desc: 单次抓取超时。
+    notes: 必须小于 scrape_interval。
+    danger: low
+    tags: [global]
+  - name: rule_files
+    default: 无
+    section: 顶层
+    syntax: 'rule_files:
+
+      - /etc/prometheus/rules/*.yml'
+    example: 'rule_files:
+
+      - /etc/prometheus/rules/*.yml'
+    desc: 告警/记录规则文件列表（支持通配）。
+    notes: 热重载即生效；文件由 promtool check rules 把关。
+    danger: medium
+    tags: [规则]
+  - name: alerting.alertmanagers
+    default: 无
+    section: 顶层
+    syntax: 'alerting:
+
+      alertmanagers:
+
+      - static_configs:
+
+        - targets: [''192.0.2.90:9093'']'
+    example: 'alerting:
+
+      alertmanagers:
+
+        - static_configs:
+
+            - targets: [''192.0.2.90:9093'']'
+    desc: 告警推送目标 Alertmanager 列表。
+    notes: Alertmanager 负责分组/去重/路由，Prometheus 只生产告警。
+    danger: medium
+    tags: [告警]
+  - name: scrape_configs
+    default: 无
+    section: 顶层
+    syntax: 'scrape_configs:
+
+      - job_name: node'
+    example: scrape_configs 由 job 组成
+    desc: 抓取作业列表。
+    notes: 每个 job 至少 job_name + 一种服务发现（static/file/sd 等）。
+    danger: medium
+    tags: [抓取]
+  - name: job_name
+    default: 必填
+    section: scrape_configs
+    syntax: "job_name: node"
+    example: "job_name: mysql"
+    desc: 作业名，成为 target 的 job 标签。
+    notes: 全局唯一；改名会导致历史序列断裂，规划好再上线。
+    danger: medium
+    tags: [抓取]
+  - name: static_configs
+    default: 无
+    section: scrape_configs
+    syntax: 'static_configs:
+
+      - targets: [''192.0.2.90:9100'']'
+    example: 'static_configs:
+
+      - targets: [''192.0.2.90:9100'', ''192.0.2.91:9100'']
+
+        labels:
+
+          group: infra'
+    desc: 静态目标与附加标签。
+    notes: 机器多时改用 file_sd_configs（json/yaml 文件）免重载。
+    danger: low
+    tags: [抓取]
+  - name: basic_auth（抓取认证）
+    default: 无
+    section: scrape_configs
+    syntax: 'basic_auth:
+
+      username: exporter
+
+      password: ***'
+    example: 'basic_auth:
+
+      username: exporter
+
+      password_file: /etc/prometheus/exporter.pass'
+    desc: 抓取需要认证的 exporter。
+    notes: 密码用 password_file 引用文件，避免明文进配置。
+    danger: low
+    tags: [安全]
+  - name: honor_labels
+    default: 'false'
+    section: scrape_configs
+    syntax: "honor_labels: true"
+    example: "honor_labels: true"
+    desc: 保留指标自带标签不被 job/instance 覆盖。
+    notes: 联邦集群与多环境标签冲突场景使用。
+    danger: low
+    tags: [抓取]
+  - name: relabel_configs
+    default: 无
+    section: scrape_configs
+    syntax: relabel_configs 由 replace/keep/drop 动作组成
+    example: 'relabel_configs:
+
+      - source_labels: [__address__]
+
+        regex: ''([^:]+):.*''
+
+        target_label: host
+
+        replacement: ''$1'''
+    desc: 抓取前重写目标标签。
+    notes: 高频用于把 __address__ 拆出主机名/端口标签。
+    danger: medium
+    tags: [抓取]
+  - name: remote_write
+    default: 无
+    section: 顶层
+    syntax: 'remote_write:
+
+      - url: http://远端/api/v1/write'
+    example: 'remote_write:
+
+      - url: http://192.0.2.95:9090/api/v1/write'
+    desc: 样本远端写入（长期存储/中心集群）。
+    notes: 本地保留短期 + 远端长期是常见组合；注意队列与背压参数。
+    danger: medium
+    tags: [存储]
+  - name: storage.tsdb.retention.time（启动参数）
+    default: 15d
+    section: 启动参数
+    syntax: --storage.tsdb.retention.time=30d
+    example: --storage.tsdb.retention.time=90d
+    desc: 本地数据保留时长。
+    notes: 保留越久磁盘越大；配 retention.size 双保险。
+    danger: medium
+    tags: [存储]
+  - name: web.enable-lifecycle（启动参数）
+    default: 关闭
+    section: 启动参数
+    syntax: --web.enable-lifecycle
+    example: --web.enable-lifecycle
+    desc: 开启 /-/reload 热重载端点。
+    notes: 仅内网开放；公网暴露会被任意触发重载。
+    danger: medium
+    tags: [安全]

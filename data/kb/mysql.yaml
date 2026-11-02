@@ -1,0 +1,489 @@
+software: mysql
+label: MySQL
+version_ref: MySQL 8.0（8.0.x 社区版参考）
+generated: AI 整理，使用前请核对官方文档
+sources:
+- https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html
+- https://dev.mysql.com/doc/refman/8.0/en/replication-options-gtids.html
+- https://dev.mysql.com/doc/refman/8.0/en/mysqldump.html
+templates:
+- name: 生产单机基线（my.cnf [mysqld]）
+  desc: 内网绑定 + utf8mb4 + InnoDB 缓冲池与双一持久化 + 慢日志 + binlog(GTID)；容量按机器内存调整。
+  content: |
+    [mysqld]
+    # 网络
+    port        = 3306
+    bind-address = 192.0.2.50
+    skip_name_resolve = ON
+    max_connections = 1000
+    max_connect_errors = 100000
+    max_allowed_packet = 64M
+    wait_timeout = 600
+    interactive_timeout = 600
+
+    # 字符集
+    character-set-server = utf8mb4
+    collation-server = utf8mb4_0900_ai_ci
+
+    # InnoDB
+    innodb_buffer_pool_size = 8G
+    innodb_redo_log_capacity = 1G
+    innodb_flush_log_at_trx_commit = 1
+    innodb_flush_method = O_DIRECT
+    innodb_file_per_table = ON
+
+    # binlog 与 GTID
+    server_id = 1
+    log_bin = mysql-bin
+    binlog_expire_logs_seconds = 604800
+    binlog_format = ROW
+    gtid_mode = ON
+    enforce_gtid_consistency = ON
+    sync_binlog = 1
+
+    # 日志
+    log_error = /var/log/mysql/error.log
+    slow_query_log = ON
+    slow_query_log_file = /var/log/mysql/slow.log
+    long_query_time = 1
+    log_queries_not_using_indexes = OFF
+
+    [client]
+    default-character-set = utf8mb4
+- name: 从库只读要点（追加到 [mysqld]）
+  desc: 复制环境从库加只读与 relay 设置；故障切换时再放开。
+  content: |
+    # 追加到从库 [mysqld]
+    read_only = ON
+    super_read_only = ON
+    relay_log = relay-bin
+    relay_log_recovery = ON
+    # 8.0.22+ 推荐 GTID 自动定位：
+    # CHANGE REPLICATION SOURCE TO
+    #   SOURCE_HOST='192.0.2.51', SOURCE_USER='repl', SOURCE_PASSWORD='...',
+    #   SOURCE_AUTO_POSITION=1;
+    # START REPLICA;
+categories:
+- id: cli
+  label: 启停与运行命令
+  entries:
+  - name: systemctl start mysqld
+    syntax: systemctl start mysqld
+    example: systemctl start mysqld
+    desc: 启动 MySQL 服务（RPM 安装服务名 mysqld / mysql）。
+    notes: 首次启动后用 grep 'temporary password' /var/log/mysqld.log 找初始密码。
+    danger: medium
+    tags: [运行命令]
+  - name: systemctl stop mysqld
+    syntax: systemctl stop mysqld
+    example: systemctl stop mysqld
+    desc: 停止 MySQL 服务。
+    notes: 先确认无长事务与大写入；主从环境注意复制延迟。
+    danger: high
+    tags: [运行命令]
+  - name: systemctl restart mysqld
+    syntax: systemctl restart mysqld
+    example: systemctl restart mysqld
+    desc: 重启服务，使 my.cnf 修改生效。
+    notes: 有缓冲池预热过程，重启后短时间内性能偏低属正常。
+    danger: high
+    tags: [运行命令]
+  - name: mysql 登录
+    syntax: mysql -h 主机 -P 端口 -u 用户 -p
+    example: mysql -h 192.0.2.50 -P 3306 -u admin -p
+    desc: 客户端登录；-p 后不接密码避免进 shell 历史。
+    notes: 本机 socket 登录可省 -h；忘记密码走 --skip-grant-tables 单机恢复流程。
+    danger: low
+    tags: [连接]
+  - name: mysqladmin 状态
+    syntax: mysqladmin -u 用户 -p status
+    example: mysqladmin -u admin -p status
+    desc: 查看 uptime/threads/questions 等概要状态。
+    notes: 监控采集常用；详细指标用 SHOW GLOBAL STATUS。
+    danger: false
+    tags: [状态]
+  - name: SHOW PROCESSLIST
+    syntax: mysql -e "SHOW PROCESSLIST"
+    example: mysql -e "SHOW FULL PROCESSLIST"
+    desc: 查看当前连接与正在执行的语句。
+    notes: 排查锁等待与慢查询入口；Command 为 Sleep 的是空闲连接。
+    danger: false
+    tags: [排查]
+  - name: KILL 会话
+    syntax: mysql -e "KILL <id>"
+    example: mysql -e "KILL 12345"
+    desc: 按 PROCESSLIST 中的 Id 终止会话/查询。
+    notes: 只 KILL 查询用 KILL QUERY <id>；误杀复制线程会导致复制中断。
+    danger: high
+    tags: [排查]
+  - name: SHOW ENGINE INNODB STATUS
+    syntax: mysql -e "SHOW ENGINE INNODB STATUS\G"
+    example: mysql -e "SHOW ENGINE INNODB STATUS\G"
+    desc: 查看 InnoDB 死锁、锁等待、缓冲池与 redo 概况。
+    notes: 死锁信息只保留最近一次；配合 PERFORMANCE_SCHEMA 深挖。
+    danger: false
+    tags: [排查]
+  - name: mysqldump 单库备份
+    syntax: mysqldump -u 用户 -p --single-transaction 库名 > 库名.sql
+    example: mysqldump -u admin -p --single-transaction --triggers --routines appdb > appdb_$(date +%F).sql
+    desc: InnoDB 单库一致性逻辑备份。
+    notes: --single-transaction 避免锁表；大库物理备份首选 XtraBackup/Clone 插件。
+    danger: low
+    tags: [备份]
+  - name: mysqldump 全库备份
+    syntax: mysqldump -u 用户 -p --all-databases --single-transaction > all.sql
+    example: mysqldump -u root -p --all-databases --single-transaction --master-data=2 > all_$(date +%F).sql
+    desc: 全库逻辑备份，含建库语句。
+    notes: --master-data=2 会注释记录 binlog 位点，便于搭从库。
+    danger: low
+    tags: [备份]
+  - name: 备份恢复
+    syntax: mysql -u 用户 -p 库名 < 备份.sql
+    example: mysql -u admin -p appdb < appdb_2026-01-01.sql
+    desc: 逻辑备份导入恢复。
+    notes: 恢复前先停应用写入；大文件加 --force 会跳错需人工核对。
+    danger: high
+    tags: [备份]
+  - name: PURGE BINARY LOGS
+    syntax: mysql -e "PURGE BINARY LOGS BEFORE '时间'"
+    example: mysql -e "PURGE BINARY LOGS BEFORE NOW() - INTERVAL 7 DAY"
+    desc: 手工清理过期 binlog 释放磁盘。
+    notes: 常规用 binlog_expire_logs_seconds 自动清理；先确认从库已消费。
+    danger: high
+    tags: [维护]
+  - name: FLUSH LOGS
+    syntax: mysql -e "FLUSH LOGS"
+    example: mysql -e "FLUSH BINARY LOGS"
+    desc: 滚动新开 binlog/错误日志文件。
+    notes: 日志切割脚本配合使用。
+    danger: low
+    tags: [维护]
+  - name: 创建用户授权
+    syntax: mysql -e "CREATE USER ...; GRANT ... ON 库.表 TO 用户"
+    example: mysql -e "CREATE USER 'app'@'192.0.2.%' IDENTIFIED BY '***'; GRANT SELECT,INSERT,UPDATE,DELETE ON appdb.* TO 'app'@'192.0.2.%'"
+    desc: 建账号并按最小权限授权。
+    notes: 8.0 默认认证 caching_sha2_password，老驱动不兼容可改 mysql_native_password。
+    danger: medium
+    tags: [账号]
+  - name: 改密码
+    syntax: mysql -e "ALTER USER '用户'@'主机' IDENTIFIED BY '新密码'"
+    example: mysql -e "ALTER USER 'app'@'192.0.2.%' IDENTIFIED BY 'NewPass#2026'"
+    desc: 修改账号密码。
+    notes: 同步更新应用连接串；密码复杂度受 validate_password 组件约束。
+    danger: medium
+    tags: [账号]
+  - name: SHOW REPLICA STATUS
+    syntax: mysql -e "SHOW REPLICA STATUS\G"
+    example: mysql -e "SHOW REPLICA STATUS\G"
+    desc: 查看从库复制线程与延迟（8.0.22+ 名称，旧版 SHOW SLAVE STATUS）。
+    notes: 关注 Replica_IO_Running/Replica_SQL_Running/Seconds_Behind_Source 与 Last_Error。
+    danger: false
+    tags: [复制]
+  - name: 停止/启动复制
+    syntax: mysql -e "STOP REPLICA"
+    example: mysql -e "STOP REPLICA; START REPLICA"
+    desc: 停止或恢复从库复制线程。
+    notes: 排查错误或切换时使用；STOP 后位点保留在 relay-log.info。
+    danger: medium
+    tags: [复制]
+  - name: 重置复制位点
+    syntax: mysql -e "RESET REPLICA ALL"
+    example: mysql -e "RESET REPLICA ALL"
+    desc: 清空复制配置与位点，重新搭建前使用。
+    notes: 会丢弃 relay log 与位点信息，确认不再需要后再执行。
+    danger: high
+    tags: [复制]
+  - name: ANALYZE TABLE
+    syntax: mysql -e "ANALYZE TABLE 表名"
+    example: mysql -e "ANALYZE TABLE appdb.orders"
+    desc: 重新采样统计信息，修正执行计划。
+    notes: 大表 ANALYZE 非阻塞；统计偏差导致慢查询时优先尝试。
+    danger: low
+    tags: [维护]
+  - name: OPTIMIZE TABLE
+    syntax: mysql -e "OPTIMIZE TABLE 表名"
+    example: mysql -e "OPTIMIZE TABLE appdb.orders"
+    desc: 重建表空间回收碎片（InnoDB 内部等价重建）。
+    notes: 在线 DDL 但有 IO 压力，建议低峰执行。
+    danger: medium
+    tags: [维护]
+  - name: mysqlbinlog 解析
+    syntax: mysqlbinlog --base64-output=decode-rows -vv binlog文件
+    example: mysqlbinlog --base64-output=decode-rows -vv mysql-bin.000123 | less
+    desc: 查看 binlog 明文（ROW 格式需解码）。
+    notes: 恢复到某时间点：先定位起止 binlog/POS 或 GTID 再管道导入。
+    danger: low
+    tags: [排查]
+- id: conf
+  label: 配置参数
+  entries:
+  - name: port
+    default: '3306'
+    section: mysqld
+    syntax: port = 3306
+    example: port = 3307
+    desc: 服务监听端口。
+    notes: 多实例区分端口；改动需重启。
+    danger: medium
+    tags: [网络]
+  - name: bind-address
+    default: '*'
+    section: mysqld
+    syntax: bind-address = 0.0.0.0
+    example: bind-address = 192.0.2.50
+    desc: 监听地址，* 表示全部接口。
+    notes: 生产绑定内网地址；配合账号 host 限制与防火墙。
+    danger: medium
+    tags: [网络]
+  - name: datadir
+    default: /var/lib/mysql
+    section: mysqld
+    syntax: datadir = /var/lib/mysql
+    example: datadir = /data/mysql
+    desc: 数据目录位置。
+    notes: 迁移需停机并同步调整权限与 SELinux 上下文。
+    danger: high
+    tags: [存储]
+  - name: max_connections
+    default: '151'
+    section: mysqld
+    syntax: max_connections = 1000
+    example: max_connections = 1000
+    desc: 最大并发连接数。
+    notes: 过大会放大内存占用，配合 thread_cache_size 与连接池评估。
+    danger: medium
+    tags: [容量]
+  - name: max_connect_errors
+    default: '100'
+    section: mysqld
+    syntax: max_connect_errors = 100000
+    example: max_connect_errors = 100000
+    desc: 同一主机连续握手失败上限，超过封禁。
+    notes: 探活频繁失败会触发 Host blocked；用 FLUSH HOSTS/ mysqladmin flush-hosts 解封。
+    danger: low
+    tags: [安全]
+  - name: innodb_buffer_pool_size
+    default: 128M
+    section: mysqld
+    syntax: innodb_buffer_pool_size = 8G
+    example: innodb_buffer_pool_size = 8G
+    desc: InnoDB 缓冲池，最核心的性能参数。
+    notes: 专用 DB 机器常配物理内存的 50%~70%；在线可调（SET GLOBAL）。
+    danger: medium
+    tags: [性能]
+  - name: innodb_redo_log_capacity
+    default: 104857600（8.0.30+）
+    section: mysqld
+    syntax: innodb_redo_log_capacity = 1G
+    example: innodb_redo_log_capacity = 2G
+    desc: redo log 总容量（8.0.30 取代 innodb_log_file_size 体系）。
+    notes: 写密集场景调大减少 checkpoint 频率；支持 SET GLOBAL 动态调整。
+    danger: medium
+    tags: [性能]
+  - name: innodb_flush_log_at_trx_commit
+    default: '1'
+    section: mysqld
+    syntax: innodb_flush_log_at_trx_commit = 1
+    example: innodb_flush_log_at_trx_commit = 2
+    desc: redo 刷盘策略：1 每事务刷盘，2 交 OS，0 每秒。
+    notes: 与 sync_binlog 合称"双一"；金融级保持 1，可容忍少量丢失可调 2 换性能。
+    danger: medium
+    tags: [可靠性]
+  - name: sync_binlog
+    default: '1'
+    section: mysqld
+    syntax: sync_binlog = 1
+    example: sync_binlog = 100
+    desc: 每多少次 binlog 提交落盘一次。
+    notes: 1 最安全；0/100 性能更好但宕机丢 binlog 风险上升。
+    danger: medium
+    tags: [可靠性]
+  - name: innodb_flush_method
+    default: fsync
+    section: mysqld
+    syntax: innodb_flush_method = O_DIRECT
+    example: innodb_flush_method = O_DIRECT
+    desc: 刷盘方式，O_DIRECT 绕过 OS 缓存避免双缓冲。
+    notes: Linux 配 RAID 卡带 BBU 时收益明显；改动需重启。
+    danger: medium
+    tags: [性能]
+  - name: character-set-server
+    default: utf8mb4（8.0）
+    section: mysqld
+    syntax: character-set-server = utf8mb4
+    example: character-set-server = utf8mb4
+    desc: 服务端默认字符集。
+    notes: 8.0 起默认 utf8mb4；旧库迁移注意表级字符集与排序规则。
+    danger: low
+    tags: [字符集]
+  - name: max_allowed_packet
+    default: 64M（8.0）
+    section: mysqld
+    syntax: max_allowed_packet = 64M
+    example: max_allowed_packet = 128M
+    desc: 单包上限，影响大字段与批量插入。
+    notes: 客户端与服务端需同时调大；报 Packet too large 时处理。
+    danger: low
+    tags: [容量]
+  - name: wait_timeout
+    default: '28800'
+    section: mysqld
+    syntax: wait_timeout = 600
+    example: wait_timeout = 600
+    desc: 空闲连接超时秒数。
+    notes: 生产建议收紧防止连接堆积；应用侧确认有连接池保活。
+    danger: low
+    tags: [连接]
+  - name: skip_name_resolve
+    default: OFF
+    section: mysqld
+    syntax: skip_name_resolve = ON
+    example: skip_name_resolve = ON
+    desc: 关闭连接时反向 DNS 解析。
+    notes: 开启后账号 host 只能用 IP/网段；减少握手延迟与解析失败风险。
+    danger: medium
+    tags: [网络]
+  - name: log_bin
+    default: ON（8.0 默认开）
+    section: mysqld
+    syntax: log_bin = mysql-bin
+    example: log_bin = mysql-bin
+    desc: 开启 binlog，复制与时间点恢复的前提。
+    notes: 8.0 默认开启；注意磁盘占用与 expire 策略。
+    danger: low
+    tags: [复制]
+  - name: server_id
+    default: '1'
+    section: mysqld
+    syntax: server_id = 1
+    example: server_id = 101
+    desc: 复制拓扑内唯一实例标识。
+    notes: 主从必须不同；常见习惯用内网 IP 尾段。
+    danger: medium
+    tags: [复制]
+  - name: gtid_mode
+    default: OFF
+    section: mysqld
+    syntax: gtid_mode = ON
+    example: gtid_mode = ON
+    desc: 开启 GTID 事务标识，简化复制与故障切换。
+    notes: 需与 enforce_gtid_consistency 同开；只在低峰一次性切换。
+    danger: medium
+    tags: [复制]
+  - name: binlog_expire_logs_seconds
+    default: '2592000'
+    section: mysqld
+    syntax: binlog_expire_logs_seconds = 604800
+    example: binlog_expire_logs_seconds = 604800
+    desc: binlog 自动保留时长（秒），默认 30 天。
+    notes: 取代 8.0 前的 expire_logs_days；容量规划时按峰值写入估算。
+    danger: medium
+    tags: [复制]
+  - name: binlog_format
+    default: ROW
+    section: mysqld
+    syntax: binlog_format = ROW
+    example: binlog_format = ROW
+    desc: binlog 记录格式，8.0 仅支持 ROW。
+    notes: 旧版本 STATEMENT/ROW 选择已退出历史；ROW 对数据一致性最安全。
+    danger: low
+    tags: [复制]
+  - name: read_only
+    default: OFF
+    section: mysqld
+    syntax: read_only = ON
+    example: read_only = ON
+    desc: 只读模式，从库防误写。
+    notes: 配合 super_read_only=ON 才能拦住有 SUPER 权限的账号。
+    danger: medium
+    tags: [复制]
+  - name: super_read_only
+    default: OFF
+    section: mysqld
+    syntax: super_read_only = ON
+    example: super_read_only = ON
+    desc: 连 SUPER 权限账号也禁止写入。
+    notes: 从库标准配置；切换为主库时需同时放开两个参数。
+    danger: medium
+    tags: [复制]
+  - name: log_error
+    default: /var/log/mysqld.log（RPM）
+    section: mysqld
+    syntax: log_error = /var/log/mysql/error.log
+    example: log_error = /var/log/mysql/error.log
+    desc: 错误日志路径。
+    notes: 启动失败先看这里；log_error_verbosity=3 可加大信息量。
+    danger: low
+    tags: [日志]
+  - name: slow_query_log
+    default: OFF
+    section: mysqld
+    syntax: slow_query_log = ON
+    example: slow_query_log = ON
+    desc: 开启慢查询日志。
+    notes: 配合 long_query_time 与 pt-query-digest 分析。
+    danger: low
+    tags: [日志]
+  - name: long_query_time
+    default: '10'
+    section: mysqld
+    syntax: long_query_time = 1
+    example: long_query_time = 0.5
+    desc: 慢查询阈值秒数。
+    notes: 精细化排查可临时调 0 并限制时长，避免日志爆炸。
+    danger: low
+    tags: [日志]
+  - name: log_queries_not_using_indexes
+    default: OFF
+    section: mysqld
+    syntax: log_queries_not_using_indexes = ON
+    example: log_queries_not_using_indexes = ON
+    desc: 未走索引的 SQL 也记入慢日志。
+    notes: 噪音较大，通常排查期短开。
+    danger: low
+    tags: [日志]
+  - name: tmp_table_size
+    default: 16777216
+    section: mysqld
+    syntax: tmp_table_size = 64M
+    example: tmp_table_size = 64M
+    desc: 内存临时表上限，超限落盘。
+    notes: 与 max_heap_table_size 取较小者生效；排序/去重多的库关注 Using temporary。
+    danger: low
+    tags: [性能]
+  - name: table_open_cache
+    default: '4000'
+    section: mysqld
+    syntax: table_open_cache = 8000
+    example: table_open_cache = 8000
+    desc: 表缓存句柄数。
+    notes: Opened_tables 增长过快时调大。
+    danger: low
+    tags: [性能]
+  - name: open_files_limit
+    default: '5000（随 systemd 版本）'
+    section: mysqld
+    syntax: open_files_limit = 65535
+    example: open_files_limit = 65535
+    desc: 进程文件句柄上限。
+    notes: systemd 管理时以 LimitNOFILE 为准（systemd unit drop-in）。
+    danger: low
+    tags: [容量]
+  - name: sql_mode
+    default: 8.0 严格模式集合
+    section: mysqld
+    syntax: sql_mode = STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION
+    example: sql_mode = STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION
+    desc: SQL 语法与校验行为集合。
+    notes: 5.7 迁 8.0 常见差异点之一；不要为了兼容旧数据随手关 ONLY_FULL_GROUP_BY。
+    danger: medium
+    tags: [兼容]
+  - name: lower_case_table_names
+    default: '0（Linux）'
+    section: mysqld
+    syntax: lower_case_table_names = 1
+    example: lower_case_table_names = 1
+    desc: 表名大小写处理：0 区分、1 不区分（存小写）。
+    notes: 8.0 只允许在初始化数据目录时设置，之后不可改。
+    danger: high
+    tags: [兼容]

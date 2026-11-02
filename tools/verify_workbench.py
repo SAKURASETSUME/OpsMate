@@ -14,14 +14,20 @@ from app.agent.tools import TOOL_DESCRIPTIONS, execute_tool
 from app.kb.service import get_kb
 from app.server import create_app
 
-KB_QUOTA = {"keepalived": (8, 30), "kafka": (10, 30), "redis": (10, 30), "docker": (15, 25)}
+KB_QUOTA = {"keepalived": (8, 30), "kafka": (10, 30), "redis": (10, 30), "docker": (15, 25),
+            "mysql": (15, 20), "postgresql": (12, 18), "rabbitmq": (10, 10),
+            "elasticsearch": (10, 12), "prometheus": (7, 10), "haproxy": (6, 10),
+            "tomcat": (8, 10), "zookeeper": (7, 10), "firewalld": (10, 6)}
+SOFTWARES = {"nginx", "zabbix", "keepalived", "kafka", "redis", "docker",
+             "mysql", "postgresql", "rabbitmq", "elasticsearch", "prometheus",
+             "haproxy", "tomcat", "zookeeper", "firewalld"}
 
 
 def check_kb_contract() -> None:
-    """/api/kb 六软件达标 + 新 YAML 契约 + cli/conf 严格隔离。"""
+    """/api/kb 十五软件达标 + 新 YAML 契约 + cli/conf 严格隔离。"""
     kb = get_kb()
     items = {row["software"]: row for row in kb.summary()}
-    assert set(items) == {"nginx", "zabbix", "keepalived", "kafka", "redis", "docker"}, items.keys()
+    assert set(items) == SOFTWARES, items.keys()
     for software, (need_cli, need_conf) in KB_QUOTA.items():
         assert items[software]["cli_count"] >= need_cli, software
         assert items[software]["conf_count"] >= need_conf, software

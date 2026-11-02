@@ -1272,3 +1272,15 @@
 ### Phase 状态
 
 **完成，随 `feat(assistant): 对话自动滚底与流式跟随` 提交。Phase 9 仍待用户确认后开工。**
+
+### 追加（同日）：知识库扩至 15 软件（用户需求：多拉运维常用配置；内网环境 SSH 对接方向明确排除）
+
+- **新增 9 软件 kb YAML**：mysql（20 cli/29 conf）、postgresql（16/23）、rabbitmq（15/13）、elasticsearch（14/17）、prometheus（11/16）、haproxy（8/15）、tomcat（10/14）、zookeeper（10/15）、firewalld（15/8）；含 13 个生产模板（my.cnf 基线、pg_hba.conf、ES 三节点集群、prometheus 告警规则、haproxy 七层/四层、tomcat setenv.sh、zoo.cfg 三节点、firewalld rich-rule 命令块等）。合计 15 软件、239 cli + 471 conf + 24 模板，全部满足契约（name 唯一、danger 四档、conf 必带 section、cli 必带 example、cli/conf 两 category 不混排）。
+- **数据事故与修复**：elasticsearch/prometheus/tomcat 三文件初版含 YAML 非法写法（plain scalar 带 `键: 值` 冒号空格、`%` 起头、`notes:`缺空格），kb 加载器按契约**静默跳过坏文件**导致软件列表缺 2；修复后全量校验通过——决策：保持"坏文件跳过不打崩服务"的既有行为（理由：单文件数据损坏不应拖垮整个配置速查页），本次靠校验脚本发现。
+- **验收更新**：verify_workbench 软件集合断言从 6 扩至 15（含新软件 cli/conf 配额下限）；施工文档 §2/§9 验收口径与 AGENTS.md 目录说明同步改为"15 软件"。
+- 决策：方向调整记录——用户确认内网机器 SSH 属绕行不可行，"环境对接"路线搁置，知识广度优先（理由：用户环境约束）。
+- 验证：kb 契约/计数/重复名/danger/section/example 全查通过；11 组关键词搜索（含中文"慢查询/内存"）全部命中；verify_workbench/tools/assistant 回归绿。
+
+### Phase 状态
+
+**完成，随 `feat(kb): 知识库扩充至 15 个常用运维软件` 提交。Phase 9 仍待用户确认后开工。**

@@ -32,7 +32,7 @@
 | # | 模块 | 一句话验收 |
 |---|------|-----------|
 | 1 | **指令速查** | 本地离线检索 600+ 条中文 Linux 命令文档（数据源 = github.com/jaywcjlove/linux-command） |
-| 2 | **配置速查** | nginx / zabbix / keepalived / kafka / redis / docker 六软件的"启停命令"与"配置参数"严格分 Tab 展示，支持搜索；"我的配置"工坊支持上传/编辑/格式校验/正则效果预览，可显式共享给智能体引用 |
+| 2 | **配置速查** | 15 软件（nginx / zabbix / keepalived / kafka / redis / docker + mysql / postgresql / rabbitmq / elasticsearch / prometheus / haproxy / tomcat / zookeeper / firewalld）的"启停命令"与"配置参数"严格分 Tab 展示，支持搜索；"我的配置"工坊支持上传/编辑/格式校验/正则效果预览，可显式共享给智能体引用 |
 | 3 | **脚本工坊** | 智能体循环（ReAct）：模型自主检索命令库/配置库/脚本历史后生成带完整中文注释的 bash 脚本 + 右侧逐段解读与工具轨迹卡片（解读绝不混入脚本本体） |
 | 4 | **日志中心** | 上传/粘贴日志 → level 着色、关键词/正则/level 过滤、统计、导出（对标 mclo.gs 的核心体验，本地化） |
 | 5 | **日志 AI 分析** | L1 规则引擎免费提炼"问题日志"并聚类；L2 诊断智能体调用过滤/统计/上下文工具下钻日志，产出"假设-证据-建议"根因报告 |
@@ -453,7 +453,7 @@ CREATE TABLE IF NOT EXISTS user_configs (
 
 ### Phase 9 · 打磨与打包
 **做**：全局 UI 走查（空态/loading/错误态文案中文）；`pyinstaller --noconsole --name OpsMate --add-data "app;app" --add-data "data/commands;data/commands" --add-data "data/kb;data/kb" main.py`（Windows 下 `--add-data` 分隔符为分号 `;`，以附录 A 第 6 条为准——本文档及 AGENTS.md 早期写法中的冒号一律以分号为准）（**全量知识数据必须打进包**：`data/commands/` 与 `data/kb/` 随 exe 发布，保证双击即有全量数据，不要求用户跑任何导入脚本；`data/config.json`（含用户 API key）与 `opsmate.db` **不打包**，由 `app/config.py` 在 frozen 态首启动时于 exe 旁 `data/` 自动创建，并把包内 commands/kb 拷贝落地一次，运行期始终读写 exe 旁副本）；README.md（功能简介、首次配置模型 key 指引、数据目录说明、常见问题：WebView2 缺失/端口占用/编码）；图标（可选，无素材则跳过并记录）。
-**验收**：`dist/OpsMate/OpsMate.exe` 双击启动，功能抽测（搜索一个命令、看一个配置 Tab、校验一份用户配置、生成一个脚本需真 key、上传一份日志并过滤、问运维助手一个问题需真 key）；exe 旁生成 data/ 且重启数据仍在；首次启动自动落地全量知识数据（commands ≥600、kb 六软件齐全），无需任何手动导入；README 存在且含模型配置章节；PHASE_LOG.md 覆盖全部 Phase。
+**验收**：`dist/OpsMate/OpsMate.exe` 双击启动，功能抽测（搜索一个命令、看一个配置 Tab、校验一份用户配置、生成一个脚本需真 key、上传一份日志并过滤、问运维助手一个问题需真 key）；exe 旁生成 data/ 且重启数据仍在；首次启动自动落地全量知识数据（commands ≥600、kb 15 软件齐全），无需任何手动导入；README 存在且含模型配置章节；PHASE_LOG.md 覆盖全部 Phase。
 
 ---
 
@@ -596,7 +596,7 @@ user 模板：日志材料组装（§8 Phase 6）+ 可选 `重点关注：{focus
 
 - [ ] 桌面窗口打开，六模块导航可用，暗色主题
 - [ ] 指令速查：600+ 命令离线可搜可看
-- [ ] 配置速查：六软件（nginx/zabbix/keepalived/kafka/redis/docker）启停与配置严格分 Tab，可搜索，危险项有标记；"我的配置"工坊可上传/编辑/校验（YAML 行号报错、括号配对）/正则预览；显式共享后智能体可读、关闭即失效
+- [ ] 配置速查：15 软件启停与配置严格分 Tab，可搜索，危险项有标记；"我的配置"工坊可上传/编辑/校验（YAML 行号报错、括号配对）/正则预览；显式共享后智能体可读、关闭即失效
 - [ ] 脚本工坊：含糊需求会追问；工具轨迹卡片可见（或降级提示"直接生成"）；成稿脚本注释全、无解读混入；右侧解读/风险/用法齐全；历史可回看且可被检索复用
 - [ ] 日志中心：上传/粘贴、level 着色、组合过滤、导出带行号、正则测试组件可用
 - [ ] AI 分析：L1 聚类免费可用；L2 抽屉先展示下钻步骤再流式报告、证据带行号、可回看
