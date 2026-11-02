@@ -62,13 +62,15 @@ function showToast(message, type = "ok") {
 
 /* ============ hash 路由与应用骨架 ============ */
 
-/** 左侧边栏 6 个导航项（契约 §7，顺序固定；运维助手 Phase 8 落地） */
+/** 左侧边栏 8 个导航项（核心六模块 + 版本管理/便签，顺序固定） */
 const NAV_ITEMS = [
   { hash: "#/commands",  page: "commands",  label: "指令速查" },
   { hash: "#/kb",        page: "kb",        label: "配置速查" },
   { hash: "#/codegen",   page: "codegen",   label: "脚本工坊" },
   { hash: "#/logs",      page: "logs",      label: "日志中心" },
   { hash: "#/assistant", page: "assistant", label: "运维助手" },
+  { hash: "#/versions",  page: "versions",  label: "版本管理" },
+  { hash: "#/notes",     page: "notes",     label: "便签" },
   { hash: "#/settings",  page: "settings",  label: "设置" },
 ];
 
@@ -79,6 +81,8 @@ const PLACEHOLDER = {
   codegen: "脚本工坊：自然语言生成带中文注释的 bash 脚本",
   logs: "日志中心：上传 / 粘贴日志，过滤、着色、统计、导出与 AI 分析",
   assistant: "运维助手：基于本地知识库的问答智能体",
+  versions: "版本管理：记录包名、版本、描述与上传日期",
+  notes: "便签：待办事项与完成勾选",
   settings: "设置：配置大模型接入",
 };
 
@@ -251,12 +255,23 @@ const App = {
       asstDraftFiles: [], asstDragOver: false,
       asstWorkspaceDirs: [], asstWsInput: "", asstWsEditing: false, asstWsBusy: false,
       asstEffort: "low",
+      verItems: [], verLoading: false, verBusy: false, verEditingId: null,
+      verForm: { package: "", version: "", description: "", release_date: "" },
+      verQuery: "", verSearchTimer: null, pendingDeleteVerId: null,
+      noteItems: [], noteLoading: false, noteBusy: false, noteInput: "", noteFilter: "all",
+      pendingDeleteNoteId: null,
       analysisThinking: "",
       paneWidths: { commands: 320, wb: 300, asst: 260, codegen: 0.5, side: 200 },
       themePref: "auto",
     };
   },
   computed: {
+    filteredNotes() {
+      if (this.noteFilter === "open") return this.noteItems.filter((n) => n.done !== 1);
+      if (this.noteFilter === "done") return this.noteItems.filter((n) => n.done === 1);
+      return this.noteItems;
+    },
+    openNoteCount() { return this.noteItems.filter((n) => n.done !== 1).length; },
     codegenPhaseText() {
       if (this.codegenPhase === "direct") return "直接生成模式：未走工具检索，模型正在写脚本…";
       if (this.codegenPhase === "final") return "资料检索完成，正在生成最终脚本…";
@@ -307,6 +322,8 @@ const App = {
       if (nextPage === "settings" && !this.settingsLoaded) this.loadSettings();
       if (nextPage === "codegen") this.loadCodegenHistory();
       if (nextPage === "assistant" && !this.asstSessions.length) { this.loadAsstSessions(); this.loadAsstWorkspace(); }
+      if (nextPage === "versions" && !this.verItems.length) this.loadVersions();
+      if (nextPage === "notes" && !this.noteItems.length) this.loadNotes();
     },
   },
   methods: {
@@ -794,6 +811,90 @@ const App = {
       finally { this.wbBusy = false; }
     },
     /* ============ 主题与可拖拽分割条 ============ */
+    /* ============ 版本管理 ============ */
+    async loadVersions() {
+      this.verLoading = true;
+      try {
+        const params = this.verQuery.trim() ? "?q=" + encodeURIComponent(this.verQuery.trim()) : "";
+        this.verItems = (await apiFetch("/api/versions" + params)).items;
+      } catch (err) { /* 统一提示 */ }
+      finally { this.verLoading = false; }
+    },
+    queueVerSearch() {
+      clearTimeout(this.verSearchTimer);
+      this.verSearchTimer = setTimeout(() => this.loadVersions(), 300);
+    },
+    resetVerForm() {
+      this.verEditingId = null;
+      this.verForm = { package: "", version: "", description: "", release_date: "" };
+    },
+    editVersion(item) {
+      this.verEditingId = item.id;
+      this.verForm = { package: item.package, version: item.version,
+        description: item.description || "", release_date: item.release_date || "" };
+    },
+    async submitVersion() {
+      if (this.verBusy) return;
+      this.verBusy = true;
+      try {
+        const creating = this.verEditingId === null;
+        await apiFetch("/api/versions" + (creating ? "" : "/" + this.verEditingId), {
+          method: creating ? "POST" : "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(this.verForm) });
+        showToast(creating ? "版本记录已添加" : "版本记录已更新");
+        this.resetVerForm();
+        await this.loadVersions();
+      } catch (err) { /* apiFetch 统一提示 */ }
+      finally { this.verBusy = false; }
+    },
+    async deleteVersion(item) {
+      if (this.verBusy) return;
+      try {
+        await apiFetch("/api/versions/" + item.id, { method: "DELETE" });
+        this.pendingDeleteVerId = null;
+        showToast("版本记录已删除");
+        if (this.verEditingId === item.id) this.resetVerForm();
+        await this.loadVersions();
+      } catch (err) { /* 统一提示 */ }
+    },
+    /* ============ 便签待办 ============ */
+    async loadNotes() {
+      this.noteLoading = true;
+      try { this.noteItems = (await apiFetch("/api/notes")).items; }
+      catch (err) { /* 统一提示 */ }
+      finally { this.noteLoading = false; }
+    },
+    async addNote() {
+      const text = this.noteInput.trim();
+      if (!text || this.noteBusy) return;
+      this.noteBusy = true;
+      try {
+        await apiFetch("/api/notes", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: text }) });
+        this.noteInput = "";
+        await this.loadNotes();
+      } catch (err) { /* 统一提示 */ }
+      finally { this.noteBusy = false; }
+    },
+    async toggleNote(item) {
+      if (this.noteBusy) return;
+      this.noteBusy = true;
+      try {
+        await apiFetch("/api/notes/" + item.id + "/done", { method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ done: item.done !== 1 }) });
+        await this.loadNotes();
+      } catch (err) { /* 统一提示 */ }
+      finally { this.noteBusy = false; }
+    },
+    async deleteNote(item) {
+      if (this.noteBusy) return;
+      try {
+        await apiFetch("/api/notes/" + item.id, { method: "DELETE" });
+        this.pendingDeleteNoteId = null;
+        await this.loadNotes();
+      } catch (err) { /* 统一提示 */ }
+    },
     /* ============ 思考强度 ============ */
     setAsstEffort(value) {
       this.asstEffort = value;
@@ -1157,6 +1258,8 @@ const App = {
       if (this.page === "logs") this.refreshLogsRoute();
       if (this.page === "assistant" && !this.asstSessions.length) this.loadAsstSessions();
       if (this.page === "assistant" && !this.asstWorkspaceDirs.length) this.loadAsstWorkspace();
+      if (this.page === "versions") this.loadVersions();
+      if (this.page === "notes") this.loadNotes();
     });
     if (this.page === "commands") this.loadCommands();
     if (this.page === "kb") this.loadKbList();
@@ -1520,6 +1623,77 @@ const App = {
     '            <button v-if="asstBusy" class="copy-button" type="button" @click="asstAbort.abort()">停止</button>',
     "          </form>",
     "        </section>",
+    "      </div>",
+    "    </section>",
+    '    <section v-else-if="page === \'versions\'" class="versions-page">',
+    '      <header class="page-header">',
+    "        <div>",
+    "          <h1>版本管理</h1>",
+    '          <p>手动记录软件包版本台账：包名与版本必填，描述和上传日期选填</p>',
+    "        </div>",
+    '        <span class="result-count">仅本机保存</span>',
+    "      </header>",
+    '      <form class="settings-form ver-form" @submit.prevent="submitVersion">',
+    '        <div class="ver-form-grid">',
+    '          <label>包名 *<input v-model="verForm.package" required maxlength="100" :disabled="verBusy" placeholder="例如：nginx"></label>',
+    '          <label>版本 *<input v-model="verForm.version" required maxlength="50" :disabled="verBusy" placeholder="例如：1.26.3"></label>',
+    '          <label>上传日期<input v-model="verForm.release_date" type="date" :disabled="verBusy"></label>',
+    '          <label class="ver-desc">具体描述（选填）<input v-model="verForm.description" maxlength="500" :disabled="verBusy" placeholder="本次升级内容、影响范围等"></label>',
+    "        </div>",
+    '        <div class="settings-actions">',
+    '          <button class="copy-button" type="submit" :disabled="verBusy || !verForm.package.trim() || !verForm.version.trim()">{{ verEditingId === null ? "添加记录" : "保存修改" }}</button>',
+    '          <button v-if="verEditingId !== null" class="copy-button" type="button" :disabled="verBusy" @click="resetVerForm">取消编辑</button>',
+    "        </div>",
+    "      </form>",
+    '      <label class="command-search">',
+    "        <span>搜索</span>",
+    '        <input v-model="verQuery" @input="queueVerSearch" type="search" placeholder="按包名 / 版本 / 描述过滤" autocomplete="off">',
+    "      </label>",
+    '      <p v-if="verLoading" class="placeholder dim">加载中…</p>',
+    '      <p v-else-if="!verItems.length" class="empty-state">暂无版本记录，使用上方表单添加第一条</p>',
+    '      <table v-else class="data-table">',
+    "        <thead><tr><th>包名</th><th>版本</th><th>描述</th><th>上传日期</th><th>录入时间</th><th>操作</th></tr></thead>",
+    "        <tbody>",
+    '          <tr v-for="item in verItems" :key="item.id">',
+    '            <td><strong>{{ item.package }}</strong></td>',
+    '            <td><code>{{ item.version }}</code></td>',
+    '            <td class="dim">{{ item.description || "—" }}</td>',
+    '            <td><code>{{ item.release_date || "—" }}</code></td>',
+    '            <td class="dim">{{ item.created_at }}</td>',
+    '            <td><div class="settings-actions"><button class="copy-button" type="button" :disabled="verBusy" @click="editVersion(item)">编辑</button>',
+    '              <button v-if="pendingDeleteVerId === item.id" class="copy-button danger-button" type="button" :disabled="verBusy" @click="deleteVersion(item)">确认删除</button>',
+    '              <button v-else class="copy-button danger-button" type="button" :disabled="verBusy" @click="pendingDeleteVerId = item.id">删除</button></div>',
+    '              <div v-if="pendingDeleteVerId === item.id" class="delete-confirm"><p>确认删除该版本记录？</p></div></td>',
+    "          </tr>",
+    "        </tbody>",
+    "      </table>",
+    "    </section>",
+    '    <section v-else-if="page === \'notes\'" class="notes-page">',
+    '      <header class="page-header">',
+    "        <div>",
+    "          <h1>便签</h1>",
+    '          <p>待办事项清单；勾选标记完成，全部数据仅存本机</p>',
+    "        </div>",
+    '        <span class="result-count">未完成 {{ openNoteCount }} 项</span>',
+    "      </header>",
+    '      <form class="settings-form note-composer" @submit.prevent="addNote">',
+    '        <label>新增待办<input v-model="noteInput" required maxlength="500" :disabled="noteBusy" placeholder="例如：周五前更新生产 nginx 到 1.26.3"></label>',
+    '        <button class="copy-button" type="submit" :disabled="noteBusy || !noteInput.trim()">添加</button>',
+    "      </form>",
+    '      <div class="kb-view-tabs note-filters">',
+    '        <button type="button" :class="{ active: noteFilter === \'all\' }" @click="noteFilter = \'all\'">全部（{{ noteItems.length }}）</button>',
+    '        <button type="button" :class="{ active: noteFilter === \'open\' }" @click="noteFilter = \'open\'">未完成（{{ openNoteCount }}）</button>',
+    '        <button type="button" :class="{ active: noteFilter === \'done\' }" @click="noteFilter = \'done\'">已完成（{{ noteItems.length - openNoteCount }}）</button>',
+    "      </div>",
+    '      <p v-if="noteLoading" class="placeholder dim">加载中…</p>',
+    '      <p v-else-if="!filteredNotes.length" class="empty-state">当前筛选下没有待办</p>',
+    '      <div v-for="item in filteredNotes" :key="item.id" class="note-item" :class="{ \'note-done\': item.done === 1 }">',
+    '        <input type="checkbox" :checked="item.done === 1" :disabled="noteBusy" @change="toggleNote(item)">',
+    '        <div class="note-body"><div class="note-content">{{ item.content }}</div><div class="note-meta">{{ item.created_at }}</div></div>',
+    '        <div class="settings-actions">',
+    '          <button v-if="pendingDeleteNoteId === item.id" class="copy-button danger-button" type="button" :disabled="noteBusy" @click="deleteNote(item)">确认删除</button>',
+    '          <button v-else class="copy-button danger-button" type="button" :disabled="noteBusy" @click="pendingDeleteNoteId = item.id">删除</button>',
+    "        </div>",
     "      </div>",
     "    </section>",
     '    <section v-else-if="page === \'settings\'" class="settings-page">',

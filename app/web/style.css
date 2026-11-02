@@ -765,6 +765,32 @@ body.pane-dragging .content { pointer-events: none; }
 }
 .asst-composer textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
 
+/* ============ 版本管理与便签（2026-10-30 用户需求） ============ */
+.ver-form-grid { display: grid; grid-template-columns: 200px 160px 180px minmax(0, 1fr); gap: 12px; }
+.ver-form .settings-actions { margin-top: -4px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th, .data-table td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.data-table thead th { background: var(--raised); font-weight: 600; white-space: nowrap; }
+.data-table tbody tr:hover { background: var(--raised); }
+.data-table code { font-family: var(--mono); background: var(--inset); padding: 1px 6px; border-radius: var(--r-chip); }
+.data-table td.dim { color: var(--text-dim); white-space: nowrap; }
+.data-table .settings-actions { flex-wrap: nowrap; margin: 0; }
+.data-table .delete-confirm { margin-top: 6px; padding: 6px 10px; }
+.note-composer { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+.note-filters { margin: 4px 0 12px; }
+.note-item {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 10px 14px; margin-bottom: 8px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--r-card);
+}
+.note-item input[type=checkbox] { width: auto; margin-top: 4px; accent-color: var(--primary); }
+.note-body { flex: 1; min-width: 0; }
+.note-content { white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-meta { color: var(--text-faint); font-size: 11.5px; font-family: var(--mono); margin-top: 2px; }
+.note-done .note-content { text-decoration: line-through; color: var(--text-faint); }
+.note-item .settings-actions { margin: 0; }
+@media (max-width: 1050px) { .ver-form-grid { grid-template-columns: 1fr 1fr; } }
+
 /* ============ 响应式 ============ */
 
 @media (max-width: 1050px) { .codegen-output { grid-template-columns: 1fr; } }

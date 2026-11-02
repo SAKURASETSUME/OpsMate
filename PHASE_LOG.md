@@ -1118,3 +1118,14 @@
 ### Phase 状态
 
 **完成，随 `fix(assistant): 终答剥离协议与工具返回泄露` 提交。Phase 9 仍待用户确认后开工。**
+
+## 2026-10-30 · 新增功能 · 版本管理与便签（用户需求）
+
+- **版本管理（#/versions，导航第 6 项）**：手动台账——包名*、版本*必填，具体描述与上传日期（date 选择器）选填；列表倒序、按包名/版本/描述搜索、编辑回填、两步删除；`version_records` 表（DDL 代码内）。API：GET/POST/PUT/DELETE /api/versions（q 过滤，422/404 语义）。
+- **便签（#/notes，导航第 7 项）**：待办清单——输入添加、勾选完成（划线+置灰，未完成排前）、全部/未完成/已完成筛选（计数徽标）、两步删除；`notes` 表。API：GET/POST /api/notes、PUT /api/notes/{id}/done、DELETE。
+- 前端复用暗色令牌：新增 .data-table（表头 raised/边框/hover）与 .note-item 样式；导航扩为 8 项（版本管理/便签插在运维助手与设置之间）。
+- 验收：新增 tools/verify_tools.py（版本 CRUD/搜索/校验/404、便签增删勾选/排序/空内容 422）全过；五个既有 verify 回归全绿；浏览器实测两页添加/勾选/计数正常（截图留档）。
+
+### Phase 状态
+
+**完成，随 `feat(tools): 版本管理与便签待办` 提交。Phase 9 仍待用户确认后开工。**
