@@ -714,10 +714,9 @@ a.copy-button, label.copy-button { text-decoration: none; }
 .markdown-body, .script-source, .asst-bubble-user, .asst-bubble-bot,
 .trace-card, .kb-tpl-content, .log-line-text { user-select: text; }
 
-/* ============ 面板边界拖拽（热区=边界两侧 6px）与下拉悬停高亮 ============ */
+/* ============ 面板边界拖拽（每条边界单一热区：左面板右缘 6px）与下拉悬停高亮 ============ */
 .edge-resize-right { cursor: col-resize; box-shadow: inset -3px 0 0 var(--primary); }
-.edge-resize-left { cursor: col-resize; box-shadow: inset 3px 0 0 var(--primary); }
-.edge-dragging.edge-resize-right, .edge-dragging.edge-resize-left { box-shadow: inset -3px 0 0 var(--primary), inset 3px 0 0 var(--primary); }
+.edge-dragging { cursor: col-resize; box-shadow: inset -3px 0 0 var(--primary); }
 .settings-form select:hover, .asst-effort:hover, .log-toolbar-row select:hover,
 .log-report select:hover, .asst-ws-add input:hover {
   border-color: var(--primary);
