@@ -19,9 +19,11 @@ class VersionBody(BaseModel):
 
 
 @router.get("")
-def list_items(q: str = Query(default="")) -> dict[str, Any]:
+def list_items(q: str = Query(default=""), package: str = Query(default=""),
+               version: str = Query(default=""), description: str = Query(default="")) -> dict[str, Any]:
+    """版本列表：独立条件 AND 组合筛选（q 为全字段兜底）。"""
     service.init_versions()
-    return {"items": service.list_versions(q)}
+    return {"items": service.list_versions(q, package, version, description)}
 
 
 @router.post("")

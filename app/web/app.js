@@ -257,7 +257,8 @@ const App = {
       asstEffort: "low",
       verItems: [], verLoading: false, verBusy: false, verEditingId: null,
       verForm: { package: "", version: "", description: "", release_date: "" },
-      verQuery: "", verSearchTimer: null, pendingDeleteVerId: null,
+      verFilters: { package: "", version: "", description: "" }, verFilterTimer: null,
+      verSort: { key: "created_at", dir: "desc" }, pendingDeleteVerId: null,
       noteItems: [], noteLoading: false, noteBusy: false, noteInput: "", noteFilter: "all",
       pendingDeleteNoteId: null,
       analysisThinking: "",
@@ -266,6 +267,24 @@ const App = {
     };
   },
   computed: {
+    sortedVersions() {
+      const key = this.verSort.key;
+      const dir = this.verSort.dir === "asc" ? 1 : -1;
+      return this.verItems.slice().sort((a, b) => {
+        if (key === "version") return dir * this.verCompare(a.version || "", b.version || "");
+        const va = String(a[key] || ""), vb = String(b[key] || "");
+        if (key === "release_date" || key === "created_at") {
+          // 空值恒排最后，不随方向翻转（资源管理器习惯）
+          if (!va && vb) return 1;
+          if (va && !vb) return -1;
+          return dir * (va === vb ? 0 : va < vb ? -1 : 1);
+        }
+        return dir * va.localeCompare(vb, "zh-Hans-CN");
+      });
+    },
+    verFilterActive() {
+      return Object.values(this.verFilters).some((v) => v.trim());
+    },
     asstTurns() {
       return this.asstMessages
         .filter((m) => m.role === "user")
@@ -821,14 +840,49 @@ const App = {
     async loadVersions() {
       this.verLoading = true;
       try {
-        const params = this.verQuery.trim() ? "?q=" + encodeURIComponent(this.verQuery.trim()) : "";
-        this.verItems = (await apiFetch("/api/versions" + params)).items;
+        const params = new URLSearchParams();
+        if (this.verFilters.package.trim()) params.set("package", this.verFilters.package.trim());
+        if (this.verFilters.version.trim()) params.set("version", this.verFilters.version.trim());
+        if (this.verFilters.description.trim()) params.set("description", this.verFilters.description.trim());
+        const suffix = params.toString() ? "?" + params.toString() : "";
+        this.verItems = (await apiFetch("/api/versions" + suffix)).items;
       } catch (err) { /* 统一提示 */ }
       finally { this.verLoading = false; }
     },
+    verCompare(a, b) {
+      // 语义化版本比较：按 ./- 切段，数字段按数值、其余按字典
+      const pa = String(a).split(/[-.]/), pb = String(b).split(/[-.]/);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const xa = pa[i] || "0", xb = pb[i] || "0";
+        const na = /^\d+$/.test(xa) ? parseInt(xa, 10) : null;
+        const nb = /^\d+$/.test(xb) ? parseInt(xb, 10) : null;
+        if (na !== null && nb !== null) {
+          if (na !== nb) return na - nb;
+        } else {
+          const order = xa.localeCompare(xb);
+          if (order) return order;
+        }
+      }
+      return 0;
+    },
     queueVerSearch() {
-      clearTimeout(this.verSearchTimer);
-      this.verSearchTimer = setTimeout(() => this.loadVersions(), 300);
+      clearTimeout(this.verFilterTimer);
+      this.verFilterTimer = setTimeout(() => this.loadVersions(), 300);
+    },
+    clearVerFilters() {
+      this.verFilters = { package: "", version: "", description: "" };
+      this.loadVersions();
+    },
+    toggleVerSort(key) {
+      if (this.verSort.key === key) {
+        this.verSort.dir = this.verSort.dir === "asc" ? "desc" : "asc";
+      } else {
+        this.verSort = { key: key, dir: key === "created_at" ? "desc" : "asc" };
+      }
+    },
+    sortArrow(key) {
+      if (this.verSort.key !== key) return "";
+      return this.verSort.dir === "asc" ? "▲" : "▼";
     },
     resetVerForm() {
       this.verEditingId = null;
@@ -1292,7 +1346,9 @@ const App = {
     if (this.page === "logs") this.refreshLogsRoute();
     if (this.page === "codegen") this.loadCodegenHistory();
     if (this.page === "settings") this.loadSettings();
-      if (this.page === "assistant") { this.loadAsstSessions(); this.loadAsstWorkspace(); }
+    if (this.page === "assistant") { this.loadAsstSessions(); this.loadAsstWorkspace(); }
+    if (this.page === "versions") this.loadVersions();
+    if (this.page === "notes") this.loadNotes();
     window.addEventListener("hashchange", () => {
       if (this.analysisAbort) this.analysisAbort.abort();
       this.page = parseRoute();
@@ -1690,16 +1746,25 @@ const App = {
     '          <button v-if="verEditingId !== null" class="copy-button" type="button" :disabled="verBusy" @click="resetVerForm">取消编辑</button>',
     "        </div>",
     "      </form>",
-    '      <label class="command-search">',
-    "        <span>搜索</span>",
-    '        <input v-model="verQuery" @input="queueVerSearch" type="search" placeholder="按包名 / 版本 / 描述过滤" autocomplete="off">',
-    "      </label>",
+    '      <div class="ver-filters" aria-label="多条件筛选">',
+    '        <label>包名<input v-model="verFilters.package" @input="queueVerSearch" type="search" placeholder="按包名筛选" autocomplete="off"></label>',
+    '        <label>版本<input v-model="verFilters.version" @input="queueVerSearch" type="search" placeholder="按版本筛选，如 1.26" autocomplete="off"></label>',
+    '        <label>描述<input v-model="verFilters.description" @input="queueVerSearch" type="search" placeholder="按描述筛选" autocomplete="off"></label>',
+    '        <button v-if="verFilterActive" class="copy-button" type="button" @click="clearVerFilters">清空条件</button>',
+    "      </div>",
     '      <p v-if="verLoading" class="placeholder dim">加载中…</p>',
     '      <p v-else-if="!verItems.length" class="empty-state">暂无版本记录，使用上方表单添加第一条</p>',
+    '      <p v-else-if="!sortedVersions.length" class="empty-state">没有符合筛选条件的记录</p>',
     '      <table v-else class="data-table">',
-    "        <thead><tr><th>包名</th><th>版本</th><th>描述</th><th>上传日期</th><th>录入时间</th><th>操作</th></tr></thead>",
+    '        <thead><tr>',
+    '          <th class="sortable" title="点击排序" @click="toggleVerSort(\'package\')">包名 {{ sortArrow("package") }}</th>',
+    '          <th class="sortable" title="点击排序" @click="toggleVerSort(\'version\')">版本 {{ sortArrow("version") }}</th>',
+    "          <th>描述</th>",
+    '          <th class="sortable" title="点击排序" @click="toggleVerSort(\'release_date\')">上传日期 {{ sortArrow("release_date") }}</th>',
+    '          <th class="sortable" title="点击排序" @click="toggleVerSort(\'created_at\')">录入时间 {{ sortArrow("created_at") }}</th>',
+    "          <th>操作</th></tr></thead>",
     "        <tbody>",
-    '          <tr v-for="item in verItems" :key="item.id">',
+    '          <tr v-for="item in sortedVersions" :key="item.id">',
     '            <td><strong>{{ item.package }}</strong></td>',
     '            <td><code>{{ item.version }}</code></td>',
     '            <td class="dim">{{ item.description || "—" }}</td>',

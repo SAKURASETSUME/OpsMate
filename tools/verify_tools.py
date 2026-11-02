@@ -17,7 +17,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as folder, patch.object(config, "DB_PATH", Path(folder) / "t.db"):
         client = TestClient(create_app())
 
-        # 版本管理：建/查/搜/改/删与校验
+        # 版本管理：建/查/多条件筛选/改/删与校验
         created = client.post("/api/versions", json={"package": "nginx", "version": "1.26.3",
                                                      "description": "生产稳定版", "release_date": "2026-10-01"})
         assert created.status_code == 200 and created.json()["package"] == "nginx", created.text
@@ -27,9 +27,15 @@ def main() -> None:
         items = client.get("/api/versions").json()["items"]
         assert len(items) == 2 and items[0]["package"] == "redis"  # 倒序
         assert [i["package"] for i in client.get("/api/versions?q=稳定").json()["items"]] == ["nginx"]
+        # 独立条件 AND 组合
+        assert [i["package"] for i in client.get("/api/versions", params={"package": "redis"}).json()["items"]] == ["redis"]
+        assert [i["package"] for i in client.get("/api/versions", params={"version": "1.26"}).json()["items"]] == ["nginx"]
+        assert [i["package"] for i in client.get("/api/versions", params={"description": "缓存"}).json()["items"]] == ["redis"]
+        assert [i["package"] for i in client.get("/api/versions", params={"package": "nginx", "description": "主线"}).json()["items"]] == []
+        assert client.get("/api/versions", params={"package": "nginx", "version": "1.26", "description": "稳定"}).json()["items"]
         assert client.put(f"/api/versions/{vid}", json={"package": "nginx", "version": "1.27.0",
                                                         "description": "主线", "release_date": ""}).json() == {"ok": True}
-        assert client.get("/api/versions?q=nginx").json()["items"][0]["version"] == "1.27.0"
+        assert client.get("/api/versions", params={"package": "nginx", "version": "1.27"}).json()["items"]
         assert client.put("/api/versions/999", json={"package": "x", "version": "1"}).status_code == 404
         assert client.delete(f"/api/versions/{vid}").json() == {"ok": True}
         assert client.delete(f"/api/versions/{vid}").status_code == 404

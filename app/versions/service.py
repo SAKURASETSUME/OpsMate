@@ -40,18 +40,26 @@ def check_fields(package: str, version: str, description: str, release_date: str
         raise ValueError("上传日期格式无效")
 
 
-def list_versions(query: str = "") -> list[dict[str, Any]]:
-    """倒序列表；q 对包名/版本/描述大小写不敏感子串过滤。"""
-    keyword = query.strip().casefold()
+def list_versions(q: str = "", package: str = "", version: str = "",
+                  description: str = "") -> list[dict[str, Any]]:
+    """倒序列表；q 全字段兜底 + package/version/description 独立条件，AND 组合过滤。"""
     with closing(_connect()) as connection:
         rows = connection.execute(
             "SELECT id,package,version,description,release_date,created_at "
             "FROM version_records ORDER BY id DESC")
         items = [dict(row) for row in rows]
-    if not keyword:
-        return items
-    return [item for item in items if keyword in " ".join(
-        str(item.get(field) or "") for field in ("package", "version", "description")).casefold()]
+
+    def hit(item: dict[str, Any], keyword: str, fields: tuple[str, ...]) -> bool:
+        text = keyword.strip().casefold()
+        if not text:
+            return True
+        return text in " ".join(str(item.get(field) or "") for field in fields).casefold()
+
+    return [item for item in items
+            if hit(item, q, ("package", "version", "description"))
+            and hit(item, package, ("package",))
+            and hit(item, version, ("version",))
+            and hit(item, description, ("description",))]
 
 
 def get_version(version_id: int) -> dict[str, Any] | None:
