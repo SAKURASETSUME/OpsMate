@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -43,6 +43,7 @@ class ChatBody(BaseModel):
     session_id: int | None = None
     attachments: list[int] = Field(default_factory=list)
     effort: str = Field(default="", pattern="^(low|medium|high|max)?$")
+    workspace: str = Field(default="", max_length=400)
 
 
 class ProposalBody(BaseModel):
@@ -82,10 +83,10 @@ def _event(payload: dict[str, Any]) -> str:
 
 
 @router.get("/sessions")
-def sessions() -> dict[str, Any]:
-    """倒序会话列表。"""
+def sessions(workspace: str | None = Query(default=None)) -> dict[str, Any]:
+    """倒序会话列表；workspace 过滤（缺省=全部，__none__=未分组）。"""
     service.init_assistant()
-    return {"items": service.list_sessions()}
+    return {"items": service.list_sessions(workspace)}
 
 
 @router.get("/sessions/{session_id}")
@@ -235,7 +236,7 @@ async def chat(body: ChatBody) -> StreamingResponse:
                 raise LLMError("模型未返回回答")
             session_id = await asyncio.to_thread(
                 service.save_turn, body.session_id, body.message, steps, answer, settings["model"],
-                [record["id"] for record in attachments])
+                [record["id"] for record in attachments], body.workspace)
             yield _event({"done": True, "session_id": session_id})
         except LLMError as exc:
             yield _event({"error": str(exc)})

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app import config
 from app.agent.tools import execute_tool
+from app.assistant import service as assistant_service_module
 from app.assistant.routes import ASSISTANT_SYSTEM_PROMPT
 from app.llm.provider import LLMClient
 from app.server import create_app
@@ -43,7 +44,8 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as folder, \
             patch.object(config, "DB_PATH", Path(folder) / "test.db"), \
             patch.object(config, "ASSISTANT_FILES_DIR", Path(folder) / "asst_files"), \
-            patch.object(config, "AGENT_FILES_DIR", Path(folder) / "agent_files"):
+            patch.object(config, "AGENT_FILES_DIR", Path(folder) / "agent_files"), \
+            patch.object(assistant_service_module, "WORKSPACE_JSON", Path(folder) / "agent_workspace.json"):
         client = TestClient(create_app())
 
         # A：工具轨迹 + 流式终答 + 原子落库
@@ -199,6 +201,33 @@ def main() -> None:
         assert cancelled.status_code == 200 and "已取消" in cancelled.json()["outcome"]
         assert not agent_dir.joinpath("tmp.yaml").exists()
         assert execute_tool("write_file", {"filename": "x.conf", "content": "y"})["ok"] is False  # 直接调用防线
+
+        # K：工作目录下的会话归属与目录移除迁移
+        ws_a = Path(folder) / "ws_a"; ws_a.mkdir()
+        ws_b = Path(folder) / "ws_b"; ws_b.mkdir()
+        client.put("/api/assistant/workspace", json={"directories": [str(ws_a), str(ws_b)]})
+        with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
+             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
+             patch.object(LLMClient, "chat_stream", new=stream_of("A 目录的回答")):
+            events = parse_sse(client.post("/api/assistant/chat",
+                                           json={"message": "A 目录的问题", "workspace": str(ws_a)}))
+        sid_a = [e for e in events if e.get("done")][0]["session_id"]
+        with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
+             patch.object(LLMClient, "chat", side_effect=[result({"action": "final"})]), \
+             patch.object(LLMClient, "chat_stream", new=stream_of("B 目录的回答")):
+            events = parse_sse(client.post("/api/assistant/chat",
+                                           json={"message": "B 目录的问题", "workspace": str(ws_b)}))
+        sid_b = [e for e in events if e.get("done")][0]["session_id"]
+        in_a = [s["id"] for s in client.get("/api/assistant/sessions", params={"workspace": str(ws_a)}).json()["items"]]
+        assert in_a == [sid_a]
+        in_b = [s["id"] for s in client.get("/api/assistant/sessions", params={"workspace": str(ws_b)}).json()["items"]]
+        assert in_b == [sid_b]
+        assert len(client.get("/api/assistant/sessions").json()["items"]) >= 2  # 不带过滤=全部
+        # 移除目录 A → 其会话迁入未分组，不再凭空消失
+        client.put("/api/assistant/workspace", json={"directories": [str(ws_b)]})
+        ungrouped = client.get("/api/assistant/sessions", params={"workspace": "__none__"}).json()["items"]
+        assert sid_a in [s["id"] for s in ungrouped]
+        assert client.get("/api/assistant/sessions", params={"workspace": str(ws_a)}).json()["items"] == []
 
         # I：工作目录授权（读写/生成/执行）与联网工具
         ws_dir = Path(folder) / "ws"; ws_dir.mkdir()

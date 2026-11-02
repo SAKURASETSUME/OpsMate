@@ -37,6 +37,7 @@ def init_assistant() -> None:
         CREATE TABLE IF NOT EXISTS assistant_sessions (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           title TEXT NOT NULL,
+          workspace TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
         CREATE TABLE IF NOT EXISTS assistant_messages (
@@ -61,6 +62,9 @@ def init_assistant() -> None:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(assistant_messages)")}
         if "summary" not in columns:
             connection.execute("ALTER TABLE assistant_messages ADD COLUMN summary TEXT")
+        session_columns = {row[1] for row in connection.execute("PRAGMA table_info(assistant_sessions)")}
+        if "workspace" not in session_columns:
+            connection.execute("ALTER TABLE assistant_sessions ADD COLUMN workspace TEXT")
         connection.commit()
 
 
@@ -115,11 +119,21 @@ class SessionNotFound(ValueError):
     """传入的 session_id 不存在。"""
 
 
-def list_sessions() -> list[dict[str, Any]]:
-    """倒序会话列表。"""
+def list_sessions(workspace: str | None = None) -> list[dict[str, Any]]:
+    """倒序会话列表；workspace 过滤：None=全部，__none__=未分组，其余=精确匹配。"""
     with closing(_connect()) as connection:
-        return [dict(row) for row in connection.execute(
-            "SELECT id,title,updated_at FROM assistant_sessions ORDER BY updated_at DESC,id DESC")]
+        if workspace is None:
+            rows = connection.execute(
+                "SELECT id,title,workspace,updated_at FROM assistant_sessions ORDER BY updated_at DESC,id DESC")
+        elif workspace == "__none__":
+            rows = connection.execute(
+                "SELECT id,title,workspace,updated_at FROM assistant_sessions "
+                "WHERE workspace IS NULL OR workspace='' ORDER BY updated_at DESC,id DESC")
+        else:
+            rows = connection.execute(
+                "SELECT id,title,workspace,updated_at FROM assistant_sessions "
+                "WHERE workspace=? ORDER BY updated_at DESC,id DESC", (workspace,))
+        return [dict(row) for row in rows]
 
 
 def get_messages(session_id: int) -> list[dict[str, Any]]:
@@ -184,16 +198,19 @@ def delete_session(session_id: int) -> bool:
 
 
 def save_turn(session_id: int | None, message: str, steps: list[dict[str, Any]],
-              answer: str, model: str, attachment_ids: list[int] | None = None) -> int:
+              answer: str, model: str, attachment_ids: list[int] | None = None,
+              workspace: str = "") -> int:
     """成功一轮后原子写入：用户消息 + tool 轨迹行 + 助手回答，并刷新会话时间。
 
-    session_id 为空时创建新会话（标题=首条用户消息截断 50 字）；附件随后归属该用户消息。
+    session_id 为空时创建新会话（标题=首条用户消息截断 50 字，归属 workspace）；
+    附件随后归属该用户消息。
     """
     with closing(_connect()) as connection:
         with connection:
             if session_id is None:
                 cursor = connection.execute(
-                    "INSERT INTO assistant_sessions(title) VALUES (?)", (message.strip()[:50],))
+                    "INSERT INTO assistant_sessions(title,workspace) VALUES (?,?)",
+                    (message.strip()[:50], workspace or None))
                 session_id = int(cursor.lastrowid)
             elif connection.execute("SELECT 1 FROM assistant_sessions WHERE id=?",
                                     (session_id,)).fetchone() is None:
@@ -284,11 +301,20 @@ def load_workspace_dirs() -> list[str]:
 
 
 def save_workspace_dirs(directories: list[str]) -> None:
+    """保存工作目录；被移除目录下的会话归入"未分组"，避免会话凭空消失。"""
+    previous = load_workspace_dirs()
     config.ensure_dirs()
     temporary = WORKSPACE_JSON.with_name(WORKSPACE_JSON.name + ".tmp")
     temporary.write_text(json.dumps({"directories": directories}, ensure_ascii=False, indent=2),
                          encoding="utf-8")
     temporary.replace(WORKSPACE_JSON)
+    removed = [item for item in previous if item not in directories]
+    if removed:
+        with closing(_connect()) as connection:
+            with connection:
+                connection.executemany(
+                    "UPDATE assistant_sessions SET workspace=NULL WHERE workspace=?",
+                    [(item,) for item in removed])
 
 
 def workspace_roots() -> list[str]:

@@ -253,6 +253,7 @@ const App = {
       asstSessions: [], asstMessages: [], asstSessionId: null, asstInput: "", asstQueue: [],
       asstBusy: false, asstAbort: null, asstError: "", pendingDeleteAsstId: null, asstKeySeq: 0,
       asstDraftFiles: [], asstDragOver: false, asstSummaryOpen: false,
+      asstActiveWorkspace: "",
       asstWorkspaceDirs: [], asstWsInput: "", asstWsEditing: false, asstWsBusy: false,
       asstEffort: "low",
       verItems: [], verLoading: false, verBusy: false, verEditingId: null,
@@ -1017,8 +1018,30 @@ const App = {
     },
     /* ============ 工作目录授权 ============ */
     async loadAsstWorkspace() {
-      try { this.asstWorkspaceDirs = (await apiFetch("/api/assistant/workspace")).directories; }
-      catch (err) { /* 统一提示 */ }
+      try {
+        this.asstWorkspaceDirs = (await apiFetch("/api/assistant/workspace")).directories;
+        // 记忆的选中目录若已被移除，回落到未分组
+        if (this.asstActiveWorkspace && !this.asstWorkspaceDirs.includes(this.asstActiveWorkspace)) {
+          this.setActiveWorkspace("");
+        }
+      } catch (err) { /* 统一提示 */ }
+    },
+    setActiveWorkspace(value) {
+      this.asstActiveWorkspace = value;
+      try { localStorage.setItem("opsmate-asst-ws", value); } catch (err) { /* 忽略 */ }
+      this.newAsstSession();
+      this.loadAsstSessions();
+    },
+    wsDirName(dir) {
+      const parts = String(dir || "").split(/[\\/]/).filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : String(dir);
+    },
+    async loadAsstSessions() {
+      try {
+        const params = this.asstActiveWorkspace
+          ? "?workspace=" + encodeURIComponent(this.asstActiveWorkspace) : "";
+        this.asstSessions = (await apiFetch("/api/assistant/sessions" + params)).items;
+      } catch (err) { /* 统一提示 */ }
     },
     async saveAsstWorkspace(list) {
       this.asstWsBusy = true;
@@ -1028,6 +1051,10 @@ const App = {
           body: JSON.stringify({ directories: list }),
         });
         this.asstWorkspaceDirs = data.directories;
+        if (this.asstActiveWorkspace && !this.asstWorkspaceDirs.includes(this.asstActiveWorkspace)) {
+          this.setActiveWorkspace("");
+        }
+        await this.loadAsstSessions();
         showToast("工作目录已更新（智能体获得范围内读写与执行授权）");
       } catch (err) { /* apiFetch 统一提示 */ }
       finally { this.asstWsBusy = false; }
@@ -1055,10 +1082,6 @@ const App = {
       this.saveAsstWorkspace(next);
     },
     /* ============ 运维助手（Phase 8） ============ */
-    async loadAsstSessions() {
-      try { this.asstSessions = (await apiFetch("/api/assistant/sessions")).items; }
-      catch (err) { /* 统一提示 */ }
-    },
     newAsstSession() {
       if (this.asstBusy) return;
       this.asstSessionId = null; this.asstMessages = []; this.asstError = ""; this.pendingDeleteAsstId = null;
@@ -1164,7 +1187,8 @@ const App = {
         await apiFetch("/api/assistant/chat", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: message, session_id: this.asstSessionId,
-            attachments: drafts.map((d) => d.id), effort: this.asstEffort }),
+            attachments: drafts.map((d) => d.id), effort: this.asstEffort,
+            workspace: this.asstActiveWorkspace }),
           signal: controller.signal,
         }, 305000, async (response) => {
           const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8"); let buffer = ""; let completed = false;
@@ -1317,6 +1341,7 @@ const App = {
     });
     try { this.themePref = localStorage.getItem("opsmate-theme") || "auto"; } catch (err) { /* 默认跟随系统 */ }
     try { this.asstEffort = localStorage.getItem("opsmate-asst-effort") || "low"; } catch (err) { /* 默认低 */ }
+    try { this.asstActiveWorkspace = localStorage.getItem("opsmate-asst-ws") || ""; } catch (err) { /* 默认未分组 */ }
     this.applyTheme();
     if (window.matchMedia) {
       window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
@@ -1629,6 +1654,13 @@ const App = {
     "      </header>",
     '      <div class="asst-layout" :style="gridPaneStyle(\'asst\')">',
     '        <aside class="asst-sessions" aria-label="会话列表">',
+    '          <label class="asst-ws-select" title="会话归属的工作目录；新会话将创建在当前目录下">',
+    "            <span>当前工作目录</span>",
+    '            <select :value="asstActiveWorkspace" @change="setActiveWorkspace($event.target.value)">',
+    '              <option value="">未分组</option>',
+    '              <option v-for="dir in asstWorkspaceDirs" :key="dir" :value="dir">{{ wsDirName(dir) }}</option>',
+    "            </select>",
+    "          </label>",
     '          <button class="copy-button" type="button" @click="newAsstSession" :disabled="asstBusy">＋ 新建对话</button>',
     '          <div class="asst-ws-panel">',
     '            <button class="asst-ws-toggle" type="button" @click="asstWsEditing = !asstWsEditing">📁 工作目录（{{ asstWorkspaceDirs.length }}）</button>',
@@ -1649,7 +1681,7 @@ const App = {
     '          <div v-for="s in asstSessions" :key="s.id" class="asst-session-item">',
     '            <button type="button" class="history-item" :class="{ active: asstSessionId === s.id }" @click="openAsstSession(s)">',
     "              <strong>{{ s.title }}</strong>",
-    '              <span class="wb-meta">{{ s.updated_at }}</span>',
+    '              <span class="wb-meta">{{ s.updated_at }}<em v-if="s.workspace" class="asst-session-ws" :title="s.workspace">📂{{ wsDirName(s.workspace) }}</em></span>',
     "            </button>",
     '            <button v-if="pendingDeleteAsstId === s.id" class="copy-button danger-button asst-del" type="button" @click="deleteAsstSession(s)" :disabled="asstBusy">确认</button>',
     '            <button v-else class="copy-button asst-del" type="button" @click="pendingDeleteAsstId = s.id" :disabled="asstBusy">删除</button>',

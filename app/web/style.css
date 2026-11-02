@@ -669,6 +669,19 @@ a.copy-button, label.copy-button { text-decoration: none; }
 .asst-attach-btn input[type=file] { display: none; }
 
 /* 工作目录面板与思考强度 */
+.asst-ws-select { display: grid; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.asst-ws-select span { font-size: 11px; color: var(--text-faint); }
+.asst-ws-select select {
+  height: 32px; padding: 0 8px; width: 100%;
+  border: 1px solid var(--border-strong); border-radius: var(--r-chip);
+  background: var(--inset); color: var(--text); font: inherit; font-size: 12px; outline: none;
+}
+.asst-ws-select select:hover { border-color: var(--primary); }
+.asst-session-ws {
+  font-style: normal; color: var(--text-faint); margin-left: 8px;
+  max-width: 90px; display: inline-block; vertical-align: bottom;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .asst-ws-panel { border: 1px solid var(--border); border-radius: var(--r-card); padding: 8px 10px; }
 .asst-ws-toggle {
   width: 100%; text-align: left; border: 0; background: none; color: var(--text-dim);
