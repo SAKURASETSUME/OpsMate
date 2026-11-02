@@ -729,7 +729,8 @@ body.pane-dragging .content { pointer-events: none; }
 
 .assistant-page { height: 100%; display: flex; flex-direction: column; min-height: 520px; }
 .asst-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; }
-.asst-sessions { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
+.asst-sessions { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; border-right: 1px solid var(--border); }
+.asst-sessions.edge-resize { cursor: col-resize; box-shadow: inset 3px 0 0 var(--primary); }
 .asst-session-item { display: flex; gap: 6px; align-items: stretch; }
 .asst-session-item .history-item { flex: 1; min-width: 0; }
 .asst-del { flex: none; padding: 0 10px; font-size: 12px; }

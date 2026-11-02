@@ -907,15 +907,31 @@ const App = {
         this.themePref === "auto" ? (preferDark ? "dark" : "light") : this.themePref;
     },
     gridPaneStyle(key) {
+      if (key === "asst") {
+        // 助手页无独立分隔条：热区在会话栏左缘（见 asstEdge* 方法）
+        return { gridTemplateColumns: `${this.paneWidths.asst}px minmax(0, 1fr)` };
+      }
       if (key === "codegen") {
         const left = Math.min(0.75, Math.max(0.25, this.paneWidths.codegen));
         return { gridTemplateColumns: `minmax(0, ${left}fr) 6px minmax(0, ${1 - left}fr)` };
       }
       return { gridTemplateColumns: `${this.paneWidths[key]}px 6px minmax(0, 1fr)` };
     },
-    startPaneDrag(event, key) {
+    asstEdgeMove(event) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      // 指向会话栏最左侧 6px 内 → 进入拉伸状态（光标 + 左缘高亮）
+      event.currentTarget.classList.toggle("edge-resize", event.clientX - rect.left <= 6);
+    },
+    asstEdgeLeave(event) { event.currentTarget.classList.remove("edge-resize"); },
+    asstEdgeDown(event) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (event.button !== 0 || event.clientX - rect.left > 6) return;
+      this.startPaneDrag(event, "asst", { leftEdge: true });
+    },
+    startPaneDrag(event, key, options) {
       if (event.button !== 0) return;
       event.preventDefault();
+      const leftEdge = Boolean(options && options.leftEdge); // 左缘锚定：右拖变窄
       // 若上次拖拽在窗口外松开导致状态残留，先清理，避免整页被锁死无法选择/点击
       document.body.classList.remove("pane-dragging");
       const limits = { commands: [180, 640], wb: [200, 720], asst: [200, 520], side: [160, 320] }[key];
@@ -935,7 +951,7 @@ const App = {
         try { localStorage.setItem("opsmate-pane-widths", JSON.stringify(this.paneWidths)); } catch (err) { /* 忽略持久化失败 */ }
       };
       const onMove = (moveEvent) => {
-        const delta = moveEvent.clientX - startX;
+        const delta = (leftEdge ? -1 : 1) * (moveEvent.clientX - startX);
         if (key === "codegen") {
           this.paneWidths.codegen = Math.round(Math.min(0.75, Math.max(0.25, startRatio + delta / totalPx)) * 1000) / 1000;
         } else {
@@ -1549,7 +1565,7 @@ const App = {
     '        <span class="result-count">模型推断，请以官方文档为准</span>',
     "      </header>",
     '      <div class="asst-layout" :style="gridPaneStyle(\'asst\')">',
-    '        <aside class="asst-sessions" aria-label="会话列表">',
+    '        <aside class="asst-sessions" aria-label="会话列表" @mousemove="asstEdgeMove" @mouseleave="asstEdgeLeave" @mousedown="asstEdgeDown">',
     '          <button class="copy-button" type="button" @click="newAsstSession" :disabled="asstBusy">＋ 新建对话</button>',
     '          <div class="asst-ws-panel">',
     '            <button class="asst-ws-toggle" type="button" @click="asstWsEditing = !asstWsEditing">📁 工作目录（{{ asstWorkspaceDirs.length }}）</button>',
@@ -1576,7 +1592,6 @@ const App = {
     '            <button v-else class="copy-button asst-del" type="button" @click="pendingDeleteAsstId = s.id" :disabled="asstBusy">删除</button>',
     "          </div>",
     "        </aside>",
-    '        <div class="pane-splitter" title="拖拽调整宽度" @mousedown="startPaneDrag($event, \'asst\')"></div>',
     '        <section class="asst-chat" aria-label="对话消息流" @dragover.prevent="asstDragOver = true" @dragleave="asstDragOver = false" @drop.prevent="dropAsstFiles">',
     '          <div v-if="asstDragOver" class="asst-drop-overlay">松开鼠标，把文件添加为附件</div>',
     '          <div class="asst-messages">',
