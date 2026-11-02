@@ -44,6 +44,7 @@ def init_assistant() -> None:
           session_id INTEGER NOT NULL,
           role TEXT NOT NULL,
           content TEXT NOT NULL,
+          summary TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
         CREATE INDEX IF NOT EXISTS idx_asst_msg_session ON assistant_messages(session_id, id);
         CREATE TABLE IF NOT EXISTS assistant_attachments (
@@ -57,6 +58,9 @@ def init_assistant() -> None:
           path TEXT NOT NULL,
           created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
         """)
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(assistant_messages)")}
+        if "summary" not in columns:
+            connection.execute("ALTER TABLE assistant_messages ADD COLUMN summary TEXT")
         connection.commit()
 
 
@@ -125,7 +129,7 @@ def get_messages(session_id: int) -> list[dict[str, Any]]:
         if connection.execute("SELECT 1 FROM assistant_sessions WHERE id=?", (session_id,)).fetchone() is None:
             raise SessionNotFound("会话不存在")
         messages = [dict(row) for row in connection.execute(
-            "SELECT id,role,content FROM assistant_messages WHERE session_id=? ORDER BY id", (session_id,))]
+            "SELECT id,role,content,summary FROM assistant_messages WHERE session_id=? ORDER BY id", (session_id,))]
         by_message: dict[int, list[dict[str, Any]]] = {}
         for row in connection.execute(
                 "SELECT id,message_id,name,mime,kind,size_bytes FROM assistant_attachments "
@@ -195,8 +199,9 @@ def save_turn(session_id: int | None, message: str, steps: list[dict[str, Any]],
                                     (session_id,)).fetchone() is None:
                 raise SessionNotFound("会话不存在")
             cursor = connection.execute(
-                "INSERT INTO assistant_messages(session_id,role,content) VALUES (?,'user',?)",
-                (session_id, message))
+                "INSERT INTO assistant_messages(session_id,role,content,summary) VALUES (?,'user',?,?)",
+                (session_id, message,
+                 message.strip()[:24] + ("…" if len(message.strip()) > 24 else "")))
             message_id = int(cursor.lastrowid)
             for step in steps:
                 connection.execute(

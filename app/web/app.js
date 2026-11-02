@@ -252,7 +252,7 @@ const App = {
       analysisFocus: "", analysisAbort: null, logReports: [], selectedReportId: "", analysisSaved: false,
       asstSessions: [], asstMessages: [], asstSessionId: null, asstInput: "", asstQueue: [],
       asstBusy: false, asstAbort: null, asstError: "", pendingDeleteAsstId: null, asstKeySeq: 0,
-      asstDraftFiles: [], asstDragOver: false,
+      asstDraftFiles: [], asstDragOver: false, asstSummaryOpen: false,
       asstWorkspaceDirs: [], asstWsInput: "", asstWsEditing: false, asstWsBusy: false,
       asstEffort: "low",
       verItems: [], verLoading: false, verBusy: false, verEditingId: null,
@@ -266,6 +266,12 @@ const App = {
     };
   },
   computed: {
+    asstTurns() {
+      return this.asstMessages
+        .filter((m) => m.role === "user")
+        .map((m) => ({ key: m.key,
+          summary: (m.summary || m.content).replace(/\s+/g, " ").trim().slice(0, 26) }));
+    },
     filteredNotes() {
       if (this.noteFilter === "open") return this.noteItems.filter((n) => n.done !== 1);
       if (this.noteFilter === "done") return this.noteItems.filter((n) => n.done === 1);
@@ -906,52 +912,53 @@ const App = {
       document.documentElement.dataset.theme =
         this.themePref === "auto" ? (preferDark ? "dark" : "light") : this.themePref;
     },
+    /* ============ 面板边界拖拽（热区=UI 边界两侧各 6px，无独立分隔条） ============ */
     gridPaneStyle(key) {
-      if (key === "asst") {
-        // 助手页无独立分隔条：热区在会话栏左缘（见 asstEdge* 方法）
-        return { gridTemplateColumns: `${this.paneWidths.asst}px minmax(0, 1fr)` };
-      }
       if (key === "codegen") {
         const left = Math.min(0.75, Math.max(0.25, this.paneWidths.codegen));
-        return { gridTemplateColumns: `minmax(0, ${left}fr) 6px minmax(0, ${1 - left}fr)` };
+        return { gridTemplateColumns: `minmax(0, ${left}fr) minmax(0, ${1 - left}fr)` };
       }
-      return { gridTemplateColumns: `${this.paneWidths[key]}px 6px minmax(0, 1fr)` };
+      return { gridTemplateColumns: `${this.paneWidths[key]}px minmax(0, 1fr)` };
     },
-    asstEdgeMove(event) {
-      const rect = event.currentTarget.getBoundingClientRect();
-      // 指向会话栏最左侧 6px 内 → 进入拉伸状态（光标 + 左缘高亮）
-      event.currentTarget.classList.toggle("edge-resize", event.clientX - rect.left <= 6);
+    edgeHover(event, side) {
+      const el = event.currentTarget;
+      const rect = el.getBoundingClientRect();
+      const within = side === "right" ? rect.right - event.clientX <= 6 : event.clientX - rect.left <= 6;
+      el.classList.toggle(side === "right" ? "edge-resize-right" : "edge-resize-left", within);
     },
-    asstEdgeLeave(event) { event.currentTarget.classList.remove("edge-resize"); },
-    asstEdgeDown(event) {
-      const rect = event.currentTarget.getBoundingClientRect();
-      if (event.button !== 0 || event.clientX - rect.left > 6) return;
-      this.startPaneDrag(event, "asst", { leftEdge: true });
+    edgeLeave(event) {
+      event.currentTarget.classList.remove("edge-resize-right", "edge-resize-left");
     },
-    startPaneDrag(event, key, options) {
-      if (event.button !== 0) return;
+    edgeDrag(event, key) {
+      const el = event.currentTarget;
+      const rect = el.getBoundingClientRect();
+      const atBoundary = rect.right - event.clientX <= 6 || event.clientX - rect.left <= 6;
+      if (event.button !== 0 || !atBoundary) return;
+      this.startPaneDrag(event, key);
+    },
+    startPaneDrag(event, key) {
       event.preventDefault();
-      const leftEdge = Boolean(options && options.leftEdge); // 左缘锚定：右拖变窄
       // 若上次拖拽在窗口外松开导致状态残留，先清理，避免整页被锁死无法选择/点击
       document.body.classList.remove("pane-dragging");
       const limits = { commands: [180, 640], wb: [200, 720], asst: [200, 520], side: [160, 320] }[key];
       const startX = event.clientX;
       const startWidth = this.paneWidths[key];
-      const totalPx = Math.max(event.currentTarget.parentElement.clientWidth - 6, 1);
+      const container = event.currentTarget.closest(".layout, .asst-layout, .wb-layout, .command-browser, .codegen-output");
+      const totalPx = Math.max(container ? container.clientWidth : 800, 1);
       const startRatio = this.paneWidths.codegen;
-      const splitter = event.currentTarget;
-      splitter.classList.add("active");
+      const grabbed = event.currentTarget;
+      grabbed.classList.add("edge-dragging");
       document.body.classList.add("pane-dragging");
       const cleanup = () => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", cleanup);
         window.removeEventListener("blur", cleanup);
-        splitter.classList.remove("active");
+        grabbed.classList.remove("edge-dragging");
         document.body.classList.remove("pane-dragging");
         try { localStorage.setItem("opsmate-pane-widths", JSON.stringify(this.paneWidths)); } catch (err) { /* 忽略持久化失败 */ }
       };
       const onMove = (moveEvent) => {
-        const delta = (leftEdge ? -1 : 1) * (moveEvent.clientX - startX);
+        const delta = moveEvent.clientX - startX;
         if (key === "codegen") {
           this.paneWidths.codegen = Math.round(Math.min(0.75, Math.max(0.25, startRatio + delta / totalPx)) * 1000) / 1000;
         } else {
@@ -961,6 +968,14 @@ const App = {
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", cleanup);
       window.addEventListener("blur", cleanup);
+    },
+    jumpAsstTurn(turn) {
+      this.asstSummaryOpen = false;
+      const el = document.querySelector('[data-key="' + turn.key + '"]');
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      el.classList.add("jump-flash");
+      setTimeout(() => el.classList.remove("jump-flash"), 1400);
     },
     /* ============ 工作目录授权 ============ */
     async loadAsstWorkspace() {
@@ -1012,7 +1027,7 @@ const App = {
     },
     parseAsstRow(row) {
       if (row.role === "user") {
-        return { key: "u" + row.id, role: "user", content: row.content,
+        return { key: "u" + row.id, role: "user", content: row.content, summary: row.summary || "",
           attachments: (row.attachments || []).map((a) => Object.assign({}, a, {
             url: a.kind === "image" ? "/api/assistant/files/" + a.id + "/content" : "" })) };
       }
@@ -1299,7 +1314,7 @@ const App = {
   },
   template: [
     '<div class="layout">',
-    '  <aside class="sidebar" :style="{ width: paneWidths.side + \'px\' }">',
+    '  <aside class="sidebar" :style="{ width: paneWidths.side + \'px\' }" @mousemove="edgeHover($event, \'right\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'side\')">',
     '    <div class="logo">OpsMate</div>',
     '    <p class="logo-sub">运维提效智能体</p>',
     '    <nav>',
@@ -1308,8 +1323,7 @@ const App = {
     "    </nav>",
     '    <div class="side-status"><span class="status-dot"></span><span>{{ backendHost }}</span></div>',
     "  </aside>",
-    '  <div class="pane-splitter pane-splitter-side" title="拖拽调整宽度" @mousedown="startPaneDrag($event, \'side\')"></div>',
-    '  <main class="content">',
+    '  <main class="content" @mousemove="edgeHover($event, \'left\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'side\')">',
     '    <section v-if="page === \'commands\'" class="commands-page">',
     '      <header class="page-header">',
     '        <div><h1>指令速查</h1><p>621 条中文 Linux 命令文档，本地离线检索</p></div>',
@@ -1321,7 +1335,7 @@ const App = {
     '               placeholder="输入命令名或中文关键词，例如：磁盘" autocomplete="off">',
     '      </label>',
     '      <div class="command-browser" :style="gridPaneStyle(\'commands\')">',
-    '        <aside class="command-list" aria-label="命令搜索结果">',
+    '        <aside class="command-list" aria-label="命令搜索结果" @mousemove="edgeHover($event, \'right\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'commands\')">',
     '          <button v-for="item in commandItems" :key="item.name" type="button"',
     '                  :class="{ active: selectedCommand && selectedCommand.name === item.name }"',
     '                  @click="selectCommand(item.name)">',
@@ -1329,8 +1343,7 @@ const App = {
     '          </button>',
     '          <p v-if="!commandLoading && commandItems.length === 0" class="empty-state">未找到匹配命令</p>',
     '        </aside>',
-    '        <div class="pane-splitter" title="拖拽调整宽度" @mousedown="startPaneDrag($event, \'commands\')"></div>',
-    '        <article class="command-detail">',
+    '        <article class="command-detail" @mousemove="edgeHover($event, \'left\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'commands\')">',
     '          <div v-if="selectedCommand" class="command-detail-head">',
     '            <div><h2>{{ selectedCommand.name }}</h2><p>{{ selectedCommand.title }}</p></div>',
     '            <button class="copy-button" type="button" @click="copyCommandMarkdown">复制 md</button>',
@@ -1424,7 +1437,7 @@ const App = {
     "      </div>",
     "    </template>",
     '    <div v-else class="wb-layout" :style="gridPaneStyle(\'wb\')">',
-    '      <aside class="wb-list" aria-label="我的配置列表">',
+    '      <aside class="wb-list" aria-label="我的配置列表" @mousemove="edgeHover($event, \'right\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'wb\')">',
     '        <button class="copy-button" type="button" @click="newWbConfig" :disabled="wbBusy">＋ 新建配置</button>',
     '        <p v-if="wbLoading" class="empty-state">加载中…</p>',
     '        <p v-else-if="!wbConfigs.length" class="empty-state">暂无配置：新建或上传一份配置开始校验</p>',
@@ -1434,8 +1447,7 @@ const App = {
     '          <span class="wb-meta">{{ item.format }} · {{ item.size_bytes }} 字节 · {{ item.updated_at }}<em v-if="item.shared" class="wb-shared-badge">已共享</em></span>',
     "        </button>",
     "      </aside>",
-    '      <div class="pane-splitter" title="拖拽调整宽度" @mousedown="startPaneDrag($event, \'wb\')"></div>',
-    '      <section class="wb-editor" aria-label="配置编辑器">',
+    '      <section class="wb-editor" aria-label="配置编辑器" @mousemove="edgeHover($event, \'left\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'wb\')">',
     '        <p class="placeholder dim">配置仅保存在本机数据库；校验为本地静态分析，不联网、不执行。单份内容不超过 2MB。</p>',
     '        <div class="settings-form">',
     '          <label>配置名称<input v-model="wbForm.name" maxlength="80" :disabled="wbBusy" placeholder="例如：生产 nginx 主配置"></label>',
@@ -1547,9 +1559,8 @@ const App = {
     '          <p v-if="!codegenResult.steps || !codegenResult.steps.length" class="placeholder dim">直接生成</p>',
     '          <details v-for="(step,i) in codegenResult.steps" :key="i" class="trace-card"><summary>{{ i + 1 }} · {{ step.tool }}</summary><pre>{{ JSON.stringify(step.args) }}</pre><p>{{ step.result_summary }}</p></details>',
     "        </template>",
-    '        <div class="codegen-output" :style="gridPaneStyle(\'codegen\')"><section><div class="settings-actions"><button class="copy-button" @click="copyScript">复制脚本</button><button class="copy-button" @click="downloadScript">下载 .sh</button></div><pre class="script-source">{{ codegenResult.script }}</pre></section>',
-    '          <div class="pane-splitter" title="拖拽调整宽度" @mousedown="startPaneDrag($event, \'codegen\')"></div>',
-    '          <section><h2>逐段解读</h2><article v-for="(part,i) in codegenResult.explanation" :key="i" class="trace-card"><h3><span class="line-badge">{{ part.lines }}</span> {{ part.title }}</h3><p>{{ part.detail }}</p></article>',
+    '        <div class="codegen-output" :style="gridPaneStyle(\'codegen\')"><section @mousemove="edgeHover($event, \'right\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'codegen\')"><div class="settings-actions"><button class="copy-button" @click="copyScript">复制脚本</button><button class="copy-button" @click="downloadScript">下载 .sh</button></div><pre class="script-source">{{ codegenResult.script }}</pre></section>',
+    '          <section @mousemove="edgeHover($event, \'left\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'codegen\')"><h2>逐段解读</h2><article v-for="(part,i) in codegenResult.explanation" :key="i" class="trace-card"><h3><span class="line-badge">{{ part.lines }}</span> {{ part.title }}</h3><p>{{ part.detail }}</p></article>',
     '            <div class="script-warnings"><p v-for="(warning,i) in codegenResult.warnings" :key="i">⚠ {{ warning }}</p></div><p class="script-usage">{{ codegenResult.usage }}</p>',
     '          </section></div>',
     '      </section>',
@@ -1562,10 +1573,18 @@ const App = {
     "          <h1>运维助手</h1>",
     '          <p>本地知识 + 工作目录{{ asstWorkspaceDirs.length ? "（已授权读写/执行）" : "" }} + 联网；来源可点击跳转</p>',
     "        </div>",
-    '        <span class="result-count">模型推断，请以官方文档为准</span>',
+    '        <div class="asst-summary-wrap">',
+    '          <button class="copy-button" type="button" :disabled="!asstTurns.length" @click="asstSummaryOpen = !asstSummaryOpen">🧭 对话总结（{{ asstTurns.length }}）</button>',
+    '          <div v-if="asstSummaryOpen" class="asst-summary-panel">',
+    '            <p class="placeholder dim">每轮提问的总结（不进入对话），点击跳转</p>',
+    '            <button v-for="(t, i) in asstTurns" :key="t.key" type="button" class="asst-summary-item" @click="jumpAsstTurn(t)">',
+    '              <span class="asst-summary-no">{{ i + 1 }}</span><span class="asst-summary-text">{{ t.summary }}</span>',
+    "            </button>",
+    "          </div>",
+    "        </div>",
     "      </header>",
     '      <div class="asst-layout" :style="gridPaneStyle(\'asst\')">',
-    '        <aside class="asst-sessions" aria-label="会话列表" @mousemove="asstEdgeMove" @mouseleave="asstEdgeLeave" @mousedown="asstEdgeDown">',
+    '        <aside class="asst-sessions" aria-label="会话列表" @mousemove="edgeHover($event, \'right\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'asst\')">',
     '          <button class="copy-button" type="button" @click="newAsstSession" :disabled="asstBusy">＋ 新建对话</button>',
     '          <div class="asst-ws-panel">',
     '            <button class="asst-ws-toggle" type="button" @click="asstWsEditing = !asstWsEditing">📁 工作目录（{{ asstWorkspaceDirs.length }}）</button>',
@@ -1592,10 +1611,10 @@ const App = {
     '            <button v-else class="copy-button asst-del" type="button" @click="pendingDeleteAsstId = s.id" :disabled="asstBusy">删除</button>',
     "          </div>",
     "        </aside>",
-    '        <section class="asst-chat" aria-label="对话消息流" @dragover.prevent="asstDragOver = true" @dragleave="asstDragOver = false" @drop.prevent="dropAsstFiles">',
+    '        <section class="asst-chat" aria-label="对话消息流" @mousemove="edgeHover($event, \'left\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'asst\')" @dragover.prevent="asstDragOver = true" @dragleave="asstDragOver = false" @drop.prevent="dropAsstFiles">',
     '          <div v-if="asstDragOver" class="asst-drop-overlay">松开鼠标，把文件添加为附件</div>',
     '          <div class="asst-messages">',
-    '            <div v-for="m in asstMessages" :key="m.key" :class="m.role === \'user\' ? \'asst-user\' : \'asst-item\'">',
+    '            <div v-for="m in asstMessages" :key="m.key" :data-key="m.key" :class="m.role === \'user\' ? \'asst-user\' : \'asst-item\'">',
     '              <template v-if="m.role === \'tool\'">',
     '                <file-proposal-card v-if="m.tool === \'write_file\'"',
     '                  :proposal="{ filename: m.args.filename || \'\', note: \'\', content: m.args.content || \'\', result: m.result }"',
