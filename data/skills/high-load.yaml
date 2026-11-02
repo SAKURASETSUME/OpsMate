@@ -1,0 +1,16 @@
+name: high-load
+label: 负载高与 CPU 飙升排查
+triggers: [负载高, load 高, cpu 高, cpu 飙升, cpu 100%, 服务器卡顿, 响应变慢, top 排查, us 高, sy 高, wa 高]
+methodology: |
+  1. 先看口径：uptime 的 load 是运行队列长度（含不可中断 IO 等待），要和 CPU 核数对比
+     （load 8 在 32 核是空闲，在 4 核是过载）。
+  2. top/vmstat 1 归因四类：
+     - us 高：用户态计算 → top -H -p 定位线程，py-spy/perf 细化。
+     - sy 高：系统调用/上下文切换 → vmstat 看 cs，常见于频繁小 IO 或锁竞争。
+     - wa 高：IO 等待 → 转"磁盘满与 IO"技能路线。
+     - si/st 高（虚拟机）：宿主机争抢，先查宿主机再怀疑自己。
+  3. 进程级：ps aux --sort=-%cpu | head；注意 kswapd0 高说明内存在换页（free -m 看 available，
+     不是 free 列）。
+  4. 突发型：确认是否有定时任务（crontab -l、/etc/cron.*）、备份、日志切割在撞点。
+  5. 稳态高与突发高分治：稳态看容量（该扩容扩容），突发看触发点（时间对齐日志）。
+example_question: 服务器 load 飙到 20 多了，网站很卡，帮我按顺序定位是什么在吃资源

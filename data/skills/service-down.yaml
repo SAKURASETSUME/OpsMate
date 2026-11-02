@@ -1,0 +1,16 @@
+name: service-down
+label: 服务起不来排查
+triggers: [服务起不来, 起不来, 启动失败, 起动失败, 重启失败, 服务挂了, status 显示 failed, systemctl start 失败, 无法启动]
+methodology: |
+  固定顺序：状态 → 日志 → 端口 → 配置 → 权限，90% 的启动失败停在前两步：
+  1. systemctl status 服务 -l --no-pager：看 Active 状态与最近几行输出（failed 的 exit code 有线索：
+     1 配置错、13 权限、203 路径/解释器问题）。
+  2. journalctl -u 服务 -n 100 --no-pager：启动失败的真正原因几乎总在这里；
+     应用自身日志（如 MySQL error.log、Tomcat catalina.out）同步看。
+  3. 端口占用：ss -tlnp | grep 端口——旧进程没退干净占用端口是最常见原因之一。
+  4. 配置校验：多数服务有校验命令（nginx -t、haproxy -c -f、promtool check config、
+     rabbitmq 无则看日志），改过配置后起不来先跑校验。
+  5. 权限与路径：数据目录属主、SELinux（getenforce，setroubleshoot 日志）、磁盘满。
+  6. 仍然失败：strace -f 服务启动命令 跟系统调用，或退回默认配置能否启动（隔离变量）。
+  禁忌：不要反复 systemctl restart 碰运气；改一项记一项，出问题能回退。
+example_question: nginx 改完配置重启失败了，systemctl 显示 failed，帮我一步步找出原因

@@ -851,7 +851,35 @@ body.pane-dragging .content { pointer-events: none; }
 .asst-tool-name { font-family: var(--mono); color: var(--primary-bright); margin-right: 8px; }
 .asst-tool code { font-family: var(--mono); color: var(--text-faint); }
 .asst-tool p { margin: 4px 0 0; color: var(--text-faint); }
-.asst-composer { display: flex; gap: 10px; align-items: flex-end; margin-top: 12px; }
+.asst-composer { display: flex; gap: 10px; align-items: flex-end; margin-top: 12px; position: relative; }
+.asst-skill-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.asst-skill-chip {
+  border: 1px solid var(--border-strong); border-radius: var(--r-chip);
+  background: var(--inset); color: var(--text-dim); font: inherit; font-size: 12px;
+  padding: 4px 10px; cursor: pointer;
+}
+.asst-skill-chip:hover:not(:disabled) { color: var(--primary); border-color: var(--primary); }
+.asst-skill-chip:disabled { opacity: 0.45; cursor: default; }
+.asst-tools-toggle {
+  flex: none; display: flex; align-items: center; gap: 5px; height: 36px; padding: 0 8px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-card);
+  background: var(--inset); color: var(--text-dim); font-size: 12px; cursor: pointer;
+  user-select: none; white-space: nowrap;
+}
+.asst-tools-toggle:hover { color: var(--text); }
+.asst-tools-toggle input { accent-color: var(--primary); margin: 0; }
+.asst-at-menu {
+  position: absolute; bottom: calc(100% + 6px); left: 0; min-width: 220px; max-width: 60%;
+  display: flex; flex-direction: column; gap: 1px; padding: 4px; z-index: 10;
+  background: var(--raised); border: 1px solid var(--border-strong); border-radius: var(--r-card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.asst-at-item {
+  border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 6px;
+  color: var(--text-dim); font: inherit; font-size: 12.5px; cursor: pointer;
+  font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.asst-at-item:hover { background: var(--inset); color: var(--primary); }
 .asst-composer textarea {
   flex: 1; resize: vertical; min-height: 58px; max-height: 160px; padding: 10px 12px;
   border: 1px solid var(--border-strong); border-radius: var(--r-card);

@@ -83,6 +83,15 @@ def get_config(config_id: int) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
+def get_config_by_name(name: str) -> dict[str, Any] | None:
+    """按名称取完整配置（@引用注入用，不要求开启共享——用户点名即授权）。"""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT id,name,format,content FROM user_configs WHERE name=? ORDER BY id DESC",
+            (name,)).fetchone()
+        return dict(row) if row else None
+
+
 def create_config(name: str, format_: str, content: str) -> dict[str, Any]:
     _check_fields(name, format_, content)
     with connection() as conn:

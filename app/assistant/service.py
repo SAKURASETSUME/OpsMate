@@ -58,6 +58,11 @@ def init_assistant() -> None:
           size_bytes INTEGER NOT NULL,
           path TEXT NOT NULL,
           created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
+        CREATE TABLE IF NOT EXISTS assistant_summaries (
+          session_id INTEGER PRIMARY KEY,
+          compressed_until INTEGER NOT NULL,
+          summary TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
         """)
         columns = {row[1] for row in connection.execute("PRAGMA table_info(assistant_messages)")}
         if "summary" not in columns:
@@ -188,12 +193,37 @@ def conversation_history(session_id: int) -> list[dict[str, str]]:
     return history
 
 
+# ---------------- 长会话滚动摘要（优化方案二） ----------------
+
+def get_summary(session_id: int) -> dict[str, Any] | None:
+    """读取已压缩摘要：{compressed_until, summary}，无则 None。"""
+    with closing(_connect()) as connection:
+        row = connection.execute(
+            "SELECT compressed_until, summary FROM assistant_summaries WHERE session_id=?",
+            (session_id,)).fetchone()
+    return {"compressed_until": row[0], "summary": row[1]} if row else None
+
+
+def save_summary(session_id: int, compressed_until: int, summary: str) -> None:
+    """保存/更新会话摘要（compressed_until = 已压缩进摘要的历史消息条数）。"""
+    with closing(_connect()) as connection:
+        with connection:
+            connection.execute(
+                "INSERT INTO assistant_summaries(session_id, compressed_until, summary, updated_at) "
+                "VALUES (?,?,?,datetime('now','localtime')) "
+                "ON CONFLICT(session_id) DO UPDATE SET "
+                "compressed_until=excluded.compressed_until, summary=excluded.summary, "
+                "updated_at=excluded.updated_at",
+                (session_id, compressed_until, summary))
+
+
 def delete_session(session_id: int) -> bool:
     """删除会话与全部消息。"""
     with closing(_connect()) as connection:
         with connection:
             cursor = connection.execute("DELETE FROM assistant_sessions WHERE id=?", (session_id,))
             connection.execute("DELETE FROM assistant_messages WHERE session_id=?", (session_id,))
+            connection.execute("DELETE FROM assistant_summaries WHERE session_id=?", (session_id,))
             return cursor.rowcount > 0
 
 

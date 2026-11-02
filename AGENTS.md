@@ -22,7 +22,7 @@ OpsMate/                    # 本目录即项目根（含中文路径，注意 s
 │   ├── commands/           # 指令速查：service.py(内存索引+搜索) + routes.py
 │   ├── kb/                 # 配置速查：service.py(YAML 加载) + workbench.py(用户配置校验，Phase 7) + routes.py
 │   ├── llm/                # provider.py(OpenAI 兼容客户端 chat/chat_stream) + routes.py
-│   ├── agent/              # ReAct 引擎 engine.py + 只读工具注册表 tools.py（Phase 4 落地）
+│   ├── agent/              # ReAct 引擎 engine.py + 只读工具注册表 tools.py + skills.py 排查技能（Phase 4 落地）
 │   ├── assistant/          # 运维问答智能体：service.py(会话持久化) + routes.py（Phase 8 落地）
 │   ├── codegen/            # prompts.py(CODEGEN_SYSTEM_PROMPT 全文) + routes.py
 │   └── logs/               # store.py(SQLite) + rules.py(L1 规则引擎) + analyze.py(L2 SSE) + routes.py
@@ -30,6 +30,7 @@ OpsMate/                    # 本目录即项目根（含中文路径，注意 s
 ├── data/                   # 运行时数据（.gitignore；打包后随 exe）
 │   ├── commands/           # 621 个命令 md
 │   ├── kb/                 # 15 软件 YAML：nginx/zabbix/keepalived/kafka/redis/docker + mysql/postgresql/rabbitmq/elasticsearch/prometheus/haproxy/tomcat/zookeeper/firewalld（后九个 2026-11-02 扩充）
+│   ├── skills/             # 通用排查技能 YAML（网络/磁盘/负载/服务四板斧 + 变更 checklist + 巡检报告，2026-11-02 优化方案三）
 │   ├── opsmate.db          # SQLite
 │   └── config.json         # {provider, base_url, model, api_key}
 ├── tools/import_commands.py  # 数据导入（三级降级）
@@ -76,7 +77,7 @@ python main.py
 python tools/import_commands.py --force
 
 # 打包（onedir 模式；每个 Phase 完成后都应复打一次冒烟）
-pyinstaller --noconsole --name OpsMate --add-data "app:app" --add-data "data/commands:data/commands" --add-data "data/kb:data/kb" main.py
+pyinstaller --noconsole --name OpsMate --add-data "app:app" --add-data "data/commands:data/commands" --add-data "data/kb:data/kb" --add-data "data/skills:data/skills" main.py
 # exe 启动失败/报找不到后端时，追加 --hidden-import=webview.platforms.winforms（必要时 --collect-all webview）重打
 ```
 
@@ -85,7 +86,7 @@ pyinstaller --noconsole --name OpsMate --add-data "app:app" --add-data "data/com
 - **Never 引入清单外依赖**：Node/npm/Vite/webpack 等前端构建链、Docker、LangChain、ORM、Redis、UI 组件库、highlight.js 一律禁止；修改依赖清单属设计变更，必须先记 PHASE_LOG.md 并征求用户同意。
 - **Never 擅改契约**：API 路径、JSON 字段名、表结构、目录文件名、Phase 验收标准。
 - **Never 泄露密钥**：任何 API 响应/日志/打印不得出现 `api_key` 明文，只回传 `api_key_set: true/false`。
-- **模型配置仅本机保存**（2026-10-30 用户确认）：`data/config.json`、`data/model_profiles.json` 及其临时文件严禁提交 Git、项目分享或打入安装包；打包仅白名单 app、data/commands、data/kb，禁止整目录打包 data。付费模型须由用户填写并显式启用。
+- **模型配置仅本机保存**（2026-10-30 用户确认）：`data/config.json`、`data/model_profiles.json` 及其临时文件严禁提交 Git、项目分享或打入安装包；打包仅白名单 app、data/commands、data/kb、data/skills，禁止整目录打包 data。付费模型须由用户填写并显式启用。
 - **Never 把解读写进脚本**：codegen 的 `script` 字段内只有代码与代码注释，解读只存在于 `explanation` 数组——验收标准包含"script 内搜索不到'解读''分析'字样"。
 - **Never 整库克隆 linux-command**（仓库含截图约 4GB；只要 `command/*.md`，走 sparse clone / contents API / 手动 zip 三级降级）；Never 在缺数据时不走降级路径直接报失败——用占位数据过验收并在 PHASE_LOG 标注"待补数据"。
 - **Never 写死端口**（`socket().bind(("127.0.0.1", 0))` 取空闲端口）。

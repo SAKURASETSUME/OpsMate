@@ -370,7 +370,8 @@ CREATE TABLE IF NOT EXISTS user_configs (
 | POST | `/api/logs/{id}/llm-analyze` | `{"focus"?}` | **SSE 流**：先发过程事件 `data: {"tool":"filter_log","args":{...},"result":"..."}`（可多条，诊断智能体下钻轨迹）→ `data: {"delta":"..."}` 逐段 → 结束 `data: {"done":true,"report_id":N}`；错误发 `data: {"error":"..."}`；完成后报告落 reports 表 |
 | GET | `/api/logs/{id}/reports` | - | `{"items":[{id,model,created_at}]}` |
 | GET | `/api/logs/{id}/reports/{rid}` | - | `{"content":"markdown"}` |
-| POST | `/api/assistant/chat` | `{"message","session_id"?,"attachments":[附件id]?}` | **SSE 流**：过程事件 `data: {"tool","args","result"}` / 文件提案 `data: {"proposal":{"filename","note","content"}}`（不落盘，待用户确认）→ `data: {"thinking":"..."}`（思考型模型）→ `data: {"delta":"..."}` → 结束 `data: {"done":true,"session_id":N}`；错误 `data: {"error":"..."}`；消息落 assistant_messages（附件归属用户消息行） |
+| POST | `/api/assistant/chat` | `{"message","session_id"?,"attachments":[附件id]?,"effort"?,"workspace"?,"tools":bool=true,"config_refs":[工坊配置名]?}` | **SSE 流**：过程事件 `data: {"tool","args","result","step":"N/12"}` / 文件提案 `data: {"proposal":{"filename","note","content"}}`（不落盘，待用户确认）→ `data: {"thinking":"..."}`（思考型模型，规划轮与终答均流式）→ `data: {"delta":"..."}` → 结束 `data: {"done":true,"session_id":N}`；错误 `data: {"error":"..."}`；消息落 assistant_messages（附件归属用户消息行）。`tools=false` 直连模式：跳过工具规划，问题直发配置模型；`config_refs` 把用户 @ 引用的工坊配置内容注入当轮消息（点名即授权，不要求共享开关）；长会话超阈值自动滚动摘要（`assistant_summaries` 表），最近 6 条保持原文，压缩失败退全量 |
+| GET | `/api/assistant/skills` | - | `{"items":[{name,label,example_question}]}`（data/skills 通用排查技能清单，命中关键词自动注入方法论） |
 | GET | `/api/assistant/sessions` | - | `{"items":[{id,title,updated_at}]}`（倒序） |
 | GET | `/api/assistant/sessions/{id}` | - | `{"messages":[{id,role,content}]}`（tool 行 content 为 JSON 轨迹字符串） |
 | DELETE | `/api/assistant/sessions/{id}` | - | `{"ok":true}`（连带删消息） |
@@ -452,7 +453,7 @@ CREATE TABLE IF NOT EXISTS user_configs (
 **验收**：问"nginx 怎么平滑重载"→ 回答包含 `nginx -s reload` 且带可跳转来源（跳到配置速查 nginx 分组）；问"磁盘占用排查用什么命令"→ 引用 df/du 文档来源；连续追问能理解上下文（"那它和 du 的区别呢"无需重复背景）；会话列表可回看历史、可删除；无 key 时明确引导去设置页；SSE 流式渲染 markdown 正常。
 
 ### Phase 9 · 打磨与打包
-**做**：全局 UI 走查（空态/loading/错误态文案中文）；`pyinstaller --noconsole --name OpsMate --add-data "app;app" --add-data "data/commands;data/commands" --add-data "data/kb;data/kb" main.py`（Windows 下 `--add-data` 分隔符为分号 `;`，以附录 A 第 6 条为准——本文档及 AGENTS.md 早期写法中的冒号一律以分号为准）（**全量知识数据必须打进包**：`data/commands/` 与 `data/kb/` 随 exe 发布，保证双击即有全量数据，不要求用户跑任何导入脚本；`data/config.json`（含用户 API key）与 `opsmate.db` **不打包**，由 `app/config.py` 在 frozen 态首启动时于 exe 旁 `data/` 自动创建，并把包内 commands/kb 拷贝落地一次，运行期始终读写 exe 旁副本）；README.md（功能简介、首次配置模型 key 指引、数据目录说明、常见问题：WebView2 缺失/端口占用/编码）；图标（可选，无素材则跳过并记录）。
+**做**：全局 UI 走查（空态/loading/错误态文案中文）；`pyinstaller --noconsole --name OpsMate --add-data "app;app" --add-data "data/commands;data/commands" --add-data "data/kb;data/kb" --add-data "data/skills;data/skills" main.py`（Windows 下 `--add-data` 分隔符为分号 `;`，以附录 A 第 6 条为准——本文档及 AGENTS.md 早期写法中的冒号一律以分号为准）（**全量知识数据必须打进包**：`data/commands/`、`data/kb/` 与 `data/skills/` 随 exe 发布，保证双击即有全量数据，不要求用户跑任何导入脚本；`data/config.json`（含用户 API key）与 `opsmate.db` **不打包**，由 `app/config.py` 在 frozen 态首启动时于 exe 旁 `data/` 自动创建，并把包内 commands/kb/skills 拷贝落地一次，运行期始终读写 exe 旁副本）；README.md（功能简介、首次配置模型 key 指引、数据目录说明、常见问题：WebView2 缺失/端口占用/编码）；图标（可选，无素材则跳过并记录）。
 **验收**：`dist/OpsMate/OpsMate.exe` 双击启动，功能抽测（搜索一个命令、看一个配置 Tab、校验一份用户配置、生成一个脚本需真 key、上传一份日志并过滤、问运维助手一个问题需真 key）；exe 旁生成 data/ 且重启数据仍在；首次启动自动落地全量知识数据（commands ≥600、kb 15 软件齐全），无需任何手动导入；README 存在且含模型配置章节；PHASE_LOG.md 覆盖全部 Phase。
 
 ---

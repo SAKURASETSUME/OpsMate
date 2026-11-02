@@ -1,0 +1,14 @@
+name: network-unreachable
+label: 网络不通排查
+triggers: [网络不通, 连不上, ping 不通, ping不通, 端口不通, telnet 不通, 无法访问, 连接超时, 连接拒绝, connection refused, timeout]
+methodology: |
+  按五层顺序逐层排查，先确定"断在哪一层"再深入：
+  1. 本机层：ip addr / ip route 确认源地址与路由存在；ping 127.0.0.1 排除本机协议栈问题。
+  2. 链路层：ping 网关；不通查 ARP（arp -n）与交换机/线缆/网卡状态（ethtool eth0）。
+  3. 网络层：ping 目标 IP；通但不通域名 → DNS 问题（dig/nslookup + /etc/resolv.conf）。
+     跨网段不通 → traceroute 定位断点跳数。
+  4. 传输层：nc -zv 目标 端口 / telnet 测端口；端口不通查目标侧监听（ss -tlnp）与防火墙
+     （firewalld/iptables 两端都要查，云环境还有安全组）。
+  5. 应用层：端口通但服务异常 → curl -v 看握手与响应码，转服务自身日志排查。
+  常见误区：只 ping 不测端口（服务禁 ICMP）；只查一端防火墙；NAT 环境忘了回程路由。
+example_question: 生产机 192.0.2.51 的 3306 端口突然连不上了，帮我按套路排查

@@ -1,0 +1,18 @@
+name: disk-full
+label: 磁盘满与 IO 高排查
+triggers: [磁盘满, 磁盘空间不足, no space left, 写入失败, inode 用完, 磁盘IO高, io 高, iowait 高, iotop, df 100]
+methodology: |
+  先区分"空间满"还是"IO 慢"，两条路线：
+  【空间满】
+  1. df -h 定位哪个挂载点满；df -i 查 inode（小文件海量场景 inode 先满，空间看起来还有）。
+  2. du -x --max-depth=2 挂载点 | sort -rh | head 逐层下钻找大目录（-x 不跨文件系统）。
+  3. 高频元凶：日志（logrotate 配置是否失效）、core dump、docker 镜像/容器日志
+     （docker system df + 容器 json.log）、数据库 binlog/慢日志、/tmp。
+  4. 删除后 df 仍不降 → 文件被进程持有（lsof +L1 找 deleted 大文件），重启持有进程或清空
+     (> 大文件) 而不是 rm。
+  5. 清理原则：先确认再删，业务数据永远先备份/迁移而不是直接删。
+  【IO 高】
+  1. iostat -x 1 看 %util 与 await 定位具体设备。
+  2. iotop -oP 定位进程，再 strace/pidstat 细化到线程与文件。
+  3. 常见原因：数据库全表扫描、日志刷盘风暴、备份任务窗口、RAID 卡降级。
+example_question: 服务器根目录使用率 95% 了，帮我按步骤找出占空间的元凶

@@ -256,7 +256,8 @@ const App = {
       asstActiveWorkspace: "",
       asstWorkspaceDirs: [], asstWsInput: "", asstWsEditing: false, asstWsBusy: false,
       asstCollapsed: {}, asstCtx: { show: false, x: 0, y: 0, workspace: "" },
-      asstEffort: "high",
+      asstEffort: "high", asstUseTools: true, asstSkills: [],
+      asstConfigOptions: null, asstAtMenu: { show: false, filter: "" },
       verItems: [], verLoading: false, verBusy: false, verEditingId: null,
       verForm: { package: "", version: "", description: "", release_date: "" },
       verFilters: { package: "", version: "", description: "" }, verFilterTimer: null,
@@ -303,6 +304,11 @@ const App = {
       }
       groups.push(fallback);
       return groups;
+    },
+    asstAtMatches() {
+      if (!this.asstAtMenu.show || !this.asstConfigOptions) return [];
+      const q = this.asstAtMenu.filter.toLowerCase();
+      return this.asstConfigOptions.filter((n) => !q || n.toLowerCase().includes(q)).slice(0, 6);
     },
     filteredNotes() {
       if (this.noteFilter === "open") return this.noteItems.filter((n) => n.done !== 1);
@@ -360,6 +366,7 @@ const App = {
       if (nextPage === "settings" && !this.settingsLoaded) this.loadSettings();
       if (nextPage === "codegen") this.loadCodegenHistory();
       if (nextPage === "assistant" && !this.asstSessions.length) { this.loadAsstSessions(); this.loadAsstWorkspace(); }
+      if (nextPage === "assistant" && !this.asstSkills.length) this.loadAsstSkills();
       if (nextPage === "versions" && !this.verItems.length) this.loadVersions();
       if (nextPage === "notes" && !this.noteItems.length) this.loadNotes();
     },
@@ -973,6 +980,53 @@ const App = {
       this.asstEffort = value;
       try { localStorage.setItem("opsmate-asst-effort", value); } catch (err) { /* 忽略 */ }
     },
+    /* ============ 本地工具开关 / 技能 / @引用配置 ============ */
+    toggleAsstTools(event) {
+      this.asstUseTools = event.target.checked;
+      try { localStorage.setItem("opsmate-asst-tools", this.asstUseTools ? "1" : "0"); } catch (err) { /* 忽略 */ }
+      showToast(this.asstUseTools ? "已启用本地工具：检索知识库、工作目录读写与联网"
+        : "直连模式：问题直接发送给你配置的模型，不调用本地工具");
+    },
+    async loadAsstSkills() {
+      try { this.asstSkills = (await apiFetch("/api/assistant/skills")).items; }
+      catch (err) { /* 统一提示 */ }
+    },
+    fillSkill(skill) {
+      if (this.asstBusy) return;
+      const box = this.$refs.asstInput;
+      this.asstInput = skill.example_question || skill.label;
+      if (box) box.focus();
+    },
+    async ensureConfigOptions() {
+      if (this.asstConfigOptions) return this.asstConfigOptions;
+      try {
+        this.asstConfigOptions = (await apiFetch("/api/kb/workbench/configs")).items
+          .map((c) => c.name);
+      } catch (err) { this.asstConfigOptions = []; }
+      return this.asstConfigOptions;
+    },
+    async asstInputChanged() {
+      // 输入以 @词尾 结束时弹出"我的配置"引用层
+      const match = /(?:^|\s)@([^\s@]*)$/.exec(this.asstInput);
+      if (!match) { this.asstAtMenu.show = false; return; }
+      await this.ensureConfigOptions();
+      this.asstAtMenu = { show: true, filter: match[1] };
+    },
+    pickAsstConfig(name) {
+      this.asstInput = this.asstInput.replace(/@([^\s@]*)$/, "@" + name + " ");
+      this.asstAtMenu.show = false;
+      const box = this.$refs.asstInput;
+      if (box) box.focus();
+    },
+    collectConfigRefs(text) {
+      if (!this.asstConfigOptions || !this.asstConfigOptions.length) return [];
+      const known = new Set(this.asstConfigOptions);
+      const refs = [];
+      for (const m of text.matchAll(/@([^\s@，。,]+)/g)) {
+        if (known.has(m[1]) && !refs.includes(m[1])) refs.push(m[1]);
+      }
+      return refs.slice(0, 5);
+    },
     cleanThinking(text) {
       // 思考型模型在思考中会逐字组织协议 JSON；展示前转成可读的工具调用意图。
       // 平衡花括号扫描定位完整对象（嵌套 args 会让惰性正则提前截断）。
@@ -1303,6 +1357,7 @@ const App = {
       const drafts = this.asstDraftFiles.slice();
       if (!text && !drafts.length) return;
       this.asstInput = "";
+      this.asstAtMenu.show = false; // 发送后关闭 @ 引用弹层，避免残留误选
       this.asstDraftFiles = [];
       const message = text || "（见附件）";
       if (this.asstBusy) {
@@ -1328,7 +1383,8 @@ const App = {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: message, session_id: this.asstSessionId,
             attachments: drafts.map((d) => d.id), effort: this.asstEffort,
-            workspace: this.asstActiveWorkspace }),
+            workspace: this.asstActiveWorkspace, tools: this.asstUseTools,
+            config_refs: this.collectConfigRefs(message) }),
           signal: controller.signal,
         }, 305000, async (response) => {
           const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8"); let buffer = ""; let completed = false;
@@ -1482,6 +1538,7 @@ const App = {
     });
     try { this.themePref = localStorage.getItem("opsmate-theme") || "auto"; } catch (err) { /* 默认跟随系统 */ }
     try { this.asstEffort = localStorage.getItem("opsmate-asst-effort") || "high"; } catch (err) { /* 默认高 */ }
+    try { this.asstUseTools = localStorage.getItem("opsmate-asst-tools") !== "0"; } catch (err) { /* 默认开 */ }
     try { this.asstActiveWorkspace = localStorage.getItem("opsmate-asst-ws") || ""; } catch (err) { /* 默认未分组 */ }
     this.applyTheme();
     if (window.matchMedia) {
@@ -1499,7 +1556,7 @@ const App = {
     if (this.page === "logs") this.refreshLogsRoute();
     if (this.page === "codegen") this.loadCodegenHistory();
     if (this.page === "settings") this.loadSettings();
-    if (this.page === "assistant") { this.loadAsstSessions(); this.loadAsstWorkspace(); }
+    if (this.page === "assistant") { this.loadAsstSessions(); this.loadAsstWorkspace(); this.loadAsstSkills(); }
     if (this.page === "versions") this.loadVersions();
     if (this.page === "notes") this.loadNotes();
     window.addEventListener("hashchange", () => {
@@ -1883,12 +1940,20 @@ const App = {
     "            </span>",
     "          </div>",
     '          <p v-if="asstError" class="regex-error" role="alert">{{ asstError }} <a href="#/settings">前往模型设置</a></p>',
+    '          <div v-if="asstSkills.length" class="asst-skill-row">',
+    '            <button v-for="s in asstSkills" :key="s.name" type="button" class="asst-skill-chip" :title="s.example_question" :disabled="asstBusy" @click="fillSkill(s)">{{ s.label }}</button>',
+    "          </div>",
     '          <form class="asst-composer" @submit.prevent="trySendAsst">',
+    '            <div v-if="asstAtMenu.show && asstAtMatches.length" class="asst-at-menu">',
+    '              <button v-for="name in asstAtMatches" :key="name" type="button" class="asst-at-item" @mousedown.prevent="pickAsstConfig(name)">@{{ name }}</button>',
+    "            </div>",
     '            <label class="copy-button asst-attach-btn" title="添加附件">📎<input type="file" multiple accept=".txt,.md,.log,.conf,.cfg,.ini,.yaml,.yml,.json,.properties,.toml,.csv,.sh,.bash,.py,.pl,.rb,.go,.js,.ts,.java,.sql,.xml,.html,.css,.env,.service,image/png,image/jpeg,image/gif,image/webp,image/bmp" @change="chooseAsstFile"></label>',
-    '            <textarea v-model="asstInput" rows="2" :placeholder="asstBusy ? \'回答中…可继续输入，回车加入队列\' : \'\'" @keydown.enter.exact.prevent="askKeydown" @paste="pasteAsstFiles"></textarea>',
+    '            <textarea v-model="asstInput" ref="asstInput" rows="2" :placeholder="asstBusy ? \'回答中…可继续输入，回车加入队列\' : \'\'" @keydown.enter.exact.prevent="askKeydown" @paste="pasteAsstFiles" @input="asstInputChanged"></textarea>',
     '            <select class="asst-effort" :value="asstEffort" title="思考强度：影响质量与速度" @change="setAsstEffort($event.target.value)">',
     '              <option value="low">思考·低</option><option value="medium">思考·中</option>',
     '              <option value="high">思考·高</option><option value="max">思考·最高</option></select>',
+    '            <label class="asst-tools-toggle" :title="asstUseTools ? \'本地工具：知识库检索/工作目录读写/联网\' : \'直连模式：问题直接发送给你配置的模型\'">',
+    '              <input type="checkbox" :checked="asstUseTools" @change="toggleAsstTools">本地工具</label>',
     '            <button class="copy-button" type="submit" :disabled="!asstInput.trim()">{{ asstBusy ? "排队" : "发送" }}</button>',
     '            <button v-if="asstBusy" class="copy-button" type="button" @click="asstAbort.abort()">停止</button>',
     "          </form>",
