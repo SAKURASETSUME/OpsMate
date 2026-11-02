@@ -809,9 +809,9 @@ body.pane-dragging .content { pointer-events: none; }
 
 .asst-chat { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 .asst-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 4px 16px; display: flex; flex-direction: column; gap: 12px; }
-.asst-user { align-self: flex-end; }
+.asst-user { align-self: flex-end; max-width: 78%; }
 .asst-bubble-user {
-  max-width: 78%; padding: 10px 14px;
+  padding: 10px 14px;
   background: var(--primary-soft); border: 1px solid var(--primary-line);
   color: var(--text); border-radius: 12px 12px 2px 12px;
   white-space: pre-wrap; overflow-wrap: anywhere;

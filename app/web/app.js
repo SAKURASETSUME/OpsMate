@@ -1731,7 +1731,7 @@ const App = {
     "                  <p>{{ m.result }}</p>",
     "                </div>",
     "              </template>",
-    '              <div v-else-if="m.role === \'user\'" class="asst-user">',
+    '              <div v-else-if="m.role === \'user\'">',
     '                <div class="asst-bubble-user">{{ m.content }}</div>',
     '                <div v-if="m.attachments && m.attachments.length" class="asst-attach-row">',
     '                  <span v-for="(a,ai) in m.attachments" :key="ai" class="asst-attach-chip" :title="a.name">',
