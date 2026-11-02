@@ -966,29 +966,13 @@ const App = {
       document.documentElement.dataset.theme =
         this.themePref === "auto" ? (preferDark ? "dark" : "light") : this.themePref;
     },
-    /* ============ 面板边界拖拽（热区=UI 边界两侧各 6px，无独立分隔条） ============ */
+    /* ============ 面板边界拖拽（边界覆盖式把手，见模板 .edge-handle） ============ */
     gridPaneStyle(key) {
       if (key === "codegen") {
         const left = Math.min(0.75, Math.max(0.25, this.paneWidths.codegen));
         return { gridTemplateColumns: `minmax(0, ${left}fr) minmax(0, ${1 - left}fr)` };
       }
       return { gridTemplateColumns: `${this.paneWidths[key]}px minmax(0, 1fr)` };
-    },
-    edgeHover(event, side) {
-      const el = event.currentTarget;
-      const rect = el.getBoundingClientRect();
-      const within = side === "right" ? rect.right - event.clientX <= 6 : event.clientX - rect.left <= 6;
-      el.classList.toggle(side === "right" ? "edge-resize-right" : "edge-resize-left", within);
-    },
-    edgeLeave(event) {
-      event.currentTarget.classList.remove("edge-resize-right", "edge-resize-left");
-    },
-    edgeDrag(event, key) {
-      const el = event.currentTarget;
-      const rect = el.getBoundingClientRect();
-      const atBoundary = rect.right - event.clientX <= 6 || event.clientX - rect.left <= 6;
-      if (event.button !== 0 || !atBoundary) return;
-      this.startPaneDrag(event, key);
     },
     startPaneDrag(event, key) {
       event.preventDefault();
@@ -997,17 +981,17 @@ const App = {
       const limits = { commands: [180, 640], wb: [200, 720], asst: [200, 520], side: [160, 320] }[key];
       const startX = event.clientX;
       const startWidth = this.paneWidths[key];
-      const container = event.currentTarget.closest(".layout, .asst-layout, .wb-layout, .command-browser, .codegen-output");
+      const container = event.currentTarget.parentElement;
       const totalPx = Math.max(container ? container.clientWidth : 800, 1);
       const startRatio = this.paneWidths.codegen;
       const grabbed = event.currentTarget;
-      grabbed.classList.add("edge-dragging");
+      grabbed.classList.add("active");
       document.body.classList.add("pane-dragging");
       const cleanup = () => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", cleanup);
         window.removeEventListener("blur", cleanup);
-        grabbed.classList.remove("edge-dragging");
+        grabbed.classList.remove("active");
         document.body.classList.remove("pane-dragging");
         try { localStorage.setItem("opsmate-pane-widths", JSON.stringify(this.paneWidths)); } catch (err) { /* 忽略持久化失败 */ }
       };
@@ -1370,7 +1354,7 @@ const App = {
   },
   template: [
     '<div class="layout">',
-    '  <aside class="sidebar" :style="{ width: paneWidths.side + \'px\' }" @mousemove="edgeHover($event, \'right\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'side\')">',
+    '  <aside class="sidebar" :style="{ width: paneWidths.side + \'px\' }">',
     '    <div class="logo">OpsMate</div>',
     '    <p class="logo-sub">运维提效智能体</p>',
     '    <nav>',
@@ -1379,6 +1363,7 @@ const App = {
     "    </nav>",
     '    <div class="side-status"><span class="status-dot"></span><span>{{ backendHost }}</span></div>',
     "  </aside>",
+    '  <div class="edge-handle" title="拖拽调整宽度" :style="{ left: paneWidths.side + \'px\' }" @mousedown="startPaneDrag($event, \'side\')"></div>',
     '  <main class="content">',
     '    <section v-if="page === \'commands\'" class="commands-page">',
     '      <header class="page-header">',
@@ -1391,7 +1376,7 @@ const App = {
     '               placeholder="输入命令名或中文关键词，例如：磁盘" autocomplete="off">',
     '      </label>',
     '      <div class="command-browser" :style="gridPaneStyle(\'commands\')">',
-    '        <aside class="command-list" aria-label="命令搜索结果" @mousemove="edgeHover($event, \'right\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'commands\')">',
+    '        <aside class="command-list" aria-label="命令搜索结果">',
     '          <button v-for="item in commandItems" :key="item.name" type="button"',
     '                  :class="{ active: selectedCommand && selectedCommand.name === item.name }"',
     '                  @click="selectCommand(item.name)">',
@@ -1399,6 +1384,7 @@ const App = {
     '          </button>',
     '          <p v-if="!commandLoading && commandItems.length === 0" class="empty-state">未找到匹配命令</p>',
     '        </aside>',
+    '        <div class="edge-handle" title="拖拽调整宽度" :style="{ left: paneWidths.commands + \'px\' }" @mousedown="startPaneDrag($event, \'commands\')"></div>',
     '        <article class="command-detail">',
     '          <div v-if="selectedCommand" class="command-detail-head">',
     '            <div><h2>{{ selectedCommand.name }}</h2><p>{{ selectedCommand.title }}</p></div>',
@@ -1493,7 +1479,7 @@ const App = {
     "      </div>",
     "    </template>",
     '    <div v-else class="wb-layout" :style="gridPaneStyle(\'wb\')">',
-    '      <aside class="wb-list" aria-label="我的配置列表" @mousemove="edgeHover($event, \'right\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'wb\')">',
+    '      <aside class="wb-list" aria-label="我的配置列表">',
     '        <button class="copy-button" type="button" @click="newWbConfig" :disabled="wbBusy">＋ 新建配置</button>',
     '        <p v-if="wbLoading" class="empty-state">加载中…</p>',
     '        <p v-else-if="!wbConfigs.length" class="empty-state">暂无配置：新建或上传一份配置开始校验</p>',
@@ -1503,6 +1489,7 @@ const App = {
     '          <span class="wb-meta">{{ item.format }} · {{ item.size_bytes }} 字节 · {{ item.updated_at }}<em v-if="item.shared" class="wb-shared-badge">已共享</em></span>',
     "        </button>",
     "      </aside>",
+    '      <div class="edge-handle" title="拖拽调整宽度" :style="{ left: paneWidths.wb + \'px\' }" @mousedown="startPaneDrag($event, \'wb\')"></div>',
     '      <section class="wb-editor" aria-label="配置编辑器">',
     '        <p class="placeholder dim">配置仅保存在本机数据库；校验为本地静态分析，不联网、不执行。单份内容不超过 2MB。</p>',
     '        <div class="settings-form">',
@@ -1615,7 +1602,8 @@ const App = {
     '          <p v-if="!codegenResult.steps || !codegenResult.steps.length" class="placeholder dim">直接生成</p>',
     '          <details v-for="(step,i) in codegenResult.steps" :key="i" class="trace-card"><summary>{{ i + 1 }} · {{ step.tool }}</summary><pre>{{ JSON.stringify(step.args) }}</pre><p>{{ step.result_summary }}</p></details>',
     "        </template>",
-    '        <div class="codegen-output" :style="gridPaneStyle(\'codegen\')"><section @mousemove="edgeHover($event, \'right\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'codegen\')"><div class="settings-actions"><button class="copy-button" @click="copyScript">复制脚本</button><button class="copy-button" @click="downloadScript">下载 .sh</button></div><pre class="script-source">{{ codegenResult.script }}</pre></section>',
+    '        <div class="codegen-output" :style="gridPaneStyle(\'codegen\')"><section><div class="settings-actions"><button class="copy-button" @click="copyScript">复制脚本</button><button class="copy-button" @click="downloadScript">下载 .sh</button></div><pre class="script-source">{{ codegenResult.script }}</pre></section>',
+    '          <div class="edge-handle" title="拖拽调整宽度" :style="{ left: (paneWidths.codegen * 100) + \'%\' }" @mousedown="startPaneDrag($event, \'codegen\')"></div>',
     '          <section><h2>逐段解读</h2><article v-for="(part,i) in codegenResult.explanation" :key="i" class="trace-card"><h3><span class="line-badge">{{ part.lines }}</span> {{ part.title }}</h3><p>{{ part.detail }}</p></article>',
     '            <div class="script-warnings"><p v-for="(warning,i) in codegenResult.warnings" :key="i">⚠ {{ warning }}</p></div><p class="script-usage">{{ codegenResult.usage }}</p>',
     '          </section></div>',
@@ -1640,7 +1628,7 @@ const App = {
     "        </div>",
     "      </header>",
     '      <div class="asst-layout" :style="gridPaneStyle(\'asst\')">',
-    '        <aside class="asst-sessions" aria-label="会话列表" @mousemove="edgeHover($event, \'right\')" @mouseleave="edgeLeave" @mousedown="edgeDrag($event, \'asst\')">',
+    '        <aside class="asst-sessions" aria-label="会话列表">',
     '          <button class="copy-button" type="button" @click="newAsstSession" :disabled="asstBusy">＋ 新建对话</button>',
     '          <div class="asst-ws-panel">',
     '            <button class="asst-ws-toggle" type="button" @click="asstWsEditing = !asstWsEditing">📁 工作目录（{{ asstWorkspaceDirs.length }}）</button>',
@@ -1667,6 +1655,7 @@ const App = {
     '            <button v-else class="copy-button asst-del" type="button" @click="pendingDeleteAsstId = s.id" :disabled="asstBusy">删除</button>',
     "          </div>",
     "        </aside>",
+    '        <div class="edge-handle" title="拖拽调整宽度" :style="{ left: paneWidths.asst + \'px\' }" @mousedown="startPaneDrag($event, \'asst\')"></div>',
     '        <section class="asst-chat" aria-label="对话消息流" @dragover.prevent="asstDragOver = true" @dragleave="asstDragOver = false" @drop.prevent="dropAsstFiles">',
     '          <div v-if="asstDragOver" class="asst-drop-overlay">松开鼠标，把文件添加为附件</div>',
     '          <div class="asst-messages">',
