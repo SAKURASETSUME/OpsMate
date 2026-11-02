@@ -247,6 +247,16 @@ def main() -> None:
         assert not execute_tool("write_workspace_file", {"path": str(Path(folder) / "escape.txt"), "content": "x"})["ok"]
         run = execute_tool("run_command", {"command": "echo opsmate-ws-ok"})
         assert run["ok"] and "opsmate-ws-ok" in run["result"]["stdout"], run
+        # 资源管理器打开端点：仅限已授权目录（越界 400；mock startfile，不真弹窗）
+        import os as verify_os
+        with _patch.object(verify_os, "startfile") as fake_start:
+            opened = client.post("/api/assistant/workspace/open", json={"path": str(ws_dir)})
+            assert opened.status_code == 200 and opened.json()["ok"]
+            fake_start.assert_called_once_with(str(ws_dir))
+            assert client.post("/api/assistant/workspace/open",
+                               json={"path": str(ws_dir / "sub")}).status_code == 400
+            assert client.post("/api/assistant/workspace/open",
+                               json={"path": "Z:\\不存在"}).status_code == 400
         # 联网：搜索解析（mock HTML）与内网防护
         fake_bing = ('<li class="b_algo"><h2><a href="https://example.com/a">结果 A</a></h2>'
                      "<p>摘要 内容</p></li><li class=\"b_algo\"><h2><a href=\"https://example.com/b\">结果 B</a></h2></li>")

@@ -123,7 +123,7 @@ const RegexPreview = {
     },
   },
   watch: { pattern() { this.preview(); }, text() { this.preview(); }, flags() { this.preview(); } },
-  mounted() { this.preview(); },
+  mounted() { this.preview(); window.addEventListener("click", this.closeAsstCtx); },
   beforeUnmount() { clearTimeout(this.timer); if (this.worker) this.worker.terminate(); },
   methods: {
     preview() {
@@ -254,7 +254,8 @@ const App = {
       asstBusy: false, asstAbort: null, asstError: "", pendingDeleteAsstId: null, asstKeySeq: 0,
       asstDraftFiles: [], asstDragOver: false, asstSummaryOpen: false,
       asstActiveWorkspace: "",
-      asstWorkspaceDirs: [], asstWsInput: "", asstWsEditing: false, asstWsBusy: false, pendingRemoveWsDir: "",
+      asstWorkspaceDirs: [], asstWsInput: "", asstWsEditing: false, asstWsBusy: false,
+      asstCollapsed: {}, asstCtx: { show: false, x: 0, y: 0, workspace: "" },
       asstEffort: "low",
       verItems: [], verLoading: false, verBusy: false, verEditingId: null,
       verForm: { package: "", version: "", description: "", release_date: "" },
@@ -1065,6 +1066,67 @@ const App = {
         this.asstSessions = (await apiFetch("/api/assistant/sessions")).items;
       } catch (err) { /* 统一提示 */ }
     },
+    /* ---- 分组折叠与右键菜单 ---- */
+    groupKey(workspace) { return workspace || "__none__"; },
+    groupCollapsed(workspace) { return Boolean(this.asstCollapsed[this.groupKey(workspace)]); },
+    toggleGroup(workspace) {
+      const key = this.groupKey(workspace);
+      if (this.asstCollapsed[key]) delete this.asstCollapsed[key];
+      else this.asstCollapsed = { ...this.asstCollapsed, [key]: true };
+      try { localStorage.setItem("opsmate-asst-collapsed", JSON.stringify(this.asstCollapsed)); } catch (err) { /* 忽略 */ }
+    },
+    onGroupCtxMenu(event, workspace) {
+      this.asstCtx = {
+        show: true, workspace,
+        x: Math.min(event.clientX, window.innerWidth - 190),
+        y: Math.min(event.clientY, window.innerHeight - 230),
+      };
+    },
+    closeAsstCtx() { this.asstCtx = { ...this.asstCtx, show: false }; },
+    ctxNewSession() {
+      const workspace = this.asstCtx.workspace;
+      this.closeAsstCtx();
+      if (this.groupCollapsed(workspace)) this.toggleGroup(workspace);
+      this.newAsstSessionIn(workspace);
+    },
+    ctxToggleGroup() {
+      const workspace = this.asstCtx.workspace;
+      this.closeAsstCtx();
+      this.toggleGroup(workspace);
+    },
+    async ctxOpenExplorer() {
+      const path = this.asstCtx.workspace;
+      this.closeAsstCtx();
+      try {
+        await apiFetch("/api/assistant/workspace/open", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path }),
+        });
+        showToast("已在资源管理器中打开：" + this.wsDirName(path));
+      } catch (err) { /* apiFetch 统一提示 */ }
+    },
+    async ctxCopyPath() {
+      const path = this.asstCtx.workspace;
+      this.closeAsstCtx();
+      let ok = false;
+      try { await navigator.clipboard.writeText(path); ok = true; }
+      catch (err) {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = path; ta.style.position = "fixed"; ta.style.opacity = "0";
+          document.body.appendChild(ta); ta.select();
+          ok = document.execCommand("copy"); ta.remove();
+        } catch (err2) { ok = false; }
+      }
+      showToast(ok ? "路径已复制" : "复制失败，请手动复制：" + path, ok ? "ok" : "err");
+    },
+    ctxRemoveGroup() {
+      const index = this.asstWorkspaceDirs.indexOf(this.asstCtx.workspace);
+      this.closeAsstCtx();
+      if (index < 0) return;
+      this.removeAsstWorkspaceDir(index);
+      showToast("分组已移除，其会话已归入未分组");
+    },
     async saveAsstWorkspace(list) {
       this.asstWsBusy = true;
       try {
@@ -1101,7 +1163,6 @@ const App = {
     removeAsstWorkspaceDir(index) {
       const next = this.asstWorkspaceDirs.slice();
       next.splice(index, 1);
-      this.pendingRemoveWsDir = "";
       this.saveAsstWorkspace(next);
     },
     /* ============ 运维助手（Phase 8） ============ */
@@ -1376,6 +1437,9 @@ const App = {
       const saved = JSON.parse(localStorage.getItem("opsmate-pane-widths") || "{}");
       Object.assign(this.paneWidths, saved);
     } catch (err) { /* 本地存储不可用时用默认宽度 */ }
+    try {
+      this.asstCollapsed = JSON.parse(localStorage.getItem("opsmate-asst-collapsed") || "{}") || {};
+    } catch (err) { this.asstCollapsed = {}; }
     if (this.page === "logs") this.refreshLogsRoute();
     if (this.page === "codegen") this.loadCodegenHistory();
     if (this.page === "settings") this.loadSettings();
@@ -1684,24 +1748,23 @@ const App = {
     "          </div>",
     '          <div class="asst-groups">',
     '            <div v-for="g in asstSessionGroups" :key="g.workspace || \'__none__\'" class="asst-group">',
-    '              <div class="asst-group-head" :title="g.workspace || \'未绑定工作目录的会话\'">',
+    '              <div class="asst-group-head" :title="(g.workspace || \'未绑定工作目录的会话\') + \'（点击折叠/展开，右键更多操作）\'" @click="toggleGroup(g.workspace)" @contextmenu.prevent="onGroupCtxMenu($event, g.workspace)">',
+    '                <span class="asst-chevron">{{ groupCollapsed(g.workspace) ? "▸" : "▾" }}</span>',
     '                <span class="asst-group-icon">📁</span>',
     '                <span class="asst-group-name">{{ g.name }}</span>',
     '                <span class="asst-group-count">{{ g.sessions.length }}</span>',
-    '                <button class="asst-group-act" type="button" title="在此分组新建对话" :disabled="asstBusy" @click="newAsstSessionIn(g.workspace)">⊕</button>',
-    '                <template v-if="g.workspace">',
-    '                  <button v-if="pendingRemoveWsDir === g.workspace" class="asst-group-act danger" type="button" title="再次点击确认移除；会话将归入未分组" :disabled="asstWsBusy" @click="removeAsstWorkspaceDir(asstWorkspaceDirs.indexOf(g.workspace))">确认移除</button>',
-    '                  <button v-else class="asst-group-act" type="button" title="移除工作目录" :disabled="asstWsBusy" @click="pendingRemoveWsDir = g.workspace">✕</button>',
-    "                </template>",
+    '                <button class="asst-group-act" type="button" title="在此分组新建对话" :disabled="asstBusy" @click.stop="newAsstSessionIn(g.workspace)">⊕</button>',
     "              </div>",
-    '              <div v-for="s in g.sessions" :key="s.id" class="asst-session-item">',
-    '                <button type="button" class="history-item asst-session" :class="{ active: asstSessionId === s.id }" @click="openAsstSession(s)" :title="s.title">',
-    "                  <strong>{{ s.title }}</strong>",
-    '                  <span class="asst-session-time">{{ relTime(s.updated_at) }}</span>',
-    "                </button>",
-    '                <button v-if="pendingDeleteAsstId === s.id" class="copy-button danger-button asst-del" type="button" @click="deleteAsstSession(s)" :disabled="asstBusy">确认</button>',
-    '                <button v-else class="copy-button asst-del" type="button" @click="pendingDeleteAsstId = s.id" :disabled="asstBusy">删除</button>',
-    "              </div>",
+    '              <template v-if="!groupCollapsed(g.workspace)">',
+    '                <div v-for="s in g.sessions" :key="s.id" class="asst-session-item">',
+    '                  <button type="button" class="history-item asst-session" :class="{ active: asstSessionId === s.id }" @click="openAsstSession(s)" :title="s.title">',
+    "                    <strong>{{ s.title }}</strong>",
+    '                    <span class="asst-session-time">{{ relTime(s.updated_at) }}</span>',
+    "                  </button>",
+    '                  <button v-if="pendingDeleteAsstId === s.id" class="copy-button danger-button asst-del" type="button" @click="deleteAsstSession(s)" :disabled="asstBusy">确认</button>',
+    '                  <button v-else class="copy-button asst-del" type="button" @click="pendingDeleteAsstId = s.id" :disabled="asstBusy">删除</button>',
+    "                </div>",
+    "              </template>",
     "            </div>",
     '            <p v-if="!asstSessions.length" class="empty-state">暂无历史会话</p>',
     "          </div>",
@@ -1773,6 +1836,15 @@ const App = {
     '            <button v-if="asstBusy" class="copy-button" type="button" @click="asstAbort.abort()">停止</button>',
     "          </form>",
     "        </section>",
+    '        <div v-if="asstCtx.show" class="asst-ctx-menu" :style="{ left: asstCtx.x + \'px\', top: asstCtx.y + \'px\' }" @click.stop @contextmenu.prevent>',
+    '          <button class="asst-ctx-item" type="button" @click="ctxNewSession">💬 新增会话</button>',
+    '          <button class="asst-ctx-item" type="button" @click="ctxToggleGroup">{{ groupCollapsed(asstCtx.workspace) ? "▾ 展开会话" : "▸ 收起会话" }}</button>',
+    '          <template v-if="asstCtx.workspace">',
+    '            <button class="asst-ctx-item" type="button" @click="ctxOpenExplorer">📂 从资源管理器打开</button>',
+    '            <button class="asst-ctx-item" type="button" @click="ctxCopyPath">⧉ 复制完整路径</button>',
+    '            <button class="asst-ctx-item danger" type="button" @click="ctxRemoveGroup">✕ 删除分组</button>',
+    "          </template>",
+    "        </div>",
     "      </div>",
     "    </section>",
     '    <section v-else-if="page === \'versions\'" class="versions-page">',

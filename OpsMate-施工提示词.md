@@ -380,6 +380,7 @@ CREATE TABLE IF NOT EXISTS user_configs (
 | POST | `/api/assistant/files/cancel` | `{"session_id","filename"}` | `{"ok":true,"outcome":"用户已取消，未写入"}` |
 | GET | `/api/assistant/workspace` | - | `{"directories":[绝对路径]}`（用户授权的智能体工作目录） |
 | PUT | `/api/assistant/workspace` | `{"directories":[绝对路径]}`（≤16 个，须存在） | `{"ok":true,"directories":[规范化路径]}`；非法路径 400。设置后智能体获得范围内读写/生成/执行授权 |
+| POST | `/api/assistant/workspace/open` | `{"path":绝对路径}` | `{"ok":true}`（资源管理器打开该目录）；仅限已授权目录精确匹配，否则 400 |
 | GET | `/api/kb/workbench/configs` | - | `{"items":[{id,name,format,shared,size_bytes,updated_at}]}`（倒序） |
 | POST | `/api/kb/workbench/configs` | `{"name","format","content"}` | `{"id","name","format"}`；content >2MB 返回 413 |
 | PUT | `/api/kb/workbench/configs/{id}` | body 同上 | `{"ok":true}` |

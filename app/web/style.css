@@ -681,8 +681,13 @@ a.copy-button, label.copy-button { text-decoration: none; }
 .asst-group-head {
   display: flex; align-items: center; gap: 7px; padding: 4px 6px;
   border-radius: var(--r-chip); font-size: 12.5px; color: var(--text-dim);
+  cursor: pointer; user-select: none;
 }
 .asst-group-head:hover { background: var(--inset); color: var(--text); }
+.asst-chevron {
+  flex: none; width: 10px; font-size: 10px; color: var(--text-faint);
+  text-align: center; line-height: 1;
+}
 .asst-group-icon { flex: none; font-size: 13px; opacity: 0.9; }
 .asst-group-name {
   flex: 1; min-width: 0; font-weight: 600;
@@ -694,10 +699,21 @@ a.copy-button, label.copy-button { text-decoration: none; }
   background: none; color: var(--text-faint); cursor: pointer; font-size: 13px; line-height: 1;
   opacity: 0; transition: opacity 0.12s;
 }
-.asst-group-head:hover .asst-group-act, .asst-group-act.danger, .asst-group-act:focus-visible { opacity: 1; }
+.asst-group-head:hover .asst-group-act, .asst-group-act:focus-visible { opacity: 1; }
 .asst-group-act:disabled { opacity: 0.45; cursor: default; }
-.asst-group-act.danger { width: auto; padding: 0 6px; font-size: 11px; color: var(--err); }
-.asst-group-act.danger:hover:not(:disabled) { color: var(--err); background: none; }
+.asst-ctx-menu {
+  position: fixed; z-index: 40; min-width: 180px; padding: 4px;
+  background: var(--raised); border: 1px solid var(--border-strong); border-radius: var(--r-card);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  display: flex; flex-direction: column; gap: 1px;
+}
+.asst-ctx-item {
+  border: 0; background: none; text-align: left; padding: 7px 10px; border-radius: 6px;
+  color: var(--text-dim); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+}
+.asst-ctx-item:hover { background: var(--inset); color: var(--text); }
+.asst-ctx-item.danger { color: var(--err); }
+.asst-ctx-item.danger:hover { background: rgba(255, 107, 107, 0.08); color: var(--err); }
 .asst-group .asst-session-item { margin-left: 10px; } /* 组内会话缩进一级 */
 .asst-session { display: flex; align-items: center; gap: 8px; margin: 0; padding: 9px 12px; }
 .asst-session strong {

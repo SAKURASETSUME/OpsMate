@@ -1227,3 +1227,15 @@
 ### Phase 状态
 
 **完成，随 `feat(assistant): 会话按工作目录分组侧栏` 提交。Phase 9 仍待用户确认后开工。**
+
+### 追加（同日）：分组折叠 + 右键分组菜单（用户需求）
+
+- **分组可折叠**：分组行左侧加 ▸/▾ 箭头，点击行切换收起/展开；折叠状态按目录路径持久化（localStorage `opsmate-asst-collapsed`，未分组键 `__none__`）；悬停 ⊕ 新建按钮 `@click.stop` 不触发展开。
+- **右键分组菜单**（`@contextmenu.prevent`，fixed 定位、视口边缘钳制、window click 关闭）：💬 新增会话（折叠中自动展开再新建）/ ▸ 收起会话|▾ 展开会话 / 📂 从资源管理器打开 / ⧉ 复制完整路径（clipboard API + execCommand 降级）/ ✕ 删除分组（一键，原分组行 ✕ 两步确认移除，pendingRemoveWsDir 状态删除）；「未分组」仅前两项。
+- **后端新端点** `POST /api/assistant/workspace/open`：body `{"path"}`，仅允许已授权工作目录**精确匹配**（子路径/不存在均 400），`os.startfile` 打开资源管理器；施工文档 §6 已补记。
+- 决策：删除分组不做二次确认（用户明确要求"一键删除"；操作可逆——仅解除授权归组，会话自动迁入未分组，目录可重新添加）（理由：降低操作摩擦，且无数据损失）。
+- 验证：verify_assistant 新增分支（mock `os.startfile`：授权目录 200 且 startfile(path) 调用一次、子路径与不存在路径 400）全套通过；浏览器实测——OpsMate 组右键出五项菜单、收起后箭头 ▸/行隐藏/刷新后保持、点击行展开、未分组右键仅两项、菜单定位钳制正常。
+
+### Phase 状态
+
+**完成，随 `feat(assistant): 分组折叠与右键菜单` 提交。Phase 9 仍待用户确认后开工。**

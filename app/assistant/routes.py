@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,10 @@ class WorkspaceBody(BaseModel):
     directories: list[str] = Field(default_factory=list, max_length=16)
 
 
+class WorkspaceOpenBody(BaseModel):
+    path: str = Field(min_length=1, max_length=400)
+
+
 @router.get("/workspace")
 def get_workspace() -> dict[str, Any]:
     """用户授权的工作目录列表。"""
@@ -76,6 +81,19 @@ def put_workspace(body: WorkspaceBody) -> dict[str, Any]:
             cleaned.append(resolved)
     service.save_workspace_dirs(cleaned)
     return {"ok": True, "directories": cleaned}
+
+
+@router.post("/workspace/open")
+def open_workspace(body: WorkspaceOpenBody) -> dict[str, Any]:
+    """在 Windows 资源管理器中打开一个已授权的工作目录（仅限列表内精确路径）。"""
+    service.init_assistant()
+    if body.path not in service.load_workspace_dirs():
+        raise HTTPException(status_code=400, detail="该路径不在已授权的工作目录列表中")
+    try:
+        os.startfile(body.path)
+    except OSError:
+        raise HTTPException(status_code=500, detail="打开目录失败") from None
+    return {"ok": True}
 
 
 def _event(payload: dict[str, Any]) -> str:
