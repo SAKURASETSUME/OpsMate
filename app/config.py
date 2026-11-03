@@ -33,10 +33,34 @@ PROFILES_JSON = DATA_DIR / "model_profiles.json"
 
 
 def ensure_dirs() -> None:
-    """确保运行期可写目录存在（frozen 首启动在 exe 旁创建 data/）。"""
+    """确保运行期可写目录存在（frozen 首启动在 exe 旁创建 data/ 并落地知识数据）。"""
     for directory in (DATA_DIR, COMMANDS_DIR, KB_DIR, LOGS_DIR,
                       ASSISTANT_FILES_DIR, AGENT_FILES_DIR):
         Path(directory).mkdir(parents=True, exist_ok=True)
+    land_bundled_knowledge()
+
+
+def land_bundled_knowledge() -> None:
+    """frozen 首启动把包内知识数据（commands/kb/skills）落地到 exe 旁 data/，仅一次。
+
+    目标目录已存在即视为已落地，绝不覆盖用户侧数据；开发态直接跳过。
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    bundled_root = APP_DIR.parent / "data"
+    targets = {"commands": COMMANDS_DIR, "kb": KB_DIR, "skills": DATA_DIR / "skills"}
+    for name, target in targets.items():
+        source = bundled_root / name
+        if not source.is_dir():
+            continue
+        # ensure_dirs 可能已把目标建成空目录：存在但为空仍视为未落地
+        if target.exists() and any(target.iterdir()):
+            continue
+        try:
+            import shutil
+            shutil.copytree(source, target, dirs_exist_ok=True)
+        except OSError:
+            continue  # 落地失败不阻断启动：对应模块显示为空，可手动拷贝
 
 
 def load_settings() -> dict:

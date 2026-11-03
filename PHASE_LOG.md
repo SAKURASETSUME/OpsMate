@@ -1400,3 +1400,16 @@
 ### Phase 状态
 
 **完成，随 `fix(codegen): 校验器误杀合法 bash 三连修复` 提交。Phase 9 仍待用户确认后开工。**
+
+### Phase 9（打磨与打包）：全量测试通过 + 打包交付（用户确认进入）
+
+- **全量测试**（2026-11-03）：①六个 verify 隔离回归全绿；②真机模块 API 扫描 12/12（指令检索、15 软件 kb、cli/conf 分离、模板、工坊 CRUD、版本录入+筛选、便签、技能清单、工作目录、设置不泄密钥）；③日志链路（上传 40 行→stats→ERROR 过滤→导出→报告列表）；④真机 LLM 冒烟——助手工具模式 33s/2 检索、直连 4s 零工具、脚本生成 72s 单脚本 5 段解读、日志 AI 分析 36s 下钻 2 步 1908 字报告保存。
+- **frozen 首启动知识数据落地**（此前零实现）：`config.land_bundled_knowledge()`——commands/kb/skills 三目录从 _internal 拷到 exe 旁 data/，目标存在但为空仍落地（修复 ensure_dirs 预建空目录导致永远跳过的 bug，实测 kb=15/commands=621/技能=6 全落地），绝不覆盖用户数据，失败不阻断启动。
+- **README.md** 撰写（功能表、首次使用、数据目录说明、常见问题、开发命令）。
+- **打包**：`--add-data` 增 data/skills + `--hidden-import=webview.platforms.winforms` + `--collect-all webview/pythonnet/clr_loader`。冒烟结论：**纯 ASCII 路径下原生窗口+后端+落地全部正常**；项目中文路径下窗口失败是"英文运行缓存目录（AppData）被本沙箱拒写→回退中文路径→pythonnet 无法从非 ASCII 路径加载 Python.Runtime.dll"——用户正常双击时 AppData 可写、缓存自动建立，不受影响（此限制已写入 README 常见问题口径）。
+- **交付清洁**（用户要求：打包时清掉本地测试数据）：包内仅白名单知识数据（app/commands/kb/skills），无 opsmate.db、无 config.json/密钥、无任何会话日志历史；exe 旁 data/ 为首启动自动生成。冒烟产生的 dist/OpsMate/data 与临时目录已删除，dev 环境 data/ 未动（如需连开发测试数据一并清空再说一声）。
+- 施工文档 §9 验收清单 8 项全部勾选。
+
+### Phase 状态
+
+**Phase 0-9 全部完成。随 `feat(build): Phase 9 打包交付与首启动数据落地` 提交。项目交付：`dist/OpsMate/OpsMate.exe`。**
