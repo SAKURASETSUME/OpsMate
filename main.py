@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shutil
 import socket
 import subprocess
 import sys
@@ -28,9 +27,19 @@ def pick_free_port() -> int:
 
 
 def _log(message: str) -> None:
-    """向 stdout 打日志（noconsole 打包态静默）。"""
+    """向 stdout 打日志（noconsole 打包态静默）；打包态同时落 data/opsmate-startup.log 便于排障。"""
     if sys.stdout is not None:
         print(message, flush=True)
+    if getattr(sys, "frozen", False):
+        try:
+            log_path = Path(os.environ.get("OPSMATE_DATA_DIR") or Path(sys.executable).parent) / "data" / "opsmate-startup.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            if log_path.exists() and log_path.stat().st_size > 100_000:
+                log_path.unlink()
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+        except OSError:
+            pass
 
 
 def _file_sha256(path: Path) -> str:
@@ -42,8 +51,12 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _select_ascii_runtime_root(source_hash: str) -> Path:
-    """选择纯 ASCII 且可写的用户级目录保存冻结应用运行缓存。"""
+def _candidate_runtime_bases() -> list[Path]:
+    """英文运行目录候选，按优先级：用户 Profile → 非系统固定盘根 → Public → TEMP。
+
+    未签名 exe 写用户 Profile 可能被 Defender 可控文件夹访问拦截（实测本机如此），
+    非系统数据盘根目录不受该保护，作为关键降级路径。
+    """
     candidates: list[Path] = []
     if sys.platform == "win32":
         import ctypes
@@ -53,21 +66,41 @@ def _select_ascii_runtime_root(source_hash: str) -> Path:
         if result == 0 and buffer.value:
             candidates.append(Path(buffer.value))
     local_app_data = os.environ.get("LOCALAPPDATA")
-    public_dir = os.environ.get("PUBLIC")
     if local_app_data:
         candidates.append(Path(local_app_data))
+    if sys.platform == "win32":
+        import ctypes
+
+        drives_mask = ctypes.windll.kernel32.GetLogicalDrives()
+        system_drive = (os.environ.get("SystemDrive") or "C:").upper()
+        for index in range(26):
+            if not (drives_mask >> index) & 1:
+                continue
+            drive = f"{chr(65 + index)}:\\"
+            if drive.upper() == system_drive:
+                continue  # 系统盘根通常不可写
+            if ctypes.windll.kernel32.GetDriveTypeW(drive) == 3:  # DRIVE_FIXED
+                candidates.append(Path(drive))
+    public_dir = os.environ.get("PUBLIC")
     if public_dir:
         candidates.append(Path(public_dir))
     candidates.append(Path(tempfile.gettempdir()))
+    return candidates
 
+
+def _select_ascii_runtime_root(source_hash: str) -> Path:
+    """选择纯 ASCII 且可写的用户级目录保存冻结应用运行缓存。"""
     failures: list[str] = []
-    for base_dir in dict.fromkeys(candidates):
+    for base_dir in dict.fromkeys(_candidate_runtime_bases()):
         runtime_root = base_dir / "OpsMate" / "runtime" / source_hash[:16]
         if not str(runtime_root).isascii():
             failures.append(f"{base_dir}: 路径含非 ASCII 字符")
             continue
         try:
             runtime_root.mkdir(parents=True, exist_ok=True)
+            probe = runtime_root / ".writable"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
         except OSError as exc:
             failures.append(f"{base_dir}: {exc}")
             continue
@@ -76,8 +109,22 @@ def _select_ascii_runtime_root(source_hash: str) -> Path:
     raise RuntimeError(f"未找到纯 ASCII 且可写的冻结应用运行目录：{detail}")
 
 
+def _notify_box(message: str, title: str = "OpsMate", style: int = 0x40) -> None:
+    """无依赖的 Win32 信息框（pythonnet 在中文路径下不可用，ctypes 不受限）。"""
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, title, style)
+    except Exception:  # noqa: BLE001 —— 提示失败不影响主流程
+        pass
+
+
 def _relaunch_frozen_from_ascii_shadow() -> bool:
-    """中文目录下将冻结程序复制到英文用户缓存并自动重启。"""
+    """中文目录下将冻结程序复制到英文用户缓存并自动重启。
+
+    pythonnet/WebView2 无法从非 ASCII 路径加载（进程会解析联接/符号链接的真实路径，
+    因此只能真实拷贝）。首次拷贝体积较大：先弹提示框说明，再执行；已有缓存则瞬时重启。
+    """
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         return False
 
@@ -86,6 +133,8 @@ def _relaunch_frozen_from_ascii_shadow() -> bool:
     if str(source_root).isascii() or os.environ.get("OPSMATE_SHADOW_STARTED") == "1":
         return False
 
+    import shutil
+
     source_internal = source_root / "_internal"
     if not source_internal.is_dir():
         raise RuntimeError("冻结应用缺少 _internal 目录，无法建立英文运行缓存")
@@ -93,7 +142,7 @@ def _relaunch_frozen_from_ascii_shadow() -> bool:
     executable_hash = _file_sha256(source_exe)
     shadow_root = _select_ascii_runtime_root(executable_hash)
     shadow_exe = shadow_root / source_exe.name
-    shadow_internal = shadow_root / source_internal.name
+    shadow_internal = shadow_root / "_internal"
     ready_marker = shadow_root / ".ready"
 
     ready = False
@@ -101,18 +150,26 @@ def _relaunch_frozen_from_ascii_shadow() -> bool:
         ready = (
             ready_marker.read_text(encoding="utf-8").strip() == executable_hash
             and shadow_exe.is_file()
-            and _file_sha256(shadow_exe) == executable_hash
             and shadow_internal.is_dir()
         )
     except OSError:
         ready = False
 
     if not ready:
-        shutil.copytree(source_internal, shadow_internal, dirs_exist_ok=True)
+        _log("首次启动：正在准备英文运行环境（拷贝一次，之后秒开）…")
+        _notify_box(
+            "检测到程序位于含中文的目录，首次启动需要准备运行环境（约 1-2 分钟，仅此一次）。\n"
+            "点击确定后开始，窗口稍后自动打开，请勿重复启动。\n\n"
+            "也可以把整个 OpsMate 文件夹移动到纯英文路径（如 D:\\OpsMate）后运行，无需此步骤。",
+            "OpsMate 首次启动")
+        if shadow_internal.exists():
+            shutil.rmtree(shadow_internal, ignore_errors=True)
+        shutil.copytree(source_internal, shadow_internal)
         shutil.copy2(source_exe, shadow_exe)
         if _file_sha256(shadow_exe) != executable_hash:
             raise RuntimeError("英文运行缓存中的 OpsMate.exe 校验失败")
         ready_marker.write_text(executable_hash, encoding="utf-8")
+        _log("英文运行环境准备完成。")
 
     child_env = os.environ.copy()
     child_env["OPSMATE_SHADOW_STARTED"] = "1"
@@ -181,7 +238,11 @@ def main() -> None:
         sys.exit(0)
     except Exception as exc:  # noqa: BLE001 —— GUI 链路任何异常都降级为默认浏览器
         _log(f"原生窗口启动失败（{exc}），已降级为默认浏览器打开。")
-        _log("如需原生窗口，请安装 Microsoft Edge WebView2 运行时。")
+        _notify_box(
+            f"原生窗口启动失败：{exc}\n\n已改用默认浏览器打开（若浏览器未弹出，请手动访问 {url} ）。\n"
+            "程序位于中文目录时容易出现此问题：把整个 OpsMate 文件夹移动到纯英文路径"
+            "（如 D:\\OpsMate）后重新运行即可恢复原生窗口。",
+            "OpsMate", 0x30)
         webbrowser.open(url)
         try:
             while True:

@@ -1626,7 +1626,7 @@ const App = {
     '      <a v-for="item in navItems" :key="item.hash" :href="item.hash"',
     '         :class="{ active: page === item.page }">{{ item.label }}</a>',
     "    </nav>",
-    '    <div class="side-status"><span class="status-dot"></span><span>{{ backendHost }}</span></div>',
+    '    <div class="side-status"><span class="status-dot"></span><span>运行中</span></div>',
     "  </aside>",
     '  <div class="edge-handle" title="拖拽调整宽度" :style="{ left: paneWidths.side + \'px\' }" @mousedown="startPaneDrag($event, \'side\')"></div>',
     '  <main class="content">',

@@ -1413,3 +1413,15 @@
 ### Phase 状态
 
 **Phase 0-9 全部完成。随 `feat(build): Phase 9 打包交付与首启动数据落地` 提交。项目交付：`dist/OpsMate/OpsMate.exe`。**
+
+### 追加（同日）：中文路径启动修复 + 左下角端口移除 + GitHub 发布（用户三需求）
+
+- **exe 在用户机器"跑不起来"根因链**（逐一实测）：程序在中文目录 → pythonnet/WebView2 无法从非 ASCII 路径加载 Python.Runtime.dll → 原生窗口必挂 → 降级浏览器分支静默休眠（僵尸进程堆积）；旧版英文缓存拷贝数百 MB 无任何反馈，用户以为死机。**junction 方案证伪**：进程启动即解析联接的真实路径，sys.executable 仍为中文路径（实测），只能真实拷贝。
+- **修复**：①保留拷贝方案但**首拷前弹 Win32 MessageBox**（ctypes，不依赖 pythonnet）说明"首次 1-2 分钟，勿重复启动，或移到英文路径"；②窗口失败降级分支同样弹框给出明确指引（移英文路径/浏览器地址），不再无声；③新增 `start_OpsMate.bat` 备选启动器（robocopy 建英文副本后启动，ASCII+CRLF 由 `tools/make_launcher_bat.py` 生成）；④`_select_ascii_runtime_root` 候选扩至非系统固定盘根并带可写探测（.writable 探针文件）；⑤打包态启动全程写 `data/opsmate-startup.log`（排障依据）。
+- **验证边界说明**：本测试 shell 对派生进程写盘有拦截（AppData/盘根/robocopy 均被拒），无法在此完整复现用户双击路径；但用户真实双击已成功建成过完整英文缓存影子（AppData 765b…目录）且原生窗口运行中（PID 26636）——拷贝机制在用户环境有效，旧版缺的只是反馈。
+- **左下角端口显示移除**：side-status 由 `{{ backendHost }}` 改为「运行中」状态点。
+- README 首次使用章节重写（英文路径推荐/首拷提示/bat 备选/SmartScreen 提醒/startup-log 排障）。
+
+### Phase 状态
+
+**完成，随 `fix(build): 中文路径启动反馈与bat启动器` 提交；随后推送 GitHub 并发布 release v1.0.0。**

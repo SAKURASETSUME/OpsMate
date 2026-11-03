@@ -16,9 +16,12 @@ Windows 单机桌面应用：本地知识 + 智能体，为管理 Linux 服务�
 
 ## 首次使用
 
-1. 双击 `OpsMate.exe`（或开发态运行 `python main.py`）。exe 旁自动创建 `data/` 目录并落地全量知识数据。
-2. 进入「设置」页，选择模型预设（智谱 `glm-4-flash` 免费 / SiliconFlow / DeepSeek / 自定义 OpenAI 兼容），填入 API key 并保存启用。密钥只保存在本机 `data/config.json`，不会上传或随程序分发。
-3. 到「运维助手」或「脚本工坊」开始使用。思考强度默认「高」，追求速度可切「低/中」。
+1. **推荐**：把整个 `OpsMate` 文件夹放到纯英文路径（如 `D:\OpsMate`），双击 `OpsMate.exe` 直接使用。
+2. 若程序放在含中文的目录：双击 `OpsMate.exe` 会提示"首次启动需要准备运行环境（约 1-2 分钟，仅此一次）"，确认后等待窗口自动打开；之后每次启动都是秒开。也可以用文件夹里的 `start_OpsMate.bat` 启动（用系统 robocopy 建立英文运行副本，效果相同）。首次启动后 exe 旁自动创建 `data/` 目录并落地全量知识数据。
+3. 进入「设置」页，选择模型预设（智谱 `glm-4-flash` 免费 / SiliconFlow / DeepSeek / 自定义 OpenAI 兼容），填入 API key 并保存启用。密钥只保存在本机 `data/config.json`，不会上传或随程序分发。
+4. 到「运维助手」或「脚本工坊」开始使用。思考强度默认「高」，追求速度可切「低/中」。
+
+> 提示：Windows 可能对未签名 exe 弹出 SmartScreen 警告，点「更多信息 → 仍要运行」即可。若窗口始终无法启动，查看 `data/opsmate-startup.log` 定位原因。
 
 ## 数据目录
 
