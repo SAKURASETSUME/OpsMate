@@ -43,8 +43,8 @@ async def run_agent(client: LLMClient, system: str, user: str,
         "\n本轮以工具协议代替业务输出格式。只返回 JSON："
         '{"action":"tool","tool":"工具名","args":{"q":"关键词","limit":5}} 或 '
         '{"action":"final","payload":{}}（资料足够时仅输出空 payload，下一轮才生成完整脚本，勿重复编写）。通用问答可用 answer 字符串。'
-        "\n明确任务应先 search_history，再按需检索命令/配置；缺少关键信息时直接追问。"
-        "一般检索一到两次即足够，不要重复调用相同工具；追问可直接在 payload 中放 need_clarification/questions。"
+        "\n一次检索通常已足够（最多两次）：拿到相关资料立即 final，不要重复调用相同工具；"
+        "缺少关键信息时直接追问（payload 中放 need_clarification/questions）。"
         '\n正确示例：{"action":"tool","tool":"search_history","args":{"q":"nginx","limit":5}}。'
         'action 字段必须是 tool 或 final，绝不能填写 search_history/search_commands/search_kb。'
         '\n追问示例：{"action":"final","payload":{"need_clarification":true,"questions":["目标路径是什么（建议 /var/log）？"]}}。questions 必须是字符串数组。'
@@ -73,8 +73,9 @@ async def run_agent(client: LLMClient, system: str, user: str,
         exhausted = len(steps) == 6
         if exhausted:
             messages.append({"role": "user", "content": "工具调用次数已用完，请基于已有信息直接给出最终结果"})
+        # 规划只做检索决策，显式最低思考档提速；长需求上下文大，超时随之上调
         response = await client.chat(messages, temperature=final_temperature if exhausted else 0.1,
-                                     timeout=25, max_tokens=1200)
+                                     timeout=40, max_tokens=1200, reasoning_effort="low")
         if response.get("ok") is False:
             raise LLMError(response["error"])
         raw = response["content"]
@@ -93,10 +94,11 @@ async def run_agent(client: LLMClient, system: str, user: str,
                     if on_event:
                         on_event({"phase": "final"})
                     final_messages = [{"role": "system", "content": system}, *messages[1:],
-                        {"role": "user", "content": "现在依据以上参考输出最终业务 JSON，直接给业务对象，不用 action/payload 包装。必须遵守 system 定义的字段和结构，禁止直接返回 bash 代码块；脚本是 script 字符串，解读是 explanation 数组。脚本须有用途/用法/参数/依赖/适用发行版及 AI 生成审阅注释块，变量展开双引号。若需求有定时，在 usage 给出 cron 安装指引且 warnings 提醒 cron/root/路径；若有删除操作，先 echo 中文提示；备份保留只删除过期归档，不删除源日志。"}]
+                        {"role": "user", "content": "现在依据以上参考输出最终业务 JSON，直接给业务对象，不用 action/payload 包装。必须遵守 system 定义的字段和结构，禁止直接返回 bash 代码块；脚本是 script 字符串，解读是 explanation 数组。脚本须有用途/用法/参数/依赖/适用发行版及 AI 生成审阅注释块，变量展开双引号。若需求有定时，在 usage 给出 cron 安装指引且 warnings 提醒 cron/root/路径；若有删除操作，先 echo 中文提示；备份保留只删除过期归档，不删除源日志。输出前逐项自检（任一不满足都会整体打回重来）：①顶部 20 行注释含『用途/用法/参数/依赖/适用』五词与『AI』字样；②所有 $ 变量展开一律双引号包裹；③explanation ≥3 段且『解读/分析』字样绝不进 script；④rm/kill/iptables/systemctl stop 等影响业务的命令前 3 行内有中文 echo 提示；⑤多个脚本时 scripts 数组一次最多 3 个且每项 name 唯一。"}]
                     for final_attempt in range(2):
                         final = await client.chat(final_messages, temperature=final_temperature,
-                                                  timeout=70, max_tokens=7000)
+                                                  timeout=110, max_tokens=12000,
+                                                  reasoning_effort="low")
                         if final.get("ok") is False:
                             raise LLMError(final["error"])
                         try:
@@ -106,7 +108,7 @@ async def run_agent(client: LLMClient, system: str, user: str,
                                 raise
                             if on_event:
                                 on_event({"phase": "retry"})
-                            final_messages.append({"role": "user", "content": "解析失败，请仅输出业务 JSON"})
+                            final_messages.append({"role": "user", "content": "解析失败：只输出一个合法 JSON 业务对象（禁止 markdown 围栏与任何多余文字），再按自检清单逐项核对后输出。"})
                 if isinstance(action.get("answer"), str):
                     return {"answer": action["answer"]}, steps
                 raise AgentFormatError(raw)

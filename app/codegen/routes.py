@@ -80,26 +80,28 @@ def _has_unsafe_expansion(script: str) -> bool:
 
 def _validate_script_item(script: Any, explanation: Any, warnings: Any, usage: Any,
                           context: str) -> dict:
-    """单个脚本的硬性校验（多脚本数组元素与单脚本共用同一套规则）。"""
+    """单个脚本的硬性校验（多脚本数组元素与单脚本共用同一套规则）；失败信息精确到条目。"""
     if isinstance(script, str):
         # EUID 为 bash 内建整数，仅对常见数值判断做等价引号补齐。
         script = re.sub(r'\[\s+\$EUID\s+(-(?:eq|ne|lt|le|gt|ge)\s+\d+\s*\])', r'[ "$EUID" \1', script)
-    valid = (
-        isinstance(script, str)
-        and script.startswith("#!/usr/bin/env bash")
-        and "set -euo pipefail" in script
-        and len(script.splitlines()) >= 3
-        and not _has_unsafe_expansion(script)
-        and "解读" not in script and "分析" not in script
-        and isinstance(explanation, list) and len(explanation) >= 3
-        and all(isinstance(item, dict) and all(isinstance(item.get(k), str) and item[k].strip()
-                for k in ("lines", "title", "detail")) for item in explanation)
-        and isinstance(warnings, list) and all(isinstance(w, str) for w in warnings)
-        and isinstance(usage, str))
-    if not valid:
-        raise AgentFormatError(f"{context}脚本结构不满足约定：" + json.dumps(
-            {"script": str(script)[:200], "explanation": explanation, "usage": usage},
-            ensure_ascii=False)[:400])
+    checks: list[tuple[str, bool]] = [
+        ("script 必须是文本", isinstance(script, str)),
+        ("首行须为 #!/usr/bin/env bash", isinstance(script, str) and script.startswith("#!/usr/bin/env bash")),
+        ("须含 set -euo pipefail", isinstance(script, str) and "set -euo pipefail" in script),
+        ("脚本至少 3 行", isinstance(script, str) and len(script.splitlines()) >= 3),
+        ("变量展开必须双引号包裹", isinstance(script, str) and not _has_unsafe_expansion(script)),
+        ("script 内不得出现『解读/分析』字样", isinstance(script, str) and "解读" not in script and "分析" not in script),
+        ("explanation 须为 ≥3 段的数组", isinstance(explanation, list) and len(explanation) >= 3),
+        ("explanation 每段须含 lines/title/detail 非空文本", isinstance(explanation, list) and all(
+            isinstance(item, dict) and all(isinstance(item.get(k), str) and item[k].strip()
+            for k in ("lines", "title", "detail")) for item in explanation)),
+        ("warnings 须为字符串数组", isinstance(warnings, list) and all(isinstance(w, str) for w in warnings)),
+        ("usage 须为字符串", isinstance(usage, str)),
+    ]
+    failed = [label for label, ok in checks if not ok]
+    if failed:
+        raise AgentFormatError(f"{context}脚本结构不满足约定（未通过：{'；'.join(failed)}）：" + json.dumps(
+            {"script": str(script)[:300], "usage": usage}, ensure_ascii=False)[:400])
     header = "\n".join(script.splitlines()[:20])
     if not all(marker in header for marker in ("用途", "用法", "参数", "依赖", "适用")) or "AI" not in header:
         raise AgentFormatError(f"{context}缺少用途/用法/参数/依赖/AI审阅/适用发行版注释块：" + script[:300])
@@ -202,6 +204,10 @@ def save_result(body: GenerateInput, payload: dict[str, Any], model: str) -> Non
                                (cursor.lastrowid, body.requirement, script_column))
 
 
+MULTI_SCRIPT_HINT_RE = re.compile(
+    r"(?:[两三2-3]|几)\s*[个份].{0,8}脚本|脚本.{0,24}(?:和|以及|加|、).{0,24}脚本|多个脚本|分别(?:写|生成)")
+
+
 @router.post("/generate")
 async def generate(body: GenerateInput) -> StreamingResponse:
     """SSE 流式生成：过程事件（工具轨迹/阶段）实时推送 → result → done。
@@ -220,6 +226,9 @@ async def generate(body: GenerateInput) -> StreamingResponse:
                                  media_type="text/event-stream")
     ensure_history()
     user = f"需求：{body.requirement}\n发行版：{body.distro or '未指定'}\n补充：{body.notes or '无'}"
+    if MULTI_SCRIPT_HINT_RE.search(body.requirement):
+        user += ("\n（本需求包含多个脚本：必须输出 scripts 数组，每个元素含唯一 name 与完整的 "
+                 "script/explanation/warnings/usage；一次最多 3 个）")
     events: asyncio.Queue = asyncio.Queue()
 
     async def produce() -> dict[str, Any]:
@@ -246,8 +255,8 @@ async def generate(body: GenerateInput) -> StreamingResponse:
         raise AgentFormatError("未生成结果")
 
     async def produce_bounded() -> dict[str, Any]:
-        # 长需求出稿慢（校验失败还有一次重试），超时上限 240s 与前端 320s 超时错开
-        return await asyncio.wait_for(produce(), timeout=240)
+        # 长需求出稿慢（校验失败还有一次重试），超时上限与前端 320s 超时错开
+        return await asyncio.wait_for(produce(), timeout=300)
 
     async def stream() -> AsyncIterator[str]:
         task = asyncio.create_task(produce_bounded())
