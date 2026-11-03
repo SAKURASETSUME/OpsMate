@@ -28,9 +28,9 @@ def _sse(payload: dict[str, Any]) -> str:
 
 
 class GenerateInput(BaseModel):
-    requirement: str = Field(min_length=1, max_length=12000)
+    requirement: str = Field(min_length=1, max_length=60000)
     distro: str = Field(default="", max_length=100)
-    notes: str = Field(default="", max_length=12000)
+    notes: str = Field(default="", max_length=60000)
 
 
 def ensure_history() -> None:
@@ -131,6 +131,10 @@ def validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
         return {"need_clarification": True, "questions": questions}
     # 多脚本：需求要几个就全部生成，每个元素独立过硬校验；name 仅用于界面标识，不写入脚本内容
     if isinstance(payload.get("scripts"), list) and payload["scripts"]:
+        if len(payload["scripts"]) > 3:
+            raise AgentFormatError(
+                f"一次最多生成 3 个脚本（当前 {len(payload['scripts'])} 个）：请只保留最关键的 3 个，"
+                "或返回 need_clarification 建议用户分批生成")
         names: list[str] = []
         items: list[dict[str, Any]] = []
         for index, item in enumerate(payload["scripts"], 1):
@@ -242,7 +246,8 @@ async def generate(body: GenerateInput) -> StreamingResponse:
         raise AgentFormatError("未生成结果")
 
     async def produce_bounded() -> dict[str, Any]:
-        return await asyncio.wait_for(produce(), timeout=120)
+        # 长需求出稿慢（校验失败还有一次重试），超时上限 240s 与前端 320s 超时错开
+        return await asyncio.wait_for(produce(), timeout=240)
 
     async def stream() -> AsyncIterator[str]:
         task = asyncio.create_task(produce_bounded())

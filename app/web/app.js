@@ -540,7 +540,7 @@ const App = {
         await apiFetch("/api/codegen/generate", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify(this.codegenForm), signal: controller.signal,
-        }, 125000, async (response) => {
+        }, 320000, async (response) => {
           const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8"); let buffer = ""; let completed = false;
           const accept = (line) => {
             if (!line.startsWith("data:")) return;
@@ -572,7 +572,7 @@ const App = {
       } finally { this.codegenBusy = false; this.codegenAbort = null; }
     },
     async openCodegenHistory(item) {
-      if (this.codegenBusy) return;
+      if (this.codegenBusy) { showToast("正在生成中，请等本轮完成或先停止", "err"); return; }
       try {
         this.codegenResult = await apiFetch("/api/codegen/history/" + item.id);
         this.codegenScriptIdx = 0;
@@ -1845,9 +1845,9 @@ const App = {
     '    <section v-else-if="page === \'codegen\'" class="codegen-page">',
     '      <h1>脚本工坊</h1><p class="placeholder dim">检索本地知识生成脚本；执行前请审阅并在测试环境验证。</p>',
     '      <form class="settings-form" @submit.prevent="generateScript(false)">',
-    '        <label>脚本需求<textarea v-model="codegenForm.requirement" required :disabled="codegenBusy" rows="3" placeholder="例如：每天凌晨 2 点打包 /var/log/nginx 目录为 tgz，保留最近 7 天"></textarea></label>',
-    '        <label>发行版<select v-model="codegenForm.distro" :disabled="codegenBusy"><option value="">不指定</option><option>CentOS</option><option>Ubuntu</option><option>Debian</option><option>其他</option></select></label>',
-    '        <label>补充说明<textarea v-model="codegenForm.notes" :disabled="codegenBusy" rows="2"></textarea></label>',
+    '        <label>脚本需求<textarea v-model="codegenForm.requirement" required rows="3" placeholder="例如：每天凌晨 2 点打包 /var/log/nginx 目录为 tgz，保留最近 7 天"></textarea></label>',
+    '        <label>发行版<select v-model="codegenForm.distro"><option value="">不指定</option><option>CentOS</option><option>Ubuntu</option><option>Debian</option><option>其他</option></select></label>',
+    '        <label>补充说明<textarea v-model="codegenForm.notes" rows="2"></textarea></label>',
     '        <button class="copy-button" :disabled="codegenBusy" type="submit">{{ codegenBusy ? "生成中…" : "生成脚本" }}</button>',
     '        <button v-if="codegenBusy" class="copy-button" type="button" @click="codegenAbort.abort()">停止</button>',
     '      </form>',
@@ -1878,7 +1878,7 @@ const App = {
     '          </section></div>',
     '      </section>',
     '      <h2>生成历史</h2><p v-if="!codegenHistory.length" class="placeholder dim">暂无生成记录</p>',
-    '      <button v-for="item in codegenHistory" :key="item.id" class="history-item" :disabled="codegenBusy" @click="openCodegenHistory(item)">{{ item.requirement }} · {{ item.model }} · {{ item.created_at }}</button>',
+    '      <button v-for="item in codegenHistory" :key="item.id" class="history-item" @click="openCodegenHistory(item)">{{ item.requirement }} · {{ item.model }} · {{ item.created_at }}</button>',
     '    </section>',
     '    <section v-else-if="page === \'assistant\'" class="assistant-page">',
     '      <header class="page-header">',

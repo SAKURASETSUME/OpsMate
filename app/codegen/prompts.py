@@ -28,7 +28,7 @@ CODEGEN_SYSTEM_PROMPT = """你是资深 Linux 运维工程师与 bash 脚本专�
     { "name": "…", "script": "…", "explanation": […], "warnings": […], "usage": "…" }
   ]
 }
-scripts 数组中每个元素都完整遵守下面全部硬性要求与解读/warnings/usage 要求，各自独立校验；name 必须互不相同且不含路径分隔符。
+scripts 数组中每个元素都完整遵守下面全部硬性要求与解读/warnings/usage 要求，各自独立校验；name 必须互不相同且不含路径分隔符。一次最多生成 3 个脚本：需求要求更多时，返回 need_clarification=true 建议用户分批，或说明只挑选了最关键的 3 个。
 
 【何时追问】
 需求缺少关键信息（目标路径、服务名、阈值、时间、范围等）导致无法安全编写时：need_clarification=true，questions 列出至多 3 个具体问题（每个问题给出你建议的默认选项），其余字段留空。宁可追问，不要猜。

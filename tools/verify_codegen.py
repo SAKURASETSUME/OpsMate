@@ -112,6 +112,12 @@ def main() -> None:
             validate_payload(bad_item); raise AssertionError("坏脚本元素被接受")
         except AgentFormatError:
             pass
+        over = {"need_clarification": False, "scripts": [multi["scripts"][0]] * 4}
+        try:
+            validate_payload(over); raise AssertionError("超过三个脚本被接受")
+        except AgentFormatError as exc:
+            assert "最多生成 3 个" in str(exc)
+        assert len(validate_payload(multi)["scripts"]) == 2  # 上限内的多脚本不受影响
         replies = [result({"action": "final", "payload": multi}), result(multi)]
         with patch("app.codegen.routes.effective_settings", return_value=settings), patch.object(LLMClient, "chat", new=AsyncMock(side_effect=replies)):
             events = sse_events(client.post("/api/codegen/generate", json={"requirement": "生成采集和部署两个脚本"}))
