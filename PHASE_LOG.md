@@ -1344,3 +1344,13 @@
 ### Phase 状态
 
 **完成，随 `perf(assistant): 流式渲染节流批刷` 提交。Phase 9 仍待用户确认后开工。**
+
+### 追加（同日）：脚本工坊生成期白屏修复（用户报障：每次生成卡死白屏，完成/追问才恢复）
+
+- **根因**：`.codegen-output` 区块（渲染 `codegenResult.script`）位于 `v-else-if="codegenResult || codegenBusy"` 的 section 内但**自身无 v-if**——生成期间 `codegenResult=null`，每次重渲染在 `null.script` 抛 TypeError，Vue 渲染中断留下残缺 DOM（实测：提交后整个表单从 DOM 消失）；result 事件（成稿或追问）到来后 `codegenResult` 有值，下一次渲染成功——与"生成完/追问才回显"完全吻合。git 追溯：`v-else-if="codegenResult || codegenBusy"` 条件是拖拽把手重构（321ba9f/ce08236）合并区块时引入，codegen 初版输出区只跟 result 渲染，故此前无此 bug。
+- **修复**：输出区补 `v-if="codegenResult"`——生成期只显示阶段文案与实时步骤卡，出稿后再渲染脚本/解读双栏。
+- 验证：修复前复现（提交后 form 数归零、页面残废）；修复后提交生成——表单保持、busy 态正常、步骤卡实时出现、window error 钩子零捕获；Node 侧同测后端事件流（tool@0.2s/2.3s → phase → result@106s）与健康探测（1-4ms）正常，排除后端阻塞。
+
+### Phase 状态
+
+**完成，随 `fix(codegen): 生成期输出区空引用白屏` 提交。Phase 9 仍待用户确认后开工。**
