@@ -55,35 +55,104 @@ def ensure_history() -> None:
         connection.commit()
 
 
-def _has_unsafe_expansion(script: str) -> bool:
-    """拒绝明显未引用的变量展开；不把注释和单引号字面量当作变量。"""
-    quote = ""
-    for line in script.splitlines():
+_ASSIGNMENT_PREFIX = re.compile(r"^\s*(?:export\s+|local\s+|declare\s+)?[A-Za-z_][A-Za-z0-9_]*=[^\s'\"|;&]*$")
+_NUMERIC_TEST = re.compile(r"\[\s+\$([A-Za-z_][A-Za-z0-9_]*|[0-9]+)\s+(-(?:eq|ne|lt|le|gt|ge)\s+\d+\s*)\]")
+
+
+_HEREDOC_START = re.compile(r"<<-?\s*('?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def find_unsafe_expansion(script: str) -> str:
+    """定位首个未引用且处于危险位置的变量展开；无则返回空串。
+
+    引号用栈建模：$(...) 内部是独立引号上下文（合法写法 "$(dirname "${X}")"），
+    单引号内一切字面。豁免：注释、引号/命令替换内部、赋值语句右侧（不发生分词）、
+    heredoc 正文（数据段，变量展开不发生分词）。
+    """
+    heredoc_delim = ""  # 非空表示当前行处于 heredoc 正文
+    for line_no, line in enumerate(script.splitlines(), 1):
+        if heredoc_delim:
+            if line.strip() == heredoc_delim:
+                heredoc_delim = ""  # 结束定界行
+            continue  # heredoc 正文不扫描
+        stack: list[str] = []  # 元素：'"'、"'" 或 'S'（$( 命令替换上下文）
         escaped = False
-        for char_index, char in enumerate(line):
+        index = 0
+        while index < len(line):
+            char = line[index]
+            top = stack[-1] if stack else ""
             if escaped:
                 escaped = False
-                continue
-            if char == "\\" and quote != "'":
+            elif char == "\\" and top != "'":
                 escaped = True
-            elif char == "#" and not quote:
-                break
-            elif char in ('"', "'"):
-                if quote == char:
-                    quote = ""
-                elif not quote:
-                    quote = char
-            elif char == "$" and not quote and re.match(r"\$(?:[A-Za-z_]|\{|[0-9@*])", line[char_index:]):
-                return True
-    return False
+            elif char == "#" and not stack:
+                break  # 行内注释（引号外的 # 之后是字面量）
+            elif char == "'" and top != '"':
+                if top == "'":
+                    stack.pop()
+                else:
+                    stack.append("'")
+            elif char == '"':
+                if top == '"':
+                    stack.pop()
+                else:
+                    stack.append('"')
+            elif char == "(" and index > 0 and line[index - 1] == "$" and top != "'":
+                stack.append("S")
+            elif char == ")" and top == "S":
+                stack.pop()
+            elif char == "<" and not stack and line[index:index + 2] in ("<<",):
+                match = _HEREDOC_START.search(line, index)
+                if match:
+                    heredoc_delim = match.group(2)  # 正文从下一行开始
+                    break
+            elif char == "$" and not stack and index + 1 < len(line) \
+                    and re.match(r"\$(?:[A-Za-z_]|\{|[0-9@*])", line[index:]):
+                if not _ASSIGNMENT_PREFIX.match(line[:index]):
+                    return f"第{line_no}行: {line.strip()[:120]}"
+            index += 1
+    return ""
+
+
+def _has_unsafe_expansion(script: str) -> bool:
+    return bool(find_unsafe_expansion(script))
+
+
+_DANGEROUS_OP = re.compile(r"(?:^|[;|&\s])(?:rm|kill|iptables)\s|systemctl\s+(?:stop|restart)\b|\s-delete\b")
+
+
+def ensure_echo_prompts(script: str, context: str) -> None:
+    """影响业务的命令前 3 行内必须有中文 echo 提示。
+
+    echo 语句行本身（提示文案常提到要执行的操作）与 heredoc 正文（数据段）
+    不参与危险操作检测，但仍计入 previous 供后续行匹配。
+    """
+    heredoc_delim = ""
+    previous: list[str] = []
+    for line in script.splitlines():
+        code = line.strip()
+        if heredoc_delim:
+            if code == heredoc_delim:
+                heredoc_delim = ""
+            continue
+        if not code or code.startswith("#"):
+            continue
+        started = _HEREDOC_START.search(code)
+        if started:
+            heredoc_delim = started.group(2)
+        first_token = code.split(None, 1)[0]
+        if first_token != "echo" and re.search(_DANGEROUS_OP, code):
+            if not any("echo " in earlier for earlier in previous[-3:]):
+                raise AgentFormatError(f"{context}影响业务操作前缺少中文 echo 提示：" + code)
+        previous.append(code)
 
 
 def _validate_script_item(script: Any, explanation: Any, warnings: Any, usage: Any,
                           context: str) -> dict:
     """单个脚本的硬性校验（多脚本数组元素与单脚本共用同一套规则）；失败信息精确到条目。"""
     if isinstance(script, str):
-        # EUID 为 bash 内建整数，仅对常见数值判断做等价引号补齐。
-        script = re.sub(r'\[\s+\$EUID\s+(-(?:eq|ne|lt|le|gt|ge)\s+\d+\s*\])', r'[ "$EUID" \1', script)
+        # 数值测试自动补引号（bash 内建测试对整数比较安全等价）：[ $EUID -eq 0 ] / [ $1 -lt 1 ]
+        script = _NUMERIC_TEST.sub(r'[ "$\1" \2]', script)
     checks: list[tuple[str, bool]] = [
         ("script 必须是文本", isinstance(script, str)),
         ("首行须为 #!/usr/bin/env bash", isinstance(script, str) and script.startswith("#!/usr/bin/env bash")),
@@ -100,20 +169,16 @@ def _validate_script_item(script: Any, explanation: Any, warnings: Any, usage: A
     ]
     failed = [label for label, ok in checks if not ok]
     if failed:
-        raise AgentFormatError(f"{context}脚本结构不满足约定（未通过：{'；'.join(failed)}）：" + json.dumps(
-            {"script": str(script)[:300], "usage": usage}, ensure_ascii=False)[:400])
+        located = find_unsafe_expansion(script) if isinstance(script, str) else ""
+        raise AgentFormatError(
+            f"{context}脚本结构不满足约定（未通过：{'；'.join(failed)}"
+            + (f"；违规位置 → {located}" if located else "")
+            + "）：" + json.dumps(
+                {"script": str(script)[:300], "usage": usage}, ensure_ascii=False)[:400])
     header = "\n".join(script.splitlines()[:20])
     if not all(marker in header for marker in ("用途", "用法", "参数", "依赖", "适用")) or "AI" not in header:
         raise AgentFormatError(f"{context}缺少用途/用法/参数/依赖/AI审阅/适用发行版注释块：" + script[:300])
-    previous: list[str] = []
-    for line in script.splitlines():
-        code = line.strip()
-        if not code or code.startswith("#"):
-            continue
-        if re.search(r"(?:^|[;|&\s])(?:rm|kill|iptables)\s|systemctl\s+(?:stop|restart)\b|\s-delete\b", code):
-            if not any("echo " in earlier for earlier in previous[-3:]):
-                raise AgentFormatError(f"{context}影响业务操作前缺少中文 echo 提示：" + code)
-        previous.append(code)
+    ensure_echo_prompts(script, context)
     return {"script": script, "explanation": explanation, "warnings": warnings, "usage": usage}
 
 
@@ -152,8 +217,8 @@ def validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
         return {"need_clarification": False, "scripts": items}
     script = payload.get("script")
     if isinstance(script, str):
-        # EUID 为 bash 内建整数，仅对常见数值判断做等价引号补齐。
-        script = re.sub(r'\[\s+\$EUID\s+(-(?:eq|ne|lt|le|gt|ge)\s+\d+\s*\])', r'[ "$EUID" \1', script)
+        # 数值测试自动补引号（bash 内建测试对整数比较安全等价）：[ $EUID -eq 0 ] / [ $1 -lt 1 ]
+        script = _NUMERIC_TEST.sub(r'[ "$\1" \2]', script)
     explanation = payload.get("explanation")
     warnings = payload.get("warnings")
     # 拒绝明显未引用的变量展开；不把注释和单引号字面量当作变量。
@@ -171,15 +236,7 @@ def validate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     header = "\n".join(script.splitlines()[:20])
     if not all(marker in header for marker in ("用途", "用法", "参数", "依赖", "适用")) or "AI" not in header:
         raise AgentFormatError("缺少用途/用法/参数/依赖/AI审阅/适用发行版注释块：" + json.dumps(payload, ensure_ascii=False))
-    previous: list[str] = []
-    for line in script.splitlines():
-        code = line.strip()
-        if not code or code.startswith("#"):
-            continue
-        if re.search(r"(?:^|[;|&\s])(?:rm|kill|iptables)\s|systemctl\s+(?:stop|restart)\b|\s-delete\b", code):
-            if not any("echo " in earlier for earlier in previous[-3:]):
-                raise AgentFormatError("影响业务操作前缺少中文 echo 提示：" + json.dumps(payload, ensure_ascii=False))
-        previous.append(code)
+    ensure_echo_prompts(script, "")
     return {"need_clarification": False, "script": script, "explanation": explanation,
             "warnings": warnings, "usage": payload["usage"]}
 
