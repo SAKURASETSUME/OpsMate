@@ -1354,3 +1354,14 @@
 ### Phase 状态
 
 **完成，随 `fix(codegen): 生成期输出区空引用白屏` 提交。Phase 9 仍待用户确认后开工。**
+
+### 追加（同日）：多脚本一次全量生成 + 前端名称标识（用户需求）
+
+- **需求**：一次要多个脚本时全部生成、一个不少；每个脚本的名称只在前端页面标识，不写进脚本内容。
+- **后端**：①提示词（§9.1）新增 scripts 数组契约——多脚本时输出 `scripts:[{name,script,explanation,warnings,usage}]`，name 唯一/不含路径分隔符/仅界面标识；②`validate_payload` 拆出 `_validate_script_item`（原单脚本全部硬校验：shebang/set -euo/头注释块/未引用变量拒绝/解读词拒绝/危险操作前 echo），数组每个元素独立过校验，名称重复/为空/坏元素整体拒绝并带定位上下文重试；③cron 检查覆盖全部脚本的 usage+warnings 并集；④`codegen_history` 新增 scripts 列（ALTER 迁移），多脚本时 script 列存拼接（保 FTS 命中），回看返回完整数组；单脚本老记录与老字段完全兼容。
+- **前端**：`codegenScripts/currentScript` 归一化（数组或旧单脚本统一处理）；多脚本时输出区顶部显示名称 Tab（激活态主色），脚本/逐段解读/警告/用法随 Tab 切换；复制与下载作用于当前选中（下载文件名取脚本名，非法字符替换）。
+- 验证：verify_codegen 新增多脚本段（合法数组通过/重名拒绝/坏元素拒绝/SSE 全流程入库/回看 scripts 完整/名称不出现在脚本内容），全套 6 verify 回归绿。
+
+### Phase 状态
+
+**完成，随 `feat(codegen): 多脚本一次全量生成与名称标识` 提交。Phase 9 仍待用户确认后开工。**

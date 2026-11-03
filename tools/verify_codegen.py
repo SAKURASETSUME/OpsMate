@@ -91,6 +91,35 @@ def main() -> None:
         with patch.object(LLMClient, "chat", new=AsyncMock(side_effect=replies)):
             _, steps = asyncio.run(run_agent(LLMClient(settings), CODEGEN_SYSTEM_PROMPT, "test"))
             assert len(steps) == 6
+        # 多脚本：需求要几个全部生成，名称唯一且不入脚本内容；入库/回看完整
+        single = payload()
+        multi = {"need_clarification": False, "scripts": [
+            {"name": "采集.sh", "script": single["script"], "explanation": single["explanation"],
+             "warnings": single["warnings"], "usage": single["usage"]},
+            {"name": "部署.sh", "script": single["script"].replace("隔离验证", "部署验证"),
+             "explanation": single["explanation"], "warnings": single["warnings"], "usage": single["usage"]}]}
+        checked = validate_payload(multi)
+        assert checked["need_clarification"] is False and len(checked["scripts"]) == 2
+        assert [s["name"] for s in checked["scripts"]] == ["采集.sh", "部署.sh"]
+        assert all(s["script"].startswith("#!/usr/bin/env bash") for s in checked["scripts"])
+        dup = json.loads(json.dumps(multi)); dup["scripts"][1]["name"] = "采集.sh"
+        try:
+            validate_payload(dup); raise AssertionError("重名脚本被接受")
+        except AgentFormatError:
+            pass
+        bad_item = json.loads(json.dumps(multi)); bad_item["scripts"][1]["script"] = "not a script"
+        try:
+            validate_payload(bad_item); raise AssertionError("坏脚本元素被接受")
+        except AgentFormatError:
+            pass
+        replies = [result({"action": "final", "payload": multi}), result(multi)]
+        with patch("app.codegen.routes.effective_settings", return_value=settings), patch.object(LLMClient, "chat", new=AsyncMock(side_effect=replies)):
+            events = sse_events(client.post("/api/codegen/generate", json={"requirement": "生成采集和部署两个脚本"}))
+            assert events[-1].get("done") is True, events[-1]
+        history = client.get("/api/codegen/history").json()["items"]
+        detail = client.get(f"/api/codegen/history/{history[0]['id']}").json()
+        assert len(detail["scripts"]) == 2 and detail["scripts"][0]["name"] == "采集.sh"
+        assert all("采集.sh" not in s["script"] and "部署.sh" not in s["script"] for s in detail["scripts"])
         unsafe = payload()
         unsafe["script"] += 'mkdir -p $BACKUP_DIR\n'
         try:

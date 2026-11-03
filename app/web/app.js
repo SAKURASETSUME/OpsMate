@@ -242,7 +242,7 @@ const App = {
       codegenResult: null,
       codegenHistory: [],
       clarificationAnswers: [],
-      codegenLiveSteps: [], codegenPhase: "", codegenAbort: null,
+      codegenLiveSteps: [], codegenPhase: "", codegenAbort: null, codegenScriptIdx: 0,
       logEntries: [], logId: null, currentLog: null, logRows: [], logTotal: 0,
       logsLoading: false, logImporting: false, logTitle: "", logContent: "",
       logLevels: [], logKeyword: "", logUseRegex: false, logPattern: "", logOrder: "asc",
@@ -321,6 +321,18 @@ const App = {
       if (this.codegenPhase === "final") return "资料检索完成，正在生成最终脚本…";
       if (this.codegenPhase === "retry") return "输出未通过校验，正在按提示重试…";
       return "智能体检索本地知识与脚本历史…";
+    },
+    codegenScripts() {
+      // 多脚本结果归一化：scripts 数组或旧单脚本记录都转成数组形态
+      const r = this.codegenResult;
+      if (!r || r.need_clarification) return [];
+      if (Array.isArray(r.scripts) && r.scripts.length) return r.scripts;
+      return [{ name: "", script: r.script || "", explanation: r.explanation || [],
+        warnings: r.warnings || [], usage: r.usage || "" }];
+    },
+    currentScript() {
+      return this.codegenScripts[this.codegenScriptIdx] || this.codegenScripts[0]
+        || { name: "", script: "", explanation: [], warnings: [], usage: "" };
     },
     analysisHtml() { return reportMarkdown(this.analysisContent); },
     profileHasChanges() {
@@ -536,7 +548,7 @@ const App = {
             if (event.error) throw new Error(event.error);
             if (event.tool) this.codegenLiveSteps.push({ tool: event.tool, args: event.args, result_summary: event.result });
             if (event.phase) this.codegenPhase = event.phase;
-            if (event.result && !event.tool) this.codegenResult = event.result;
+            if (event.result && !event.tool) { this.codegenResult = event.result; this.codegenScriptIdx = 0; }
             if (event.done) completed = true;
           };
           try {
@@ -563,17 +575,19 @@ const App = {
       if (this.codegenBusy) return;
       try {
         this.codegenResult = await apiFetch("/api/codegen/history/" + item.id);
+        this.codegenScriptIdx = 0;
         this.codegenForm = { requirement: this.codegenResult.requirement,
           distro: this.codegenResult.params.distro || "", notes: this.codegenResult.params.notes || "" };
       } catch (err) { /* apiFetch 统一反馈 */ }
     },
     async copyScript() {
-      try { await navigator.clipboard.writeText(this.codegenResult.script); showToast("已复制脚本"); }
+      try { await navigator.clipboard.writeText(this.currentScript.script); showToast("已复制脚本" + (this.codegenScripts.length > 1 ? "：" + (this.currentScript.name || "当前选中") : "")); }
       catch (err) { showToast("复制失败，请手动选择脚本复制", "err"); }
     },
     downloadScript() {
-      const url = URL.createObjectURL(new Blob([this.codegenResult.script], {type: "text/plain;charset=utf-8"}));
-      const link = document.createElement("a"); link.href = url; link.download = "opsmate-script.sh";
+      const base = (this.currentScript.name || "opsmate-script").replace(/[\\/:*?"<>|]+/g, "-").trim() || "opsmate-script";
+      const url = URL.createObjectURL(new Blob([this.currentScript.script], {type: "text/plain;charset=utf-8"}));
+      const link = document.createElement("a"); link.href = url; link.download = base.endsWith(".sh") ? base : base + ".sh";
       link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     },
     async loadSettings() {
@@ -1853,10 +1867,14 @@ const App = {
     '          <p v-if="!codegenResult.steps || !codegenResult.steps.length" class="placeholder dim">直接生成</p>',
     '          <details v-for="(step,i) in codegenResult.steps" :key="i" class="trace-card"><summary>{{ i + 1 }} · {{ step.tool }}</summary><pre>{{ JSON.stringify(step.args) }}</pre><p>{{ step.result_summary }}</p></details>',
     "        </template>",
-    '        <div v-if="codegenResult" class="codegen-output" :style="gridPaneStyle(\'codegen\')"><section><div class="settings-actions"><button class="copy-button" @click="copyScript">复制脚本</button><button class="copy-button" @click="downloadScript">下载 .sh</button></div><pre class="script-source">{{ codegenResult.script }}</pre></section>',
+    '        <div v-if="codegenResult" class="codegen-output" :style="gridPaneStyle(\'codegen\')"><section>',
+    '          <div v-if="codegenScripts.length > 1" class="script-tabs">',
+    '            <button v-for="(s,i) in codegenScripts" :key="i" type="button" class="script-tab" :class="{ active: i === codegenScriptIdx }" :title="s.name" @click="codegenScriptIdx = i">{{ s.name || (\'脚本 \' + (i + 1)) }}</button>',
+    "          </div>",
+    '          <div class="settings-actions"><button class="copy-button" @click="copyScript">复制脚本</button><button class="copy-button" @click="downloadScript">下载 .sh</button></div><pre class="script-source">{{ currentScript.script }}</pre></section>',
     '          <div class="edge-handle" title="拖拽调整宽度" :style="{ left: (paneWidths.codegen * 100) + \'%\' }" @mousedown="startPaneDrag($event, \'codegen\')"></div>',
-    '          <section><h2>逐段解读</h2><article v-for="(part,i) in codegenResult.explanation" :key="i" class="trace-card"><h3><span class="line-badge">{{ part.lines }}</span> {{ part.title }}</h3><p>{{ part.detail }}</p></article>',
-    '            <div class="script-warnings"><p v-for="(warning,i) in codegenResult.warnings" :key="i">⚠ {{ warning }}</p></div><p class="script-usage">{{ codegenResult.usage }}</p>',
+    '          <section><h2>逐段解读{{ codegenScripts.length > 1 ? "·" + (currentScript.name || codegenScriptIdx + 1) : "" }}</h2><article v-for="(part,i) in currentScript.explanation" :key="i" class="trace-card"><h3><span class="line-badge">{{ part.lines }}</span> {{ part.title }}</h3><p>{{ part.detail }}</p></article>',
+    '            <div class="script-warnings"><p v-for="(warning,i) in currentScript.warnings" :key="i">⚠ {{ warning }}</p></div><p class="script-usage">{{ currentScript.usage }}</p>',
     '          </section></div>',
     '      </section>',
     '      <h2>生成历史</h2><p v-if="!codegenHistory.length" class="placeholder dim">暂无生成记录</p>',

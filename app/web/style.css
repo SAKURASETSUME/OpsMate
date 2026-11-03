@@ -484,6 +484,15 @@ a.copy-button, label.copy-button { text-decoration: none; }
 .trace-card pre { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin: 8px 0 4px; }
 .trace-card summary { cursor: pointer; font-family: var(--mono); color: var(--primary-bright); font-size: 13px; }
 .line-badge { font-size: 12px; font-family: var(--mono); color: var(--primary-bright); margin-right: 6px; }
+.script-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.script-tab {
+  border: 1px solid var(--border-strong); border-radius: var(--r-chip);
+  background: var(--inset); color: var(--text-dim); font: inherit; font-size: 12.5px;
+  padding: 5px 12px; cursor: pointer; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.script-tab:hover { color: var(--text); }
+.script-tab.active { color: var(--primary); border-color: var(--primary); background: var(--primary-soft); }
 .script-warnings { padding: 12px 14px; color: var(--err); border-left: 3px solid var(--err); background: rgba(255, 107, 107, 0.06); border-radius: 0 var(--r-chip) var(--r-chip) 0; font-size: 13px; }
 .script-usage { color: var(--text-dim); overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; }
 .clarification { border: 1px solid var(--border-strong); border-radius: var(--r-panel); padding: 4px 18px; margin: 18px 0; background: var(--card); }
