@@ -944,3 +944,9 @@ body.pane-dragging .content { pointer-events: none; }
   .command-list { max-height: 40vh; }
   .kb-cards { grid-template-columns: 1fr; }
 }
+
+/* 设置页：技能/MCP 管理 */
+.settings-page h2 { display: flex; align-items: center; gap: 10px; }
+.skill-form-name { min-width: 240px; }
+.skill-form-triggers { flex: 2; min-width: 260px; }
+.skill-form-method { flex: 1 1 100%; }

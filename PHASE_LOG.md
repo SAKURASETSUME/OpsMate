@@ -1439,3 +1439,15 @@
 ### Phase 状态
 
 **完成，随 `feat(assistant): 自主配置工具三件与密钥脱敏` 提交。**
+
+### 追加（同日）：自主工具扩至 14 个 + 用户技能管理 + MCP 接入（用户需求）
+
+- **新增 8 个自主工具**（tools.py，系统提示词纪律 #10 约束"用户显式下令才用"）：`system_info`（OS/CPU/内存/各盘空间，只读）、`manage_workspace`（增删工作目录授权，复用 agent_workspace.json）、`install_kb`（agent 自写 kb YAML 落盘——软件/条目/危险等级全套契约校验后立即生效）、`list_processes`/`stop_process`（tasklist/taskkill，结束前对话确认）、`open_path`（os.startfile 打开下载产物）、`archive_files`（工作目录内 zip/unzip，复用越界校验）、`schedule_task`（schtasks 计划任务，**仅 OpsMate_ 前缀**防越权操作系统任务，create daily/HH:MM、delete、list）。至此自主类工具 14 个。
+- **用户技能管理**：`POST/DELETE /api/assistant/skills`（与智能体 install_skill 同一套校验落盘）；设置页新增「技能管理」面板（列表/表单安装：id+显示名+触发词+方法论+示例问题→自动拼 YAML/删除），安装后 chips 即时刷新。
+- **MCP 接入**（零新依赖）：`app/agent/mcp.py`——stdio 传输=subprocess+换行 JSON-RPC（读线程+队列做 30s 超时，进程池常驻按配置 id 复用，配置删除即杀进程）；http 传输=httpx POST+Mcp-Session-Id 会话头，兼容 SSE 响应行。工具以 `mcp__<服务器>__<工具>` 命名，`registry_tools()` 汇总全部启用服务器（单个不可用不影响其余），engine 新增 `extra_tools` 参数动态并入规划清单；`/api/mcp` CRUD+`/{id}/test`（返回工具清单预览）；设置页「MCP 服务器」面板（stdio 命令行/http URL、测试、删除）。
+- 踩坑：①MCP 面板测试结果行 `item` 写在 v-for 外（作用域外引用）→ 展开面板即 Vue 崩溃白屏（重排结构修复）；②IAB 标签页后台节流导致 mount 时序抖动，验收需重载等待；③冒烟脚本 shell 转义把 `\n` 写成字面反斜杠致假服务器"超时"——改用文件写入。
+- 验证：verify S 段（system_info/工作目录增删/进程列表/install_kb 合法+缺 example 拒绝/skill CRUD API 重名 404/mcp 假服务器注册表+调用+CRUD+测试端点/规划 system 注入 mcp__ 工具）全过；6 verify 回归绿；浏览器实测技能面板装-删（6→7→6，chips 同步）；真机 MCP 冒烟——stdio 假服务器经 API 添加→测试（工具清单）→注册表→`call_mcp_tool` 返回正文→删除清理，dev server 进程内与跨进程（API）均通。
+
+### Phase 状态
+
+**完成，随 `feat(assistant): 自主工具扩充与技能管理面板` + `feat(mcp): 服务器接入与智能体动态工具` 提交。**

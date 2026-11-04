@@ -547,6 +547,76 @@ def main() -> None:
         assert fake_key not in stored and "sk-v***" in stored
         svc.delete_session(sid)
 
+        # S：系统类工具 + Skill CRUD API + MCP 全链路（stdio 假服务器）
+        info = execute_tool("system_info", {})
+        assert info["ok"] and info["result"]["drives"] and info["result"]["cpu_count"] >= 1
+        with patch.object(assistant_service_module, "WORKSPACE_JSON", Path(folder) / "aw.json"):
+            ws = execute_tool("manage_workspace", {"action": "add", "path": folder})
+            assert ws["ok"] and str(Path(folder).resolve()) in ws["result"]["directories"]
+            ws = execute_tool("manage_workspace", {"action": "remove", "path": folder})
+            assert ws["ok"] and ws["result"]["directories"] == []
+        ps = execute_tool("list_processes", {"name": "python", "limit": 5})
+        assert ps["ok"] and ps["result"]["processes"]
+        kb_yaml = ("software: e2ekb\nlabel: E2E软件\ncategories:\n"
+                   "- id: cli\n  entries:\n  - {name: 启动, syntax: e2ekb start, example: e2ekb start, desc: 启动, danger: low, tags: [运行命令]}\n"
+                   "- id: conf\n  entries:\n  - {name: port, default: '1234', section: server, syntax: port=1234, example: port=1234, desc: 端口, danger: medium, tags: [网络]}\n")
+        with patch.object(config, "KB_DIR", Path(folder) / "kb"):
+            from app.kb.service import get_kb, KnowledgeBase
+            with patch("app.kb.service._KB", KnowledgeBase(Path(folder) / "kb")):
+                kbres = execute_tool("install_kb", {"filename": "e2ekb", "content": kb_yaml})
+                assert kbres["ok"] and kbres["result"]["installed"] == "e2ekb"
+                bad_kb = kb_yaml.replace("example: e2ekb start, ", "")
+                assert not execute_tool("install_kb", {"filename": "bad", "content": bad_kb})["ok"]
+        # Skill CRUD API
+        skill_payload = {"name": "api-skill", "content":
+                         "name: api-skill\nlabel: API技能\ntriggers: [api触发词]\nmethodology: |\n  测试\n"}
+        created = client.post("/api/assistant/skills", json=skill_payload)
+        assert created.status_code == 200 and created.json()["installed"] == "api-skill"
+        assert client.post("/api/assistant/skills", json=skill_payload).status_code == 400  # 重名
+        assert client.delete("/api/assistant/skills/api-skill").json()["ok"]
+        assert client.delete("/api/assistant/skills/api-skill").status_code == 404
+        # MCP：stdio 假服务器（换行 JSON-RPC echo 工具）走 全链路
+        fake_server = Path(folder) / "fake_mcp.py"
+        fake_server.write_text(
+            "import json, sys\n"
+            "def send(obj):\n"
+            "    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + '\\n'); sys.stdout.flush()\n"
+            "for line in sys.stdin:\n"
+            "    if not line.strip(): continue\n"
+            "    req = json.loads(line)\n"
+            "    if req.get('method') == 'initialize':\n"
+            "        send({'jsonrpc': '2.0', 'id': req['id'], 'result': {'protocolVersion': '2024-11-05', 'capabilities': {}}})\n"
+            "    elif req.get('method') == 'tools/list':\n"
+            "        send({'jsonrpc': '2.0', 'id': req['id'], 'result': {'tools': [{'name': 'echo', 'description': '回显输入'}]}})\n"
+            "    elif req.get('method') == 'tools/call':\n"
+            "        send({'jsonrpc': '2.0', 'id': req['id'], 'result': {'content': [{'type': 'text', 'text': 'echo:' + req['params']['arguments'].get('text', '')}]}})\n",
+            encoding="utf-8")
+        from app.agent import mcp as mcp_module
+        with patch.object(mcp_module, "MCP_JSON", Path(folder) / "mcp.json"):
+            mcp_module.save_servers([{"id": "t1", "name": "fake", "transport": "stdio",
+                                      "command": [sys.executable, str(fake_server)], "enabled": True}])
+            reg = mcp_module.registry_tools()
+            assert "mcp__fake__echo" in reg, reg
+            called = execute_tool("mcp__fake__echo", {"text": "你好"})
+            assert called["ok"] and called["result"] == "echo:你好", called
+            # CRUD API + 测试端点
+            assert len(client.get("/api/mcp").json()["items"]) == 1
+            tested = client.post("/api/mcp/t1/test").json()
+            assert tested["ok"] and tested["tools"][0]["name"] == "echo"
+            # 智能体规划工具清单注入 MCP 工具：脚本化断言
+            mcp_captured: list[dict] = []
+            async def mcp_stream(self, messages, **kwargs):
+                mcp_captured.append(messages[0])
+                yield result({"action": "final"})["content"] if len(mcp_captured) == 1 else "mcp ok"
+            with patch("app.assistant.routes.effective_settings", return_value=SETTINGS), \
+                 patch.object(LLMClient, "chat_stream", new=mcp_stream):
+                events = parse_sse(client.post("/api/assistant/chat", json={"message": "mcp 测试"}))
+                assert [e for e in events if e.get("done")]
+            assert "mcp__fake__echo" in mcp_captured[0]["content"]
+            mcp_module.save_servers([])
+            with mcp_module._servers_lock:
+                mcp_module._stdio_procs.pop("t1", None)
+
     print("assistant ok")
 
 

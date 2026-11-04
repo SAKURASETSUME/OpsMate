@@ -237,6 +237,10 @@ const App = {
       selectedProfileId: "current",
       activeProfileId: "current",
       profileName: "原有配置",
+      skillManageOpen: false, skillList: [], skillBusy: false,
+      skillForm: { name: "", label: "", triggers: "", methodology: "", example: "" },
+      mcpManageOpen: false, mcpList: [], mcpBusy: false, mcpTestResult: {},
+      mcpForm: { name: "", transport: "stdio", command: "", url: "", enabled: true },
       codegenForm: { requirement: "", distro: "", notes: "" },
       codegenBusy: false,
       codegenResult: null,
@@ -601,6 +605,96 @@ const App = {
         this.settingsLoaded = true;
       } catch (err) { /* apiFetch 已展示错误 */ }
       finally { this.settingsBusy = false; }
+    },
+    /* ============ Skill / MCP 管理 ============ */
+    async loadSkillManage() {
+      try { this.skillList = (await apiFetch("/api/assistant/skills")).items; }
+      catch (err) { /* 统一提示 */ }
+    },
+    async toggleSkillManage() {
+      this.skillManageOpen = !this.skillManageOpen;
+      if (this.skillManageOpen) await this.loadSkillManage();
+    },
+    buildSkillYaml() {
+      const f = this.skillForm;
+      const triggers = f.triggers.split(/[,，\n]/).map((t) => t.trim()).filter(Boolean);
+      return "name: " + f.name + "\nlabel: " + (f.label || f.name) + "\ntriggers: ["
+        + triggers.join(", ") + "]\nmethodology: |\n"
+        + f.methodology.split("\n").map((l) => "  " + l).join("\n")
+        + (f.example ? "\nexample_question: " + f.example : "") + "\n";
+    },
+    async submitSkill() {
+      const f = this.skillForm;
+      if (!f.name || !f.methodology || !f.triggers.trim()) {
+        showToast("请填写名称、触发词与方法论", "err"); return;
+      }
+      this.skillBusy = true;
+      try {
+        const data = await apiFetch("/api/assistant/skills", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: f.name, content: this.buildSkillYaml() }),
+        });
+        showToast("技能已安装并立即生效（共 " + data.total + " 个）");
+        this.skillForm = { name: "", label: "", triggers: "", methodology: "", example: "" };
+        await this.loadSkillManage(); await this.loadAsstSkills();
+      } catch (err) { /* apiFetch 统一提示 */ }
+      finally { this.skillBusy = false; }
+    },
+    async removeSkill(slug) {
+      this.skillBusy = true;
+      try {
+        await apiFetch("/api/assistant/skills/" + encodeURIComponent(slug), { method: "DELETE" });
+        showToast("技能已删除");
+        await this.loadSkillManage(); await this.loadAsstSkills();
+      } catch (err) { /* 统一提示 */ }
+      finally { this.skillBusy = false; }
+    },
+    async loadMcpManage() {
+      try { this.mcpList = (await apiFetch("/api/mcp")).items; }
+      catch (err) { /* 统一提示 */ }
+    },
+    async toggleMcpManage() {
+      this.mcpManageOpen = !this.mcpManageOpen;
+      if (this.mcpManageOpen) await this.loadMcpManage();
+    },
+    async submitMcp() {
+      const f = this.mcpForm;
+      const command = f.command ? f.command.split(/\s+/).filter(Boolean) : [];
+      if (!f.name || (f.transport === "stdio" && !command.length)
+          || (f.transport === "http" && !f.url.trim())) {
+        showToast("请填写名称与命令行/URL", "err"); return;
+      }
+      this.mcpBusy = true;
+      try {
+        await apiFetch("/api/mcp", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: f.name, transport: f.transport,
+            command, url: f.url.trim(), enabled: f.enabled }),
+        });
+        showToast("MCP 服务器已添加，点击「测试」验证连接");
+        this.mcpForm = { name: "", transport: "stdio", command: "", url: "", enabled: true };
+        await this.loadMcpManage();
+      } catch (err) { /* 统一提示 */ }
+      finally { this.mcpBusy = false; }
+    },
+    async testMcp(item) {
+      this.mcpTestResult = { ...this.mcpTestResult, [item.id]: "测试中…" };
+      try {
+        const data = await apiFetch("/api/mcp/" + item.id + "/test", { method: "POST" }, 90000);
+        this.mcpTestResult = { ...this.mcpTestResult, [item.id]:
+          data.ok ? "连接成功，工具 " + data.tools.length + " 个："
+            + data.tools.map((t) => t.name).join("、")
+            : "失败：" + data.error };
+      } catch (err) { /* 统一提示 */ }
+    },
+    async removeMcp(id) {
+      this.mcpBusy = true;
+      try {
+        await apiFetch("/api/mcp/" + id, { method: "DELETE" });
+        showToast("MCP 服务器已删除");
+        await this.loadMcpManage();
+      } catch (err) { /* 统一提示 */ }
+      finally { this.mcpBusy = false; }
     },
     selectModelProfile() {
       const profile = this.modelProfiles.find((p) => p.id === this.selectedProfileId);
@@ -2119,7 +2213,38 @@ const App = {
     '      <p v-if="settingsTestResult" role="status">{{ settingsTestResult }}</p>',
     '      <p class="placeholder dim">配置和密钥仅存本机，不进入 Git、项目分享或安装包。保存与启用不会调用模型；点击测试或生成功能后才会调用，付费模型按平台计费。</p>',
     '      <p class="placeholder dim">推荐预设：智谱 GLM-4-Flash。可在 <a href="https://open.bigmodel.cn" target="_blank" rel="noopener noreferrer">智谱平台</a> 注册并获取 API key；模型供应与计费以平台为准。</p>',
-    '    </section>',
+    '      <h2>技能管理<button class="copy-button" type="button" @click="toggleSkillManage">{{ skillManageOpen ? "收起" : "展开" }}</button></h2>',
+    '      <div v-if="skillManageOpen" class="settings-form">',
+    '        <p class="placeholder dim">技能命中提问关键词后自动注入排查方法论；也可让运维助手直接安装技能。</p>',
+    '        <div v-for="s in skillList" :key="s.name" class="asst-ws-item"><code>{{ s.label }}（{{ s.name }}）</code>',
+    '          <button class="asst-attach-remove" type="button" title="删除技能" :disabled="skillBusy" @click="removeSkill(s.name)">×</button></div>',
+    '        <form class="asst-ws-add" @submit.prevent="submitSkill">',
+    '          <input v-model="skillForm.name" placeholder="技能 id（英文短横线，如 db-conn-pool）" :disabled="skillBusy" class="skill-form-name">',
+    '          <input v-model="skillForm.label" placeholder="显示名（如 数据库连接池排查）" :disabled="skillBusy">',
+    '          <input v-model="skillForm.triggers" placeholder="触发词，逗号分隔（如 连接池耗尽,too many connections）" :disabled="skillBusy" class="skill-form-triggers">',
+    '          <textarea v-model="skillForm.methodology" rows="4" placeholder="排查方法论（命中后注入给模型）" :disabled="skillBusy" class="skill-form-method"></textarea>',
+    '          <input v-model="skillForm.example" placeholder="示例问题（可选，供快捷按钮预填）" :disabled="skillBusy">',
+    '          <button class="copy-button" type="submit" :disabled="skillBusy">{{ skillBusy ? "安装中…" : "安装技能" }}</button>',
+    "        </form>",
+    "      </div>",
+    '      <h2>MCP 服务器<button class="copy-button" type="button" @click="toggleMcpManage">{{ mcpManageOpen ? "收起" : "展开" }}</button></h2>',
+    '      <div v-if="mcpManageOpen" class="settings-form">',
+    '        <p class="placeholder dim">添加 Model Context Protocol 服务器后，其工具自动并入运维助手（工具名 mcp__服务器__工具）；配置仅存本机。</p>',
+    '        <div v-for="item in mcpList" :key="item.id">',
+    '          <div class="asst-ws-item"><code :title="item.transport === \'stdio\' ? item.command.join(\' \') : item.url">{{ item.name }} · {{ item.transport }}{{ item.enabled ? "" : " · 已停用" }}</code>',
+    '            <button class="copy-button" type="button" :disabled="mcpBusy" @click="testMcp(item)">测试</button>',
+    '            <button class="asst-attach-remove" type="button" title="删除" :disabled="mcpBusy" @click="removeMcp(item.id)">×</button></div>',
+    '          <p v-if="mcpTestResult[item.id]" class="placeholder dim">{{ mcpTestResult[item.id] }}</p>',
+    "        </div>",
+    '        <form class="asst-ws-add" @submit.prevent="submitMcp">',
+    '          <select v-model="mcpForm.transport" :disabled="mcpBusy"><option value="stdio">stdio（本地命令）</option><option value="http">http（远程 URL）</option></select>',
+    '          <input v-model="mcpForm.name" placeholder="服务器名（英文，如 filesystem）" :disabled="mcpBusy" class="skill-form-name">',
+    '          <input v-if="mcpForm.transport === \'stdio\'" v-model="mcpForm.command" placeholder="启动命令（如 npx -y @modelcontextprotocol/server-filesystem D:\\data）" :disabled="mcpBusy">',
+    '          <input v-else v-model="mcpForm.url" type="url" placeholder="服务器 URL（http/https）" :disabled="mcpBusy">',
+    '          <button class="copy-button" type="submit" :disabled="mcpBusy">{{ mcpBusy ? "添加中…" : "添加服务器" }}</button>',
+    "        </form>",
+    "      </div>",
+    "    </section>",
     '    <section v-else class="placeholder-page">',
     '      <h1 class="ready-title">OpsMate 已就绪</h1>',
     '      <p class="placeholder">当前模块：{{ activeLabel }}</p>',

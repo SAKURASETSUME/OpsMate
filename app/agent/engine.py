@@ -210,7 +210,8 @@ async def run_assistant(client: LLMClient, system: str,
                         conversation: list[dict[str, Any]],
                         image_parts: list[str] | None = None,
                         effort: str | None = None,
-                        use_tools: bool = True) -> AsyncIterator[dict[str, Any]]:
+                        use_tools: bool = True,
+                        extra_tools: dict[str, str] | None = None) -> AsyncIterator[dict[str, Any]]:
     """运维问答：工具循环（规划低温低强度）→ 流式 markdown 终答。
 
     yield 顺序：{"tool","args","result","step"} 过程事件（可多条，step 形如 "3/12"）→
@@ -219,10 +220,13 @@ async def run_assistant(client: LLMClient, system: str,
     image_parts：本轮用户附件图片的 data URL，只并入终答请求（多模态模型识别）。
     effort：思考强度 low/medium/high/max，作用于模型调用（影响质量与速度）。
     use_tools=False：完全跳过工具规划，问题直发模型流式作答（用户关闭本地工具时）。
+    extra_tools：动态工具注册表（MCP 等），name → 描述；仅在 use_tools 时并入。
     模型在规划轮直接给出完整回答时按单段 delta 原样使用；累计三次协议
     解析失败后退回无工具直答。
     """
     allowed = {name: TOOL_DESCRIPTIONS[name] for name in ASSISTANT_TOOLS}
+    if use_tools and extra_tools:
+        allowed.update(extra_tools)
     protocol = (
         system.splitlines()[0] + "\n当前先用只读工具检索本地资料，本轮不写回答，只输出一个 JSON："
         '{"action":"tool","tool":"工具名","args":{"q":"关键词","limit":5}} 或 {"action":"final"}（资料足够时）。'

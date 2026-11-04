@@ -41,11 +41,21 @@ TOOL_DESCRIPTIONS = {
     "configure_api": "写入模型 API 配置并立即连通测试，args={base_url,api_key,model}（如 https://api.x.com/v1 + 密钥 + 模型名）；返回测试结果与诊断提示，密钥永不回显；失败时按提示修正后重试",
     "install_skill": "安装通用排查技能到 data/skills/（立即生效），args={name:文件名英文短横线,content:技能 YAML 全文}；YAML 必含 name/label/triggers(列表)/methodology，可选 example_question",
     "download_file": "从公网下载文件/软件安装包到 agent_downloads/ 目录，args={url,filename:可选保存文件名}；上限 300MB，禁止内网地址；返回保存路径与大小",
+    "system_info": "读取本机系统信息（只读）：OS/CPU/内存/各盘剩余空间/Python 版本，args={}；用于容量评估与故障排查",
+    "manage_workspace": "管理工作目录授权列表，args={action:add|remove,path:绝对路径}；用户明确要求添加/移除工作目录时使用，返回最新列表",
+    "install_kb": "新增/扩充配置速查知识库软件（YAML 落盘立即生效），args={filename:软件id如 mycat,content:完整 kb YAML（software/label/categories[cli,conf]）}；遵循 cli 条目必有 example、conf 条目必有 section 的契约",
+    "list_processes": "列出本机进程（名称/PID/内存），args={name:可选按名称过滤,limit:默认前40}；只读",
+    "stop_process": "结束本机进程，args={pid 或 name:二选一}；影响业务前先向用户说明并确认（对话中确认即可）",
+    "open_path": "用资源管理器打开文件/文件夹，args={path:本地绝对路径或 agent_downloads 相对名}；用户要求『打开下载的文件』时用",
+    "archive_files": "打包/解压 zip，args={action:zip|unzip,source:工作目录内路径,target:工作目录内输出路径}；适合归档/整理下载产物",
+    "schedule_task": "管理 Windows 计划任务（仅限 OpsMate_ 前缀），args={action:create|delete|list,name:任务名,schedule:如 daily 09:00,command:命令行}；用于定时巡检/备份；create/delete 需用户在对话中明确要求",
 }
 
 WORKSPACE_TOOLS = ("list_dir", "read_workspace_file", "write_workspace_file", "run_command")
 WEB_TOOLS = ("web_search", "web_fetch")
-SETUP_TOOLS = ("configure_api", "install_skill", "download_file")
+SETUP_TOOLS = ("configure_api", "install_skill", "download_file", "system_info", "manage_workspace",
+               "install_kb", "list_processes", "stop_process", "open_path", "archive_files",
+               "schedule_task")
 MAX_WS_READ = 200_000
 MAX_WS_WRITE = 1_000_000
 MAX_CMD_OUTPUT = 4_000
@@ -209,8 +219,169 @@ def _sanitize_error(text: str, secret: str) -> str:
     return cleaned[:300]
 
 
+def _system_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """系统级自主工具：系统信息/进程/打开路径/压缩/计划任务/工作目录/知识库。"""
+    if name == "system_info":
+        import platform
+        import shutil
+        drives = []
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            root = f"{letter}:\\"
+            if os.path.exists(root):
+                try:
+                    usage = shutil.disk_usage(root)
+                    drives.append({"drive": root, "total_gb": round(usage.total / 2**30, 1),
+                                   "free_gb": round(usage.free / 2**30, 1)})
+                except OSError:
+                    continue
+        return {"ok": True, "result": {
+            "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
+            "python": platform.python_version(), "cpu_count": os.cpu_count(),
+            "drives": drives, "cwd": os.getcwd()}}
+    if name == "manage_workspace":
+        action = str(args.get("action", "")).strip()
+        path = str(args.get("path", "")).strip()
+        current = assistant_service.load_workspace_dirs()
+        if action == "add":
+            target = Path(path)
+            if not target.is_absolute() or not target.is_dir():
+                return {"ok": False, "error": "path 必须是存在的目录绝对路径"}
+            if str(target.resolve()) not in current:
+                current = current + [str(target.resolve())]
+                assistant_service.save_workspace_dirs(current)
+            return {"ok": True, "result": {"directories": current}}
+        if action == "remove":
+            resolved = str(Path(path).resolve())
+            if resolved in current:
+                current = [item for item in current if item != resolved]
+                assistant_service.save_workspace_dirs(current)
+            return {"ok": True, "result": {"directories": current}}
+        return {"ok": False, "error": "action 必须是 add 或 remove"}
+    if name == "install_kb":
+        slug = str(args.get("filename", "")).strip()
+        content = str(args.get("content", ""))
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,30}", slug) or not content or len(content) > 200_000:
+            return {"ok": False, "error": "filename 须为小写英文短横线，content ≤200KB"}
+        try:
+            data = yaml.safe_load(content)
+        except yaml.YAMLError as exc:
+            return {"ok": False, "error": f"YAML 解析失败：{exc}"}
+        categories = data.get("categories") if isinstance(data, dict) else None
+        if (not isinstance(data, dict) or not data.get("software") or not data.get("label")
+                or not isinstance(categories, list) or not categories):
+            return {"ok": False, "error": "kb YAML 必含 software、label、categories（cli 与 conf 两个 category）"}
+        for category in categories:
+            entries = category.get("entries") or []
+            if category.get("id") not in ("cli", "conf"):
+                return {"ok": False, "error": "categories 的 id 只能是 cli 或 conf（UI 分 Tab 契约）"}
+            for entry in entries:
+                if category["id"] == "cli" and not entry.get("example"):
+                    return {"ok": False, "error": f"cli 条目 {entry.get('name')} 缺 example"}
+                if category["id"] == "conf" and not entry.get("section"):
+                    return {"ok": False, "error": f"conf 条目 {entry.get('name')} 缺 section"}
+                if str(entry.get("danger", "false")).lower() not in ("false", "low", "medium", "high"):
+                    return {"ok": False, "error": f"条目 {entry.get('name')} danger 必须是 false/low/medium/high"}
+        from app.kb.service import get_kb
+        target = config.KB_DIR / f"{slug}.yaml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        get_kb().refresh()
+        return {"ok": True, "result": {"installed": data["software"], "file": f"data/kb/{slug}.yaml",
+                                        "software_total": len(get_kb().summary())}}
+    if name == "list_processes":
+        name_filter = str(args.get("name", "")).strip().lower()
+        limit = max(1, min(int(args.get("limit", 40)), 100))
+        output = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True,
+                                text=True, encoding="gbk", errors="replace", timeout=30).stdout
+        processes = []
+        for line in output.splitlines():
+            fields = [field.strip('"') for field in line.split('","')]
+            if len(fields) >= 5 and (not name_filter or name_filter in fields[0].lower()):
+                processes.append({"name": fields[0], "pid": fields[1], "mem": fields[4]})
+            if len(processes) >= limit:
+                break
+        return {"ok": True, "result": {"count": len(processes), "processes": processes}}
+    if name == "stop_process":
+        pid = str(args.get("pid", "")).strip()
+        pname = str(args.get("name", "")).strip()
+        if pid.isdigit():
+            command = ["taskkill", "/PID", pid, "/F"]
+        elif pname and re.fullmatch(r"[\w.\- ]{1,60}", pname):
+            command = ["taskkill", "/IM", pname, "/F"]
+        else:
+            return {"ok": False, "error": "需提供数字 pid 或规范进程名 name"}
+        done = subprocess.run(command, capture_output=True, text=True,
+                              encoding="gbk", errors="replace", timeout=30)
+        return {"ok": done.returncode == 0,
+                "error": None if done.returncode == 0 else done.stdout.strip()[:200] or "结束失败"}
+    if name == "open_path":
+        raw = str(args.get("path", "")).strip()
+        candidates = [Path(raw)] if Path(raw).is_absolute() else [
+            config.DATA_DIR / "agent_downloads" / raw,
+            Path(raw)]
+        for candidate in candidates:
+            if candidate.exists():
+                os.startfile(str(candidate))  # noqa: S606 —— 仅打开资源管理器/默认程序
+                return {"ok": True, "result": {"opened": str(candidate)}}
+        return {"ok": False, "error": "路径不存在（绝对路径或 agent_downloads 内的文件名）"}
+    if name == "archive_files":
+        import zipfile
+        action = str(args.get("action", "")).strip()
+        source = _resolve_in_workspace(str(args.get("source", "")))
+        target = _resolve_in_workspace(str(args.get("target", "")), must_exist=False)
+        if source is None or target is None:
+            return {"ok": False, "error": "source/target 必须位于已授权工作目录内"}
+        try:
+            if action == "zip":
+                with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as bundle:
+                    if source.is_file():
+                        bundle.write(source, source.name)
+                    else:
+                        for item in source.rglob("*"):
+                            if item.is_file():
+                                bundle.write(item, item.relative_to(source))
+                return {"ok": True, "result": {"zip": str(target),
+                                                "size_bytes": target.stat().st_size}}
+            if action == "unzip":
+                with zipfile.ZipFile(source) as bundle:
+                    bundle.extractall(target)
+                return {"ok": True, "result": {"unpacked_to": str(target),
+                                                "files": len(bundle.namelist())}}
+            return {"ok": False, "error": "action 必须是 zip 或 unzip"}
+        except (OSError, zipfile.BadZipFile) as exc:
+            return {"ok": False, "error": f"压缩/解压失败：{exc}"}
+    # schedule_task：仅 OpsMate_ 前缀任务，防越权删除系统任务
+    action = str(args.get("action", "")).strip()
+    task_name = "OpsMate_" + re.sub(r"[^\w\-]", "-", str(args.get("name", "")).strip())[:40]
+    if action == "list":
+        output = subprocess.run(["schtasks", "/Query", "/FO", "CSV", "/NH"], capture_output=True,
+                                text=True, encoding="gbk", errors="replace", timeout=30).stdout
+        rows = [line for line in output.splitlines() if "OpsMate_" in line]
+        return {"ok": True, "result": {"tasks": rows[:20]}}
+    if action == "create":
+        schedule = str(args.get("schedule", "")).strip()
+        command = str(args.get("command", "")).strip()
+        match = re.fullmatch(r"daily\s+(\d{1,2}:\d{2})", schedule.lower())
+        if not match or not command or len(command) > 1000:
+            return {"ok": False, "error": "schedule 形如 'daily 09:00'，command 必填（≤1000 字）"}
+        hour, minute = match.group(1).split(":")
+        done = subprocess.run(
+            ["schtasks", "/Create", "/F", "/SC", "DAILY", "/TN", task_name,
+             "/TR", command, "/ST", f"{int(hour):02d}:{minute}"],
+            capture_output=True, text=True, encoding="gbk", errors="replace", timeout=30)
+        if done.returncode != 0:
+            return {"ok": False, "error": (done.stdout + done.stderr).strip()[:200]}
+        return {"ok": True, "result": {"created": task_name, "schedule": f"每天 {hour}:{minute}",
+                                        "command": command[:200]}}
+    if action == "delete":
+        done = subprocess.run(["schtasks", "/Delete", "/F", "/TN", task_name],
+                              capture_output=True, text=True, encoding="gbk", errors="replace", timeout=30)
+        return {"ok": done.returncode == 0,
+                "error": None if done.returncode == 0 else (done.stdout + done.stderr).strip()[:200]}
+    return {"ok": False, "error": "action 必须是 create/delete/list"}
+
+
 def _setup_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """用户显式下发的自主配置类工具：接 API / 装 skill / 下载文件。"""
     if name == "configure_api":
         base_url = str(args.get("base_url", "")).strip().rstrip("/")
         api_key = str(args.get("api_key", "")).strip()
@@ -335,7 +506,7 @@ def search_history(q: str, limit: int = 5) -> list[dict[str, Any]]:
 
 def execute_tool(name: str, args: dict[str, Any], *, scope_log_id: int | None = None) -> dict[str, Any]:
     """仅分派白名单工具，未知工具/参数错误转为结构化结果。"""
-    if name not in TOOL_DESCRIPTIONS:
+    if name not in TOOL_DESCRIPTIONS and not name.startswith("mcp__"):
         return {"ok": False, "error": "工具不存在或未开放"}
     blocked = guard_unconfirmable(name)
     if blocked is not None:
@@ -346,7 +517,11 @@ def execute_tool(name: str, args: dict[str, Any], *, scope_log_id: int | None = 
         if name in WEB_TOOLS:
             return _web_tool(name, args)
         if name in SETUP_TOOLS:
-            return _setup_tool(name, args)
+            return _setup_tool(name, args) if name in ("configure_api", "install_skill", "download_file") \
+                else _system_tool(name, args)
+        if name.startswith("mcp__"):
+            from app.agent.mcp import call_mcp_tool
+            return call_mcp_tool(name, args)
         if name in {"filter_log", "get_stats", "get_context"}:
             if scope_log_id is None or int(args.get("log_id", -1)) != scope_log_id:
                 return {"ok": False, "error": "未授权读取该日志，仅允许当前日志"}

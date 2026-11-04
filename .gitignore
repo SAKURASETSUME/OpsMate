@@ -31,3 +31,4 @@ Thumbs.db
 data/assistant_files/
 data/agent_files/
 data/agent_workspace.json
+data/mcp_servers.json

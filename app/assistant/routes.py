@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.agent.engine import run_assistant
 from app.agent import skills as agent_skills
+from app.agent.mcp import registry_tools as mcp_registry_tools
 from app.assistant import service
 from app.llm.provider import LLMClient, LLMError
 from app.llm.routes import effective_settings
@@ -204,6 +205,56 @@ def list_skills() -> dict[str, Any]:
     return {"items": agent_skills.list_skills()}
 
 
+class SkillInstallBody(BaseModel):
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    content: str = Field(min_length=10, max_length=64000)
+
+
+@router.post("/skills")
+def install_skill(body: SkillInstallBody) -> dict[str, Any]:
+    """用户手动安装技能（与智能体 install_skill 工具同一套校验与落盘）。"""
+    result = _install_skill_shared(body.name, body.content)
+    if not result["ok"]:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+def _install_skill_shared(slug: str, content: str) -> dict[str, Any]:
+    import yaml as yaml_module
+
+    try:
+        data = yaml_module.safe_load(content)
+    except yaml_module.YAMLError as exc:
+        return {"ok": False, "error": f"YAML 解析失败：{exc}"}
+    if (not isinstance(data, dict) or not str(data.get("name", "")).strip()
+            or not str(data.get("methodology", "")).strip()
+            or not isinstance(data.get("triggers"), list) or not data.get("triggers")):
+        return {"ok": False, "error": "技能 YAML 必含：name、methodology（方法论全文）、"
+                "triggers（非空触发词列表）；建议附 label 与 example_question"}
+    if any(item["name"] == data["name"] for item in agent_skills.list_skills()):
+        return {"ok": False, "error": f"技能 {data['name']} 已存在"}
+    target = agent_skills.SKILLS_DIR / f"{slug}.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    agent_skills.refresh()
+    return {"ok": True, "installed": data["name"], "total": len(agent_skills.list_skills())}
+
+
+@router.delete("/skills/{slug}")
+def delete_skill(slug: str) -> dict[str, Any]:
+    """删除技能（slug 为文件名，不含扩展）。"""
+    import re as re_module
+
+    if not re_module.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", slug):
+        raise HTTPException(status_code=400, detail="非法技能名")
+    target = agent_skills.SKILLS_DIR / f"{slug}.yaml"
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="技能不存在")
+    target.unlink()
+    agent_skills.refresh()
+    return {"ok": True, "total": len(agent_skills.list_skills())}
+
+
 @router.post("/chat")
 async def chat(body: ChatBody) -> StreamingResponse:
     """SSE：过程/提案事件 → thinking/delta 逐段 → done（含 session_id）；失败不落半份。"""
@@ -309,7 +360,8 @@ async def chat(body: ChatBody) -> StreamingResponse:
             async for event in run_assistant(client, system, effective_conversation,
                                              image_parts=image_parts or None,
                                              effort=body.effort or None,
-                                             use_tools=body.tools):
+                                             use_tools=body.tools,
+                                             extra_tools=mcp_registry_tools()):
                 if "final" in event:
                     answer = event["final"]
                     continue
