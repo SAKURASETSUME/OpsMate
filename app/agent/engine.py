@@ -146,7 +146,7 @@ async def run_agent(client: LLMClient, system: str, user: str,
 
 ASSISTANT_TOOLS = ("search_commands", "search_kb", "search_history", "read_user_config", "write_file",
                    "list_dir", "read_workspace_file", "write_workspace_file", "run_command",
-                   "web_search", "web_fetch")
+                   "web_search", "web_fetch", "configure_api", "install_skill", "download_file")
 
 MAX_TOOL_STEPS = 12  # 2026-11-02 由 6 上调：多组件联合排查需要更多下钻（配套防失控闸门）
 

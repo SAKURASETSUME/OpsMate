@@ -1,4 +1,4 @@
-"""只读工具白名单 + 工作目录/联网工具（用户授权范围）；工具执行仅联网查询，其余本地受控。"""
+"""只读工具白名单 + 工作目录/联网/自主配置工具（用户授权范围）；工具执行仅联网查询，其余本地受控。"""
 from __future__ import annotations
 
 import html as html_module
@@ -6,14 +6,17 @@ import os
 import re
 import subprocess
 import sqlite3
+import time
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
+import yaml
 
 from app import config
+from app.agent import skills as agent_skills
 from app.assistant import service as assistant_service
 from app.commands.service import get_command_index
 from app.kb import workbench
@@ -35,13 +38,18 @@ TOOL_DESCRIPTIONS = {
     "run_command": "在工作目录执行系统命令，args={command,timeout:秒,可选默认30}；返回返回码与截断输出；执行前评估影响并在回答中说明",
     "web_search": "联网搜索（Bing），args={q}；返回标题/链接/摘要",
     "web_fetch": "抓取网页正文文本，args={url}（http/https，禁止内网地址）",
+    "configure_api": "写入模型 API 配置并立即连通测试，args={base_url,api_key,model}（如 https://api.x.com/v1 + 密钥 + 模型名）；返回测试结果与诊断提示，密钥永不回显；失败时按提示修正后重试",
+    "install_skill": "安装通用排查技能到 data/skills/（立即生效），args={name:文件名英文短横线,content:技能 YAML 全文}；YAML 必含 name/label/triggers(列表)/methodology，可选 example_question",
+    "download_file": "从公网下载文件/软件安装包到 agent_downloads/ 目录，args={url,filename:可选保存文件名}；上限 300MB，禁止内网地址；返回保存路径与大小",
 }
 
 WORKSPACE_TOOLS = ("list_dir", "read_workspace_file", "write_workspace_file", "run_command")
 WEB_TOOLS = ("web_search", "web_fetch")
+SETUP_TOOLS = ("configure_api", "install_skill", "download_file")
 MAX_WS_READ = 200_000
 MAX_WS_WRITE = 1_000_000
 MAX_CMD_OUTPUT = 4_000
+MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
 PRIVATE_HOST_PREFIXES = ("127.", "10.", "192.168.", "169.254.", "0.0.0.0")
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
@@ -195,6 +203,121 @@ def guard_unconfirmable(name: str) -> dict[str, Any] | None:
     return None
 
 
+def _sanitize_error(text: str, secret: str) -> str:
+    """错误文本中抹除密钥本体，只保留安全摘要。"""
+    cleaned = text.replace(secret, "[密钥已隐藏]") if secret else text
+    return cleaned[:300]
+
+
+def _setup_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """用户显式下发的自主配置类工具：接 API / 装 skill / 下载文件。"""
+    if name == "configure_api":
+        base_url = str(args.get("base_url", "")).strip().rstrip("/")
+        api_key = str(args.get("api_key", "")).strip()
+        model = str(args.get("model", "")).strip()
+        provider = str(args.get("provider", "")).strip() or "custom"
+        if (not base_url.startswith(("http://", "https://")) or not api_key
+                or len(api_key) > 400 or not model or len(model) > 200):
+            return {"ok": False, "error": "参数无效：base_url 须为 http(s) 地址，api_key 与 model 必填"}
+        settings = {**config.load_settings(),
+                    "provider": provider, "base_url": base_url, "model": model, "api_key": api_key}
+        config.ensure_dirs()
+        config.save_settings(settings)
+        if config.PROFILES_JSON.exists():
+            try:
+                profiles = config.load_model_profiles()
+                for profile in profiles.get("items", []):
+                    if profile.get("id") == profiles.get("active_id"):
+                        profile.update(settings)
+                config.save_model_profiles(profiles)
+            except (OSError, ValueError):
+                pass  # 配置文件损坏不阻断：单文件 settings 已生效
+        # 立即连通测试（同步、小请求），失败原因供模型自诊断重试
+        started = time.perf_counter()
+        try:
+            response = httpx.post(
+                f"{base_url}/chat/completions",
+                json={"model": model, "messages": [{"role": "user", "content": "回复 pong"}],
+                      "max_tokens": 8, "stream": False},
+                headers={"Authorization": f"Bearer {api_key}"}, timeout=25)
+        except httpx.HTTPError as exc:
+            return {"ok": False, "stage": "test",
+                    "error": _sanitize_error(f"网络请求失败：{exc}", api_key),
+                    "hint": "检查 base_url 是否可访问、是否需要代理；国内服务通常无需代理"}
+        latency = round((time.perf_counter() - started) * 1000)
+        if response.status_code == 200:
+            try:
+                content = response.json()["choices"][0]["message"]["content"]
+            except (ValueError, KeyError, IndexError):
+                return {"ok": False, "stage": "test", "latency_ms": latency,
+                        "error": _sanitize_error("响应 200 但不是 OpenAI 兼容结构", api_key),
+                        "hint": "确认该平台提供 OpenAI 兼容 /chat/completions 接口"}
+            return {"ok": True, "result": {"config": f"{base_url} · {model}",
+                                            "latency_ms": latency, "reply": str(content)[:20],
+                                            "saved": True, "key_echoed": False},
+                    "note": "配置已保存并测试通过"}
+        hints = {401: "密钥无效或已过期，请向用户确认密钥", 403: "无权限（可能未开通该模型）",
+                 404: "base_url 路径或模型名错误（常见：需要以 /v1 结尾）",
+                 429: "限流，可稍等重试"}.get(response.status_code, "")
+        return {"ok": False, "stage": "test", "http": response.status_code,
+                "error": _sanitize_error(response.text, api_key), "hint": hints}
+    if name == "install_skill":
+        slug = str(args.get("name", "")).strip()
+        content = str(args.get("content", ""))
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", slug)
+                or not content or len(content) > 64_000):
+            return {"ok": False, "error": "name 须为英文短横线文件名，content 为 YAML 全文（≤64KB）"}
+        try:
+            data = yaml.safe_load(content)
+        except yaml.YAMLError as exc:
+            return {"ok": False, "error": f"YAML 解析失败：{exc}"}
+        if (not isinstance(data, dict) or not str(data.get("name", "")).strip()
+                or not str(data.get("methodology", "")).strip()
+                or not isinstance(data.get("triggers"), list) or not data.get("triggers")):
+            return {"ok": False, "error": "技能 YAML 必含：name、methodology（方法论全文）、"
+                    "triggers（非空触发词列表）；建议附 label 与 example_question"}
+        if any(item["name"] == data["name"] for item in agent_skills.list_skills()):
+            return {"ok": False, "error": f"技能 {data['name']} 已存在，请换 name 或先让用户删除"}
+        target_dir = agent_skills.SKILLS_DIR
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / f"{slug}.yaml").write_text(content, encoding="utf-8")
+        agent_skills.refresh()
+        return {"ok": True, "result": {"installed": data["name"], "file": f"data/skills/{slug}.yaml",
+                                        "total": len(agent_skills.list_skills())},
+                "note": "已安装并立即生效"}
+    # download_file
+    url = str(args.get("url", "")).strip()
+    blocked = _assert_public_http_url(url)
+    if blocked:
+        return {"ok": False, "error": blocked}
+    filename = re.sub(r"[^A-Za-z0-9._+-]", "-", str(args.get("filename", "")).strip())[:120]
+    if not filename or filename in (".", ".."):
+        filename = (url.rstrip("/").rsplit("/", 1)[-1] or "download.bin")[:120]
+        filename = re.sub(r"[^A-Za-z0-9._+-]", "-", filename)
+    target_dir = config.DATA_DIR / "agent_downloads"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / filename
+    received = 0
+    try:
+        with httpx.stream("GET", url, headers={"User-Agent": BROWSER_UA},
+                          timeout=60, follow_redirects=True) as response:
+            if response.status_code >= 400:
+                return {"ok": False, "error": f"HTTP {response.status_code}"}
+            with open(target, "wb") as handle:
+                for chunk in response.iter_bytes(1024 * 256):
+                    received += len(chunk)
+                    if received > MAX_DOWNLOAD_BYTES:
+                        handle.close()
+                        target.unlink(missing_ok=True)
+                        return {"ok": False, "error": "超过 300MB 上限，已中止"}
+                    handle.write(chunk)
+    except httpx.HTTPError as exc:
+        target.unlink(missing_ok=True)
+        return {"ok": False, "error": f"下载失败：{exc}"}
+    return {"ok": True, "result": {"path": str(target), "filename": filename,
+                                    "size_bytes": received}}
+
+
 def search_history(q: str, limit: int = 5) -> list[dict[str, Any]]:
     """只读 FTS 查询，关键词作为字面量转义以免注入 FTS 运算符。"""
     if not config.DB_PATH.exists() or not q.strip():
@@ -222,6 +345,8 @@ def execute_tool(name: str, args: dict[str, Any], *, scope_log_id: int | None = 
             return _workspace_tool(name, args)
         if name in WEB_TOOLS:
             return _web_tool(name, args)
+        if name in SETUP_TOOLS:
+            return _setup_tool(name, args)
         if name in {"filter_log", "get_stats", "get_context"}:
             if scope_log_id is None or int(args.get("log_id", -1)) != scope_log_id:
                 return {"ok": False, "error": "未授权读取该日志，仅允许当前日志"}

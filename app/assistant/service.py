@@ -195,6 +195,16 @@ def conversation_history(session_id: int) -> list[dict[str, str]]:
 
 # ---------------- 长会话滚动摘要（优化方案二） ----------------
 
+_SECRET_TOKEN_RE = re.compile(r"\b(?:sk-[A-Za-z0-9]{16,}|[A-Za-z0-9_\-]{40,}|[A-Za-z0-9+\-/]{40,}={0,2})\b")
+
+
+def mask_secrets(text: str) -> str:
+    """持久化前抹除疑似密钥的长令牌（保留首 4 尾 4 便于辨认），配置类命令"不进入记忆"。"""
+    def _mask(match: re.Match[str]) -> str:
+        token = match.group(0)
+        return f"{token[:4]}***{token[-4:]}" if len(token) > 12 else "***"
+    return _SECRET_TOKEN_RE.sub(_mask, text)
+
 def get_summary(session_id: int) -> dict[str, Any] | None:
     """读取已压缩摘要：{compressed_until, summary}，无则 None。"""
     with closing(_connect()) as connection:
@@ -247,17 +257,18 @@ def save_turn(session_id: int | None, message: str, steps: list[dict[str, Any]],
                 raise SessionNotFound("会话不存在")
             cursor = connection.execute(
                 "INSERT INTO assistant_messages(session_id,role,content,summary) VALUES (?,'user',?,?)",
-                (session_id, message,
-                 message.strip()[:24] + ("…" if len(message.strip()) > 24 else "")))
+                (session_id, mask_secrets(message),
+                 mask_secrets(message.strip()[:24] + ("…" if len(message.strip()) > 24 else ""))))
             message_id = int(cursor.lastrowid)
             for step in steps:
+                trace = json.dumps({
+                    "tool": step.get("tool", ""),
+                    "args": step.get("args", {}),
+                    "result": str(step.get("result", ""))[:600],
+                }, ensure_ascii=False)
                 connection.execute(
                     "INSERT INTO assistant_messages(session_id,role,content) VALUES (?,'tool',?)",
-                    (session_id, json.dumps({
-                        "tool": step.get("tool", ""),
-                        "args": step.get("args", {}),
-                        "result": str(step.get("result", ""))[:600],
-                    }, ensure_ascii=False)))
+                    (session_id, mask_secrets(trace)))
             connection.execute(
                 "INSERT INTO assistant_messages(session_id,role,content) VALUES (?,'assistant',?)",
                 (session_id, answer))

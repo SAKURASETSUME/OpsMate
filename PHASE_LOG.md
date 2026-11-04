@@ -1425,3 +1425,17 @@
 ### Phase 状态
 
 **完成，随 `fix(build): 中文路径启动反馈与bat启动器` 提交；随后推送 GitHub 并发布 release v1.0.0。**
+
+### 追加（同日）：智能体自主配置能力三件（用户需求：接 API 自测自愈/装 skill/下载软件）
+
+- **三个新工具**（仅用户显式下令时用，系统提示词纪律 #10 约束）：
+  - `configure_api`：写入模型配置（settings + 活动 profile 同步）→ 立即同步连通测试 → 失败返回**结构化诊断提示**（401=密钥无效/403=无权限/404=路径或模型名错/429=限流/超时=网络；错误文本先抹密钥再返回）供模型自诊断修正重试，提示词规定最多 3 次后如实上报（含平台硬性限制如不支持第三方接入）；成功返回延迟与 pong 回复，密钥永不回显。
+  - `install_skill`：YAML 必填字段校验（name/methodology/triggers）→ 重名拒绝 → 写 `data/skills/<slug>.yaml` → `skills.refresh()` 立即生效（chips 下次进入页面可见）。
+  - `download_file`：公网 http/https 流式下载（复用 SSRF 防护禁内网），≤300MB 边下边检，落 `data/agent_downloads/`，文件名净化防路径穿越；只下载不执行。
+- **密钥不进记忆**：`service.mask_secrets`（sk- 前缀 ≥16 / 任意 ≥40 位令牌 → 首4***尾4）在 `save_turn` 持久化时统一套用于用户消息、摘要与工具轨迹——当轮模型可见原文用于执行配置，落库即脱敏，历史轮上下文不再含密钥。
+- 踩坑：①verify 首版 install_skill 写真实 data/skills（工具写盘未走 skills.SKILLS_DIR 常量）——统一改走 `agent_skills.SKILLS_DIR` 并清理污染文件；②mock httpx.stream 缺 `__enter__/__exit__` 落入通用异常兜底。
+- 验证：verify R 段（配置成功/401 诊断+密钥不回显/技能装-拒-重名/下载落盘+内网拒绝/脱敏落库）全过；6 verify 回归绿；真机冒烟——华为云镜像真实下载 12KB、真实技能安装后清理（6 个存量技能与真实 config.json 未受影响）。
+
+### Phase 状态
+
+**完成，随 `feat(assistant): 自主配置工具三件与密钥脱敏` 提交。**

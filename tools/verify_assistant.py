@@ -478,6 +478,75 @@ def main() -> None:
         assert [e for e in events if e.get("done")]
         svc.delete_session(rows_session)
 
+        # R：自主配置工具——configure_api / install_skill / download_file + 密钥脱敏
+        import app.agent.tools as agent_tools
+        from app.agent import skills as skill_module
+        fake_settings_json = Path(folder) / "config.json"
+        fake_profiles_json = Path(folder) / "model_profiles.json"
+        fake_skills_dir = Path(folder) / "skills"
+        class _FakeResponse:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+                self.text = json.dumps(payload)
+            def json(self):
+                return self._payload
+        fake_key = "sk-verify" + "x" * 36
+        with patch.object(config, "CONFIG_JSON", fake_settings_json), \
+             patch.object(config, "PROFILES_JSON", fake_profiles_json), \
+             patch.object(agent_tools.httpx, "post",
+                          return_value=_FakeResponse(200, {"choices": [{"message": {"content": "pong"}}]})):
+            api = execute_tool("configure_api", {"base_url": "https://api.mock.com/v1",
+                                                 "api_key": fake_key, "model": "mock-xl"})
+        assert api["ok"] and api["result"]["reply"] == "pong" and api["result"]["key_echoed"] is False
+        saved = json.loads(fake_settings_json.read_text(encoding="utf-8"))
+        assert saved["model"] == "mock-xl" and saved["api_key"] == fake_key
+        with patch.object(config, "CONFIG_JSON", fake_settings_json), \
+             patch.object(config, "PROFILES_JSON", fake_profiles_json), \
+             patch.object(agent_tools.httpx, "post",
+                          return_value=_FakeResponse(401, {"error": {"message": "bad key " + fake_key}})):
+            api_fail = execute_tool("configure_api", {"base_url": "https://api.mock.com/v1",
+                                                      "api_key": fake_key, "model": "mock-xl"})
+        assert not api_fail["ok"] and api_fail["http"] == 401 and fake_key not in api_fail["error"]
+        assert "密钥" in api_fail["hint"]
+        # install_skill：合法 YAML 落盘并生效；坏 YAML/重名拒绝
+        skill_yaml = ("name: e2e-skill\nlabel: E2E 技能\ntriggers: [端到端测试]\n"
+                      "methodology: |\n  测试方法论\nexample_question: 跑一遍端到端\n")
+        with patch.object(skill_module, "SKILLS_DIR", fake_skills_dir):
+            skill_module.refresh()
+            installed = execute_tool("install_skill", {"name": "e2e-skill", "content": skill_yaml})
+            assert installed["ok"] and installed["result"]["installed"] == "e2e-skill"
+            assert any(s["name"] == "e2e-skill" for s in skill_module.list_skills())
+            assert not execute_tool("install_skill", {"name": "bad", "content": "not: [yaml"})["ok"]
+            dup = execute_tool("install_skill", {"name": "e2e-skill", "content": skill_yaml})
+            assert not dup["ok"] and "已存在" in dup["error"]
+            skill_module.refresh()
+        # download_file：mock httpx.stream，落 agent_downloads
+        class _StreamResp:
+            status_code = 200
+            def __init__(self, chunks): self._chunks = chunks
+            def __enter__(self): return self
+            def __exit__(self, *exc): return False
+            def iter_bytes(self, size): yield from self._chunks
+        dl_dir = Path(folder) / "agent_downloads"
+        with patch.object(agent_tools.httpx, "stream",
+                          return_value=_StreamResp([b"BIN", b"DATA"])), \
+             patch.object(config, "DATA_DIR", Path(folder)):
+            dl = execute_tool("download_file", {"url": "https://example.com/tool-setup.exe",
+                                                "filename": "tool-setup.exe"})
+        assert dl["ok"] and dl["result"]["size_bytes"] == 7 and dl["result"]["filename"] == "tool-setup.exe"
+        assert (dl_dir / "tool-setup.exe").read_bytes() == b"BINDATA"
+        blocked_dl = execute_tool("download_file", {"url": "http://10.0.0.5/x.exe"})
+        assert not blocked_dl["ok"] and "内网" in blocked_dl["error"]
+        # 密钥脱敏：save_turn 落库的用户消息与工具轨迹不含密钥本体
+        secret_msg = "接入 API，密钥 " + fake_key + " 模型 mock-xl"
+        sid = svc.save_turn(None, secret_msg, [{"tool": "configure_api",
+            "args": {"api_key": fake_key}, "result": "ok"}], "已接入", "mock")
+        rows = svc.get_messages(sid)
+        stored = json.dumps([r["content"] for r in rows], ensure_ascii=False)
+        assert fake_key not in stored and "sk-v***" in stored
+        svc.delete_session(sid)
+
     print("assistant ok")
 
 
