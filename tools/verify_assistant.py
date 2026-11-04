@@ -1,12 +1,14 @@
 """Phase 8 隔离验收：模拟模型验证运维助手 SSE、持久化与错误路径，不触碰用户数据。"""
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml as verify_yaml
 from fastapi.testclient import TestClient
 
 from app import config
@@ -616,6 +618,66 @@ def main() -> None:
             mcp_module.save_servers([])
             with mcp_module._servers_lock:
                 mcp_module._stdio_procs.pop("t1", None)
+
+        # T：URL 安装 skill（SKILL.md 转换 / GitHub blob→contents API / 平文本本格式）+ install_mcp 回滚
+        fake_skills_dir2 = Path(folder) / "skills2"
+        class _FakeHTTP:
+            def __init__(self, status, payload, content_type="text/plain"):
+                self.status_code = status
+                self._payload = payload
+                self.headers = {"content-type": content_type}
+                self.text = payload if isinstance(payload, str) else json.dumps(payload)
+            def json(self):
+                return self._payload
+        skill_md = ("---\nname: url-demo\ndescription: URL 安装的数据库备份技能 backup database\n"
+                    "---\n# 备份方法论\n1. 先确认目标库与备份盘空间\n2. mysqldump 单库导出\n")
+        plain_yaml = "name: plain-url\nlabel: 平文本\nmethodology: |\n  平文本方法论\n"
+        with patch.object(skill_module, "SKILLS_DIR", fake_skills_dir2), \
+             patch.object(agent_tools.httpx, "get", side_effect=[
+                 _FakeHTTP(200, skill_md),
+                 _FakeHTTP(200, {"encoding": "base64",
+                                 "content": base64.b64encode(plain_yaml.encode()).decode()}),
+                 _FakeHTTP(200, plain_yaml.replace("methodology", "description")),
+                 _FakeHTTP(404, "gone")]), \
+             patch.object(agent_tools, "_assert_public_http_url", return_value=None):
+            skill_module.refresh()
+            r1 = execute_tool("install_skill", {"url": "https://example.com/SKILL.md"})
+            assert r1["ok"] and r1["result"]["installed"] == "url-demo", r1
+            loaded1 = verify_yaml.safe_load((fake_skills_dir2 / "url-demo.yaml").read_text(encoding="utf-8"))
+            assert "备份方法论" in loaded1["methodology"] and loaded1["triggers"]
+            r2 = execute_tool("install_skill", {
+                "url": "https://github.com/o/r/blob/main/skills/plain.yaml"})
+            assert r2["ok"] and r2["result"]["installed"] == "plain-url"
+            loaded2 = verify_yaml.safe_load((fake_skills_dir2 / "plain-url.yaml").read_text(encoding="utf-8"))
+            assert isinstance(loaded2["triggers"], list) and loaded2["triggers"]  # 缺 triggers 自动推导
+            assert not execute_tool("install_skill", {"url": "https://example.com/bad.md"})["ok"]
+            assert not execute_tool("install_skill", {"url": "https://example.com/404.md"})["ok"]
+            skill_module.refresh()
+        # install_mcp：坏命令 → 自动回滚；好命令 → 添加+测试+注册表
+        with patch.object(mcp_module, "MCP_JSON", Path(folder) / "mcp2.json"):
+            for command in ("python server.py", None, [123], [""]):
+                assert not execute_tool("install_mcp", {"name":"invalid", "command":command})["ok"]
+            assert mcp_module.load_servers() == []
+            bad = execute_tool("install_mcp", {"name": "badmcp", "transport": "stdio",
+                                               "command": [sys.executable, "-c", "import time; time.sleep(300)"]})
+            assert not bad["ok"] and "回滚" in bad["error"] and mcp_module.load_servers() == []
+            good = execute_tool("install_mcp", {"name": "goodmcp", "transport": "stdio",
+                                                "command": [sys.executable, str(fake_server)]})
+            assert good["ok"] and "mcp__goodmcp__echo" in good["result"]["tools"], good
+            assert any(name.startswith("mcp__goodmcp__") for name in mcp_module.registry_tools())
+            mcp_module.save_servers([])
+            with mcp_module._servers_lock:
+                for sid in list(mcp_module._stdio_procs):
+                    mcp_module._stdio_procs.pop(sid).close()
+
+        with patch.object(agent_tools, "_assert_public_http_url", return_value=None), \
+             patch.object(agent_tools.httpx, "get", side_effect=[
+                 _FakeHTTP(302,"redirect"),
+                 _FakeHTTP(200,{"encoding":"base64","content":base64.b64encode(b"x"*64001).decode()}),
+                 _FakeHTTP(200,[])]):
+            assert agent_tools._fetch_remote_text("https://example.com/redirect") is None
+            assert agent_tools._fetch_remote_text("https://github.com/o/r/blob/main/large.yaml") is None
+            assert agent_tools._fetch_remote_text("https://github.com/o/r/blob/main/list.yaml") is None
 
     print("assistant ok")
 

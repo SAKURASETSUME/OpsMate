@@ -104,10 +104,14 @@ def _session_for(server: dict[str, Any]) -> _StdioSession:
             return session
         command = [str(item) for item in server.get("command", [])]
         session = _StdioSession(command)
-        session.request("initialize", {
-            "protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-            "clientInfo": {"name": "OpsMate", "version": "1.0.0"}})
-        session.notify("notifications/initialized")
+        try:
+            session.request("initialize", {
+                "protocolVersion": PROTOCOL_VERSION, "capabilities": {},
+                "clientInfo": {"name": "OpsMate", "version": "1.0.0"}})
+            session.notify("notifications/initialized")
+        except Exception:
+            session.close()
+            raise
         _stdio_procs[sid] = session
         return session
 

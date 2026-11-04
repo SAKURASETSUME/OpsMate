@@ -1,16 +1,18 @@
 """只读工具白名单 + 工作目录/联网/自主配置工具（用户授权范围）；工具执行仅联网查询，其余本地受控。"""
 from __future__ import annotations
 
+import base64
 import html as html_module
 import os
 import re
 import subprocess
 import sqlite3
 import time
+import uuid
 from contextlib import closing
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 import yaml
@@ -39,7 +41,8 @@ TOOL_DESCRIPTIONS = {
     "web_search": "联网搜索（Bing），args={q}；返回标题/链接/摘要",
     "web_fetch": "抓取网页正文文本，args={url}（http/https，禁止内网地址）",
     "configure_api": "写入模型 API 配置并立即连通测试，args={base_url,api_key,model}（如 https://api.x.com/v1 + 密钥 + 模型名）；返回测试结果与诊断提示，密钥永不回显；失败时按提示修正后重试",
-    "install_skill": "安装通用排查技能到 data/skills/（立即生效），args={name:文件名英文短横线,content:技能 YAML 全文}；YAML 必含 name/label/triggers(列表)/methodology，可选 example_question",
+    "install_skill": "安装通用排查技能（立即生效）。方式一：args={url:技能文件地址}——支持本格式 YAML、SKILL.md（YAML frontmatter 自动转换）、GitHub blob/raw 链接（自动走 contents API）；方式二：args={name:文件名英文短横线,content:技能 YAML 全文}。可选 triggers 数组覆盖自动推导的触发词",
+    "install_mcp": "添加 MCP 服务器并立即测试，args={name:英文服务器名,transport:stdio或http,command:stdio 启动命令数组 如[npx,-y,@modelcontextprotocol/server-filesystem,D:\\\\data],url:http 服务器地址}；成功返回工具清单，失败返回诊断并自动回滚",
     "download_file": "从公网下载文件/软件安装包到 agent_downloads/ 目录，args={url,filename:可选保存文件名}；上限 300MB，禁止内网地址；返回保存路径与大小",
     "system_info": "读取本机系统信息（只读）：OS/CPU/内存/各盘剩余空间/Python 版本，args={}；用于容量评估与故障排查",
     "manage_workspace": "管理工作目录授权列表，args={action:add|remove,path:绝对路径}；用户明确要求添加/移除工作目录时使用，返回最新列表",
@@ -53,9 +56,9 @@ TOOL_DESCRIPTIONS = {
 
 WORKSPACE_TOOLS = ("list_dir", "read_workspace_file", "write_workspace_file", "run_command")
 WEB_TOOLS = ("web_search", "web_fetch")
-SETUP_TOOLS = ("configure_api", "install_skill", "download_file", "system_info", "manage_workspace",
-               "install_kb", "list_processes", "stop_process", "open_path", "archive_files",
-               "schedule_task")
+SETUP_TOOLS = ("configure_api", "install_skill", "install_mcp", "download_file", "system_info",
+               "manage_workspace", "install_kb", "list_processes", "stop_process", "open_path",
+               "archive_files", "schedule_task")
 MAX_WS_READ = 200_000
 MAX_WS_WRITE = 1_000_000
 MAX_CMD_OUTPUT = 4_000
@@ -210,6 +213,98 @@ def guard_unconfirmable(name: str) -> dict[str, Any] | None:
     """需要用户确认/禁止直接执行的工具在此拦截（引擎提案路径之外的第二道防线）。"""
     if name == "write_file":
         return {"ok": False, "error": "write_file 需要用户确认，不能直接执行"}
+    return None
+
+
+_GITHUB_BLOB_RE = re.compile(
+    r"^https://github\.com/([^/]+)/([^/]+)/(?:blob|raw)/([^/]+)/(.+?)$")
+_RAW_GITHUB_RE = re.compile(
+    r"^https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/(.+?)$")
+
+
+def _fetch_remote_text(url: str) -> str | None:
+    """拉取技能/配置文本；GitHub blob/raw 链接自动转 contents API（raw 域名本机不可达）。"""
+    blocked = _assert_public_http_url(url)
+    if blocked:
+        return None
+    api_url = ""
+    match = _GITHUB_BLOB_RE.match(url) or _RAW_GITHUB_RE.match(url)
+    if match:
+        owner, repo, ref, path = match.groups()
+        api_url = (f"https://api.github.com/repos/{owner}/{repo}/contents/"
+                   f"{quote(path.strip('/'))}?ref={quote(ref)}")
+    try:
+        if api_url:
+            response = httpx.get(api_url, headers={"User-Agent": BROWSER_UA,
+                                                   "Accept": "application/vnd.github+json"},
+                                 timeout=20, follow_redirects=False)
+            if response.status_code != 200:
+                return None
+            payload = response.json()
+            if not isinstance(payload, dict):
+                return None
+            if payload.get("encoding") == "base64" and isinstance(payload.get("content"), str):
+                if len(payload["content"]) > 90_000:
+                    return None
+                text = base64.b64decode(payload["content"]).decode("utf-8", errors="replace")
+                return text if len(text) <= 64_000 else None
+            return None
+        response = httpx.get(url, headers={"User-Agent": BROWSER_UA},
+                             timeout=20, follow_redirects=False)
+        if response.status_code >= 300 or len(response.text) > 64_000:
+            return None
+        content_type = response.headers.get("content-type", "")
+        return response.text if ("text" in content_type or "yaml" in content_type
+                                 or content_type == "") else None
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
+def _derive_triggers(*sources: str) -> list[str]:
+    """从名称/描述里抽取触发词（中英文词元，去停用词，最多 6 个）。"""
+    stop = {"the", "a", "an", "for", "and", "with", "how", "to", "of", "in", "on", "use"}
+    tokens: list[str] = []
+    for source in sources:
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}|[\u4e00-\u9fff]{2,6}", str(source or "")):
+            if token.lower() not in stop and token not in tokens:
+                tokens.append(token)
+    return tokens[:6]
+
+
+def _normalize_skill_payload(text: str, slug_hint: str, triggers_hint: list | None) -> tuple[str, str] | None:
+    """把远端文本归一成本项目技能 YAML；返回 (slug, content) 或 None（不可识别）。
+
+    支持三种输入：本项目 YAML、缺 triggers 的同构 YAML（自动推导补齐）、
+    SKILL.md（YAML frontmatter 的 name/description + markdown 正文 → methodology）。
+    """
+    text = text.strip()
+    frontmatter = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", text, re.S)
+    if frontmatter:
+        try:
+            meta = yaml.safe_load(frontmatter.group(1)) or {}
+        except yaml.YAMLError:
+            meta = {}
+        if isinstance(meta, dict) and meta.get("name"):
+            name = str(meta["name"]).strip()
+            slug = re.sub(r"[^A-Za-z0-9-]", "-", name).strip("-")[:40] or slug_hint or "remote-skill"
+            description = str(meta.get("description") or "")
+            triggers = triggers_hint or _derive_triggers(name, description) or [slug]
+            body = frontmatter.group(2).strip() or description or "（远端技能未提供方法论正文）"
+            skill = {"name": slug, "label": str(meta.get("label") or name),
+                     "triggers": triggers, "methodology": body}
+            if meta.get("example_question"):
+                skill["example_question"] = str(meta["example_question"])
+            return slug, yaml.safe_dump(skill, allow_unicode=True, sort_keys=False)
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    if isinstance(data, dict) and data.get("name") and data.get("methodology"):
+        slug = slug_hint or re.sub(r"[^A-Za-z0-9-]", "-", str(data["name"])).strip("-")[:40]
+        if not isinstance(data.get("triggers"), list) or not data.get("triggers"):
+            data["triggers"] = triggers_hint or _derive_triggers(
+                str(data.get("name")), str(data.get("label") or "")) or [slug]
+        return slug, yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
     return None
 
 
@@ -435,9 +530,19 @@ def _setup_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "install_skill":
         slug = str(args.get("name", "")).strip()
         content = str(args.get("content", ""))
+        url = str(args.get("url", "")).strip()
+        triggers_hint = args.get("triggers") if isinstance(args.get("triggers"), list) else None
+        if url:
+            fetched = _fetch_remote_text(url)
+            if fetched is None:
+                return {"ok": False, "error": "下载失败：URL 不可达、非文本或超过 64KB"}
+            converted = _normalize_skill_payload(fetched, slug_hint=slug, triggers_hint=triggers_hint)
+            if converted is None:
+                return {"ok": False, "error": "内容不是可识别的技能格式（本格式 YAML 或带 YAML frontmatter 的 SKILL.md）"}
+            slug, content = converted
         if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", slug)
                 or not content or len(content) > 64_000):
-            return {"ok": False, "error": "name 须为英文短横线文件名，content 为 YAML 全文（≤64KB）"}
+            return {"ok": False, "error": "需提供 url，或 name（英文短横线）+ content（YAML 全文，≤64KB）"}
         try:
             data = yaml.safe_load(content)
         except yaml.YAMLError as exc:
@@ -456,6 +561,39 @@ def _setup_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "result": {"installed": data["name"], "file": f"data/skills/{slug}.yaml",
                                         "total": len(agent_skills.list_skills())},
                 "note": "已安装并立即生效"}
+    if name == "install_mcp":
+        from app.agent import mcp as mcp_module
+        server_name = str(args.get("name", "")).strip()
+        transport = str(args.get("transport", "stdio")).strip()
+        raw_command = args.get("command", [])
+        if not isinstance(raw_command, list) or any(not isinstance(item, str) or not item.strip() for item in raw_command):
+            return {"ok": False, "error": "command 必须为非空字符串组成的参数数组"}
+        command = raw_command
+        server_url = str(args.get("url", "")).strip()
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}", server_name)
+                or transport not in ("stdio", "http")
+                or (transport == "stdio" and not command)
+                or (transport == "http" and not server_url.startswith(("http://", "https://")))):
+            return {"ok": False, "error": "参数无效：name 英文；transport stdio 需 command 数组、http 需 url"}
+        servers = mcp_module.load_servers()
+        if any(item.get("name") == server_name for item in servers):
+            return {"ok": False, "error": f"MCP 服务器 {server_name} 已存在"}
+        record = {"id": uuid.uuid4().hex[:12], "name": server_name, "transport": transport,
+                  "command": command, "url": server_url, "enabled": True}
+        servers.append(record)
+        mcp_module.save_servers(servers)
+        try:
+            tools = mcp_module.list_tools(record)
+        except (RuntimeError, OSError, ValueError, httpx.HTTPError) as exc:
+            mcp_module.save_servers([item for item in mcp_module.load_servers()
+                                     if item.get("id") != record["id"]])
+            return {"ok": False, "stage": "test",
+                    "error": f"连接测试失败，已自动回滚：{exc}",
+                    "hint": "stdio 检查命令与依赖是否可用；http 检查 URL/网络/是否需要鉴权"}
+        return {"ok": True, "result": {"name": server_name,
+                                        "tools": [f"mcp__{mcp_module.re_slug(server_name)}__{tool.get('name')}"
+                                                  for tool in tools]},
+                "note": "已添加并测试通过，工具已并入运维助手"}
     # download_file
     url = str(args.get("url", "")).strip()
     blocked = _assert_public_http_url(url)
@@ -517,7 +655,8 @@ def execute_tool(name: str, args: dict[str, Any], *, scope_log_id: int | None = 
         if name in WEB_TOOLS:
             return _web_tool(name, args)
         if name in SETUP_TOOLS:
-            return _setup_tool(name, args) if name in ("configure_api", "install_skill", "download_file") \
+            return _setup_tool(name, args) if name in ("configure_api", "install_skill", "install_mcp",
+                                                       "download_file") \
                 else _system_tool(name, args)
         if name.startswith("mcp__"):
             from app.agent.mcp import call_mcp_tool
