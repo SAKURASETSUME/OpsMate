@@ -41,8 +41,10 @@ public final class LlmClient implements AutoCloseable {
         if (tokens>0) request.put("max_tokens",tokens);
         URI uri=URI.create(Objects.toString(settings.get("base_url"),""));
         // Coding-plan models may spend the first tokens on reasoning before emitting content.
-        if ("ark.cn-beijing.volces.com".equals(uri.getHost())&&!stream&&tokens>0)
-            request.put("max_tokens",Math.max(tokens,4096));
+        if ("ark.cn-beijing.volces.com".equals(uri.getHost())) {
+            if (!stream&&tokens>0) request.put("max_tokens",Math.max(tokens,4096));
+            request.put("reasoning_effort",effort==null||effort.isBlank()?"low":effort);
+        }
         if ("open.bigmodel.cn".equals(uri.getHost()) &&
                 Objects.toString(settings.get("model"),"").toLowerCase(Locale.ROOT).startsWith("glm-5.3")) {
             request.put("thinking",Map.of("type","enabled"));

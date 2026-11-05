@@ -1,6 +1,5 @@
 {
   "model": "ark-code-latest",
-  "ok": false,
-  "error": "模型响应为空，请重试",
-  "latency_ms": 3360
+  "ok": true,
+  "latency_ms": 1357
 }

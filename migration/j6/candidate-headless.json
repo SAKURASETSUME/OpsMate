@@ -1,27 +1,27 @@
 {
-  "archive_sha256": "abc6044a4b44e91b4e9748e628e810dd07522460ea386af7abbd71bf999c88d7",
-  "jar_sha256": "4f3873c0a6a178af7ba684170a1d8323236cdf5bd972b566fa555e44e51fcb99",
+  "archive_sha256": "5f4ae6a460b2b93234dfb6664ee34bee5351cf7886ddf06822b3ee5eb42c0930",
+  "jar_sha256": "a505d919598dfec8dfe2253106114cdeacb5a69ace00e9f0b52f242649d3a4c2",
   "samples": [
     {
       "attempt": 1,
-      "cold_to_health_seconds": 4.740675100125372,
-      "idle_working_set_bytes": 293912576,
-      "import_50mib_seconds": 4.227538899984211,
-      "synthetic_first_delta_seconds": 0.06821489986032248
+      "cold_to_health_seconds": 4.666592699941248,
+      "idle_working_set_bytes": 295657472,
+      "import_50mib_seconds": 3.9087487999349833,
+      "synthetic_first_delta_seconds": 0.07189320027828217
     },
     {
       "attempt": 2,
-      "cold_to_health_seconds": 4.803068500012159,
-      "idle_working_set_bytes": 297222144,
-      "import_50mib_seconds": 5.759209600277245,
-      "synthetic_first_delta_seconds": 0.07520369999110699
+      "cold_to_health_seconds": 4.384442700073123,
+      "idle_working_set_bytes": 299864064,
+      "import_50mib_seconds": 3.864833999890834,
+      "synthetic_first_delta_seconds": 0.07383299991488457
     },
     {
       "attempt": 3,
-      "cold_to_health_seconds": 4.8012480000033975,
-      "idle_working_set_bytes": 294002688,
-      "import_50mib_seconds": 4.115075099747628,
-      "synthetic_first_delta_seconds": 0.07087909989058971
+      "cold_to_health_seconds": 4.601503500249237,
+      "idle_working_set_bytes": 296841216,
+      "import_50mib_seconds": 3.982695400249213,
+      "synthetic_first_delta_seconds": 0.06451170006766915
     }
   ],
   "memory_scope": "actual JVM PID parsed from Boot startup log, excludes native parent launcher",

@@ -10,7 +10,7 @@
 | list_dir/read_workspace_file/write_workspace_file | 已授权真实目录；300项/200KB/1M字 | 中文读写、父路径与真实Windows联接越界拒绝 | 原子写；写前再次解析 |
 | run_command | 授权cwd、命令≤2000字、5–120秒 | 自造echo成功；输出限4000/2000字 | 超时/取消清理子进程树 |
 | web_search/web_fetch | 公网地址，重定向逐跳校验，15秒，2MB/8000字 | 内网/IPv6/凭据URL拒绝；HTTP文本/限额/正文挂起测试 | 搜索引擎公网可用性最终联网补验 |
-| configure_api | 用户下令，参数校验、本机保存、25秒小请求 | 模拟401诊断、新旧key不回显、设置档案差分 | 真实平台仍受1310阻塞，最终补验 |
+| configure_api | 用户下令，参数校验、本机保存、25秒小请求 | 模拟401诊断、新旧key不回显、设置档案差分 | 智谱仍1310；后续火山真实脚本/报告已通过，见J6 |
 | install_skill | YAML/SKILL.md/GitHub转换、≤64K字，拒绝重定向 | 格式转换、安装注入/重复/删除、超限/重定向/公网策略 | CREATE_NEW防覆盖 |
 | install_mcp | 用户下令，stdio参数数组或HTTP地址 | 初始化/通知/列举/调用/失败/超时/回滚 | 实际PID已退出 |
 | download_file | 公网HTTP(S)、≤300MB、60秒，只下载；镜像只用华为 | 公网边界与有界HTTP下载组件 | 原子替换与临时清理；不执行安装 |

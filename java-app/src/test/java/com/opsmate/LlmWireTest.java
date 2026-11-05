@@ -18,6 +18,8 @@ class LlmWireTest {
                 var body=model.requestBody(List.of(),false,0,8,"low");
                 assertEquals(base.contains("volces.com")?4096:8,body.get("max_tokens"));
                 assertFalse(body.containsKey("thinking"));
+                if (base.contains("volces.com")) assertEquals("low",body.get("reasoning_effort"));
+                else assertFalse(body.containsKey("reasoning_effort"));
                 assertEquals(12000,model.requestBody(List.of(),false,0,12000,"low").get("max_tokens"));
                 assertEquals(12000,model.requestBody(List.of(),true,0,12000,"low").get("max_tokens"));
             }

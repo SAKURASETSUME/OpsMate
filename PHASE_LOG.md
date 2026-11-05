@@ -1888,3 +1888,16 @@
 - 最终成稿流改造后Maven verify退出0，27项单元/架构及6套集成全部通过，无失败无跳过，总4分钟；新增最终流正文挂起取消/无半份历史验证通过。接着重做火山真实成稿测试。
 
 - 真实夹具允许显式选择DSH火山配置中已登记的模型，禁止任意新模型名，成功/失败元数据记录实际模型，便于后续排除ark-code-latest自动路由差异；当前仍先测既定ark-code-latest。
+
+- 流式修复候选新散列5f4ae6a4…重跑无界面三次测包通过。真实模型夹具补即时记录tool/phase/done等元数据，不记录参数、思考或正文，便于定位长等待发生在哪一步。
+
+- ark-code-latest流式成稿仍未给出可解析JSON，未通过。核对火山官方Chat API与深度思考文档确认reasoning_effort字段可控制思考工作量；现有兼容客户端漏传火山effort，导致规划指定low未生效。补官方火山主机effort透传（缺省low），不改其他兼容服务器；文档依据 https://docs.volcengine.com/docs/ark/chat-api?lang=en 、https://docs.volcengine.com/docs/ark/deep-thinking?lang=en 。
+- 同时用最小自造df JSON需求验证low参数实际响应，只记录HTTP/耗时/正文与思考长度/模型标识，不打印正文或密钥；下一轮若自动路由仍异常，按DSH已登记模型对照。
+
+- 最小low探针HTTP200约2.013秒，正文48字符/思考116字符，stop结束；自动路由实际为glm-5.3。元数据落volcengine-low-probe.json，不等同完整应用链路通过。当前正在统一回归，完成后复做完整脚本/报告。
+
+### J6 火山真实链路通过
+
+- effort修复后统一verify退出0，27项单元/架构、6项集成全部通过，无跳过；同一jar的真实火山链路通过。脚本首次质量未达标自动修正后完整通过校验并存历史，未执行；自造40行日志完成stats/context/filter工具、正文和报告保存。
+- 结果元数据见volcengine-synthetic.json，逐步记录见live-progress.json；旧live-failure.json标为修复前历史证据，未删除失败记录。DSH/OpsMate真实活动配置未被改写，只使用隔离临时Java实例。
+- 用户指定火山替代当前受限的智谱真实链路验收，原智谱429/1310仍保留下午额度恢复后复核。继续完成最终候选打包和无界面测包，原生界面仍待用户明确授权。

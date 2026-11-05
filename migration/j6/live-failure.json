@@ -1,0 +1,14 @@
+{
+  "status": "historical failure before Volcengine reasoning effort fix",
+  "superseded_by": "volcengine-synthetic.json",
+  "stage": "codegen",
+  "error": "模型 JSON 结构无效",
+  "phases": [
+    "final"
+  ],
+  "tools": [
+    "search_history",
+    "search_commands",
+    "search_commands"
+  ]
+}

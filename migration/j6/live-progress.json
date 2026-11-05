@@ -1,0 +1,67 @@
+[
+  {
+    "endpoint": "/api/codegen/generate",
+    "seconds": 0.054,
+    "tool": "search_history"
+  },
+  {
+    "endpoint": "/api/codegen/generate",
+    "seconds": 1.682,
+    "tool": "search_commands"
+  },
+  {
+    "endpoint": "/api/codegen/generate",
+    "seconds": 2.585,
+    "phase": "final"
+  },
+  {
+    "endpoint": "/api/codegen/generate",
+    "seconds": 41.304,
+    "phase": "retry"
+  },
+  {
+    "endpoint": "/api/codegen/generate",
+    "seconds": 41.309,
+    "tool": "search_history"
+  },
+  {
+    "endpoint": "/api/codegen/generate",
+    "seconds": 44.639,
+    "tool": "search_commands"
+  },
+  {
+    "endpoint": "/api/codegen/generate",
+    "seconds": 71.159,
+    "phase": "final"
+  },
+  {
+    "endpoint": "/api/codegen/generate",
+    "seconds": 113.479,
+    "validated_result": true
+  },
+  {
+    "endpoint": "/api/codegen/generate",
+    "seconds": 113.48,
+    "done": true
+  },
+  {
+    "endpoint": "/api/logs/1/llm-analyze",
+    "seconds": 0.031,
+    "tool": "get_stats"
+  },
+  {
+    "endpoint": "/api/logs/1/llm-analyze",
+    "seconds": 1.083,
+    "tool": "get_context"
+  },
+  {
+    "endpoint": "/api/logs/1/llm-analyze",
+    "seconds": 2.211,
+    "tool": "filter_log"
+  },
+  {
+    "endpoint": "/api/logs/1/llm-analyze",
+    "seconds": 12.242,
+    "done": true
+  }
+]

@@ -32,6 +32,23 @@ def main() -> None:
     assert settings.get("api_key"),"No locally enabled model key"
     output=ROOT/'migration'/('j6' if args.dsh_volcengine else 'j4')
     output.mkdir(parents=True,exist_ok=True)
+    progress=[]
+    def live_events(client,path: str,payload: dict) -> list[dict]:
+        captured=[]
+        started=time.perf_counter()
+        with client.stream('POST',path,json=payload) as response:
+            assert response.status_code==200,'live endpoint failed'
+            for line in response.iter_lines():
+                if not line.startswith('data:'): continue
+                event=json.loads(line[5:]); captured.append(event)
+                marker={field:event[field] for field in ('tool','phase','done') if field in event}
+                if 'error' in event: marker['error']=str(event['error']).replace(settings['api_key'],'[密钥已隐藏]')[:500]
+                if 'result' in event and 'tool' not in event: marker['validated_result']=True
+                if marker:
+                    progress.append({'endpoint':path,'seconds':round(time.perf_counter()-started,3),**marker})
+                    (output/'live-progress.json').write_text(json.dumps(progress,ensure_ascii=False,indent=2),encoding='utf-8')
+                    print(json.dumps(marker,ensure_ascii=True),flush=True)
+        return captured
     results=[]
     with tempfile.TemporaryDirectory(dir=ROOT/"java-app"/"target",prefix="j4-live-") as folder:
         root=Path(folder)
@@ -44,7 +61,7 @@ def main() -> None:
                 print(json.dumps(response,ensure_ascii=True))
                 return
             started=time.perf_counter()
-            generation=events(client,"/api/codegen/generate",{"requirement":"生成一个 Bash 脚本，使用 df -h 查看磁盘占用并输出中文提示，不做修改，不需要定时。"})
+            generation=live_events(client,"/api/codegen/generate",{"requirement":"生成一个 Bash 脚本，使用 df -h 查看磁盘占用并输出中文提示，不做修改，不需要定时。"})
             complete=next((event["result"] for event in generation if "result" in event and "tool" not in event),None)
             if complete is None or complete.get("need_clarification"):
                 diagnostic=next((event.get("error") for event in generation if event.get("error")),"unexpected clarification")
@@ -61,7 +78,7 @@ def main() -> None:
                 f"2026-11-05 10:00:{i:02d} ERROR connection timeout request={i}" if i%5==0 else
                 f"2026-11-05 10:00:{i:02d} INFO synthetic healthy request={i}" for i in range(40))}).json()["id"]
             started=time.perf_counter()
-            analysis=events(client,f"/api/logs/{log}/llm-analyze",{})
+            analysis=live_events(client,f"/api/logs/{log}/llm-analyze",{})
             if not (analysis[-1].get("done") and analysis[-1].get("report_id")):
                 diagnostic=next((event.get("error") for event in analysis if event.get("error")),"missing completion")
                 raise AssertionError("Live report failed: "+str(diagnostic).replace(settings["api_key"],"[密钥已隐藏]")[:500])

@@ -1,0 +1,13 @@
+{
+  "requested_model": "ark-code-latest",
+  "resolved_model": "glm-5.3",
+  "reasoning_effort": "low",
+  "max_tokens": 4096,
+  "http": 200,
+  "seconds": 2.013,
+  "finish_reason": "stop",
+  "content_chars": 48,
+  "reasoning_chars": 116,
+  "scope": "minimal synthetic df JSON request, excludes complete application acceptance",
+  "private_key_or_output_recorded": false
+}
