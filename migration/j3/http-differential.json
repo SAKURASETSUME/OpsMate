@@ -1,0 +1,93 @@
+{
+  "cases": [
+    {
+      "name": "import",
+      "status": 200
+    },
+    {
+      "name": "metadata",
+      "status": 200
+    },
+    {
+      "name": "list",
+      "status": 200
+    },
+    {
+      "name": "clusters",
+      "status": 200
+    },
+    {
+      "name": "filter {'level': 'ERROR'}",
+      "status": 200
+    },
+    {
+      "name": "filter {'q': 'NETWORK', 'level': 'ERROR,WARN', 'regex': 'Exception'}",
+      "status": 200
+    },
+    {
+      "name": "filter {'level': 'UNKNOWN'}",
+      "status": 200
+    },
+    {
+      "name": "filter {'order': 'desc', 'offset': 10, 'limit': 7}",
+      "status": 200
+    },
+    {
+      "name": "filter {'regex': '['}",
+      "status": 400
+    },
+    {
+      "name": "filter {'level': 'INVALID'}",
+      "status": 400
+    },
+    {
+      "name": "export",
+      "status": 200
+    },
+    {
+      "name": "invalid export",
+      "status": 400
+    },
+    {
+      "name": "delete",
+      "status": 200
+    },
+    {
+      "name": "deleted",
+      "status": 404
+    },
+    {
+      "name": "bad encoding",
+      "status": 400
+    },
+    {
+      "name": "empty title",
+      "status": 400
+    },
+    {
+      "name": "paste",
+      "status": 200
+    },
+    {
+      "name": "paste stats",
+      "status": 200
+    },
+    {
+      "name": "50MiB",
+      "status": 200
+    },
+    {
+      "name": "50MiB+1",
+      "status": 413
+    },
+    {
+      "name": "big first page",
+      "status": 200
+    }
+  ],
+  "legacy_sqlite_read": true,
+  "import_seconds": {
+    "python": 1.5531814000569284,
+    "java": 6.654500300064683
+  }
+}
