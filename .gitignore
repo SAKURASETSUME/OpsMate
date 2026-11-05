@@ -1,5 +1,8 @@
 # Python
 .venv/
+java-app/target/
+java-app/.maven-cache/
+java-app/data/
 __pycache__/
 *.pyc
 *.pyo

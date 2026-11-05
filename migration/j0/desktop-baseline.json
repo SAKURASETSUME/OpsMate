@@ -1,0 +1,11 @@
+{
+  "samples": [
+    {
+      "process_entry_to_vue_seconds": 4.174642600119114,
+      "backend_start_seconds": 0.9791417000815272,
+      "backend_working_set_bytes": 61755392,
+      "vue_mounted": true
+    }
+  ],
+  "scope": "Python source process entry to native Vue mounted; excludes Python interpreter boot; not packaged exe"
+}

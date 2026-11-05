@@ -1,0 +1,36 @@
+{
+  "python": "3.12.0 (tags/v3.12.0:0fb18b0, Oct  2 2023, 13:03:39) [MSC v.1935 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "cpu": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+  "samples": [
+    {
+      "attempt": 1,
+      "process_start_to_health_seconds": 0.8920031995512545,
+      "import_50_mib_seconds": 1.8594635999761522,
+      "missing_key_first_error_seconds": 0.028057499788701534,
+      "successful_first_delta_seconds": 0.21465139975771308,
+      "idle_working_set_bytes": 58974208,
+      "post_import_working_set_bytes": 121638912
+    },
+    {
+      "attempt": 2,
+      "process_start_to_health_seconds": 1.0215833997353911,
+      "import_50_mib_seconds": 1.9488571002148092,
+      "missing_key_first_error_seconds": 0.030682300217449665,
+      "successful_first_delta_seconds": 0.22471570037305355,
+      "idle_working_set_bytes": 58597376,
+      "post_import_working_set_bytes": 120938496
+    },
+    {
+      "attempt": 3,
+      "process_start_to_health_seconds": 1.155061099678278,
+      "import_50_mib_seconds": 2.179143900051713,
+      "missing_key_first_error_seconds": 0.030384600162506104,
+      "successful_first_delta_seconds": 0.2295809001661837,
+      "idle_working_set_bytes": 58630144,
+      "post_import_working_set_bytes": 121643008
+    }
+  ],
+  "passed": "CRUD, validation, byte limits, persisted restart, 50MiB, no-key SSE",
+  "pending": "desktop cold start; backend only, no UI performance claim"
+}

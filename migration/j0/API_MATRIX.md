@@ -1,0 +1,66 @@
+# J0 API 阶段矩阵
+
+来源为当前基线的 OpenAPI。字段与约束详见 openapi.json。文件和流事件需由 HTTP 回放补充。
+
+| 方法 | 路径 | 阶段 |
+|---|---|---|
+| GET | /api/health | J1 |
+| GET | /api/commands | J2 |
+| GET | /api/commands/{name} | J2 |
+| GET | /api/kb | J2 |
+| GET | /api/kb/search | J2 |
+| GET | /api/kb/workbench/configs | J2 |
+| POST | /api/kb/workbench/configs | J2 |
+| GET | /api/kb/workbench/configs/{config_id} | J2 |
+| PUT | /api/kb/workbench/configs/{config_id} | J2 |
+| DELETE | /api/kb/workbench/configs/{config_id} | J2 |
+| PUT | /api/kb/workbench/configs/{config_id}/share | J2 |
+| POST | /api/kb/workbench/validate | J2 |
+| GET | /api/kb/{software} | J2 |
+| GET | /api/settings/profiles | J4 |
+| POST | /api/settings/profiles | J4 |
+| PUT | /api/settings/profiles/{profile_id} | J4 |
+| POST | /api/settings/profiles/{profile_id}/activate | J4 |
+| GET | /api/settings | J4 |
+| PUT | /api/settings | J4 |
+| POST | /api/llm/test | J4 |
+| POST | /api/codegen/generate | J4 |
+| GET | /api/codegen/history | J4 |
+| GET | /api/codegen/history/{id} | J4 |
+| GET | /api/logs | J3/J4 |
+| POST | /api/logs | J3/J4 |
+| GET | /api/logs/{log_id} | J3/J4 |
+| DELETE | /api/logs/{log_id} | J3/J4 |
+| GET | /api/logs/{log_id}/lines | J3/J4 |
+| GET | /api/logs/{log_id}/stats | J3/J4 |
+| GET | /api/logs/{log_id}/export | J3/J4 |
+| POST | /api/logs/{log_id}/llm-analyze | J3/J4 |
+| GET | /api/logs/{log_id}/reports | J3/J4 |
+| GET | /api/logs/{log_id}/reports/{report_id} | J3/J4 |
+| GET | /api/assistant/workspace | J5 |
+| PUT | /api/assistant/workspace | J5 |
+| POST | /api/assistant/workspace/open | J5 |
+| GET | /api/assistant/sessions | J5 |
+| GET | /api/assistant/sessions/{session_id} | J5 |
+| DELETE | /api/assistant/sessions/{session_id} | J5 |
+| POST | /api/assistant/files | J5 |
+| GET | /api/assistant/files/{file_id}/content | J5 |
+| POST | /api/assistant/files/apply | J5 |
+| POST | /api/assistant/files/cancel | J5 |
+| GET | /api/assistant/skills | J5 |
+| POST | /api/assistant/skills | J5 |
+| DELETE | /api/assistant/skills/{slug} | J5 |
+| POST | /api/assistant/chat | J5 |
+| GET | /api/versions | J2 |
+| POST | /api/versions | J2 |
+| PUT | /api/versions/{version_id} | J2 |
+| DELETE | /api/versions/{version_id} | J2 |
+| GET | /api/notes | J2 |
+| POST | /api/notes | J2 |
+| PUT | /api/notes/{note_id}/done | J2 |
+| DELETE | /api/notes/{note_id} | J2 |
+| GET | /api/mcp | J5 |
+| POST | /api/mcp | J5 |
+| PUT | /api/mcp/{server_id} | J5 |
+| DELETE | /api/mcp/{server_id} | J5 |
+| POST | /api/mcp/{server_id}/test | J5 |

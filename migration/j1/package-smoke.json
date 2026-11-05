@@ -1,0 +1,8 @@
+{
+  "bundled_runtime": true,
+  "system_java_removed": true,
+  "health": true,
+  "static": true,
+  "verification_profile_disabled": true,
+  "start_to_health_seconds": 2.8219037000089884
+}

@@ -1,0 +1,189 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/health",
+    "status": 200,
+    "body": {
+      "ok": true,
+      "version": "1.0.0"
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/commands?limit=1",
+    "status": 200,
+    "body": {
+      "items": [
+        {
+          "name": "7z",
+          "title": "拥有极高压缩比的开源压缩软件。"
+        }
+      ],
+      "total": 621
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/kb",
+    "status": 200,
+    "body": {
+      "items": [
+        {
+          "software": "docker",
+          "label": "Docker",
+          "cli_count": 26,
+          "conf_count": 34
+        },
+        {
+          "software": "elasticsearch",
+          "label": "Elasticsearch",
+          "cli_count": 15,
+          "conf_count": 16
+        },
+        {
+          "software": "firewalld",
+          "label": "firewalld",
+          "cli_count": 15,
+          "conf_count": 8
+        },
+        {
+          "software": "haproxy",
+          "label": "HAProxy",
+          "cli_count": 9,
+          "conf_count": 15
+        },
+        {
+          "software": "kafka",
+          "label": "Kafka",
+          "cli_count": 20,
+          "conf_count": 36
+        },
+        {
+          "software": "keepalived",
+          "label": "Keepalived",
+          "cli_count": 13,
+          "conf_count": 45
+        },
+        {
+          "software": "mysql",
+          "label": "MySQL",
+          "cli_count": 21,
+          "conf_count": 30
+        },
+        {
+          "software": "nginx",
+          "label": "Nginx",
+          "cli_count": 16,
+          "conf_count": 69
+        },
+        {
+          "software": "postgresql",
+          "label": "PostgreSQL",
+          "cli_count": 18,
+          "conf_count": 24
+        },
+        {
+          "software": "prometheus",
+          "label": "Prometheus",
+          "cli_count": 11,
+          "conf_count": 14
+        },
+        {
+          "software": "rabbitmq",
+          "label": "RabbitMQ",
+          "cli_count": 17,
+          "conf_count": 13
+        },
+        {
+          "software": "redis",
+          "label": "Redis",
+          "cli_count": 20,
+          "conf_count": 51
+        },
+        {
+          "software": "tomcat",
+          "label": "Tomcat",
+          "cli_count": 11,
+          "conf_count": 14
+        },
+        {
+          "software": "zabbix",
+          "label": "Zabbix",
+          "cli_count": 16,
+          "conf_count": 88
+        },
+        {
+          "software": "zookeeper",
+          "label": "ZooKeeper",
+          "cli_count": 11,
+          "conf_count": 14
+        }
+      ]
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/settings",
+    "status": 200,
+    "body": {
+      "provider": "zhipu",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "model": "glm-4-flash",
+      "api_key_set": false
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/codegen/history",
+    "status": 200,
+    "body": {
+      "items": []
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/logs",
+    "status": 200,
+    "body": {
+      "items": []
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/assistant/sessions",
+    "status": 200,
+    "body": {
+      "items": []
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/versions",
+    "status": 200,
+    "body": {
+      "items": []
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/notes",
+    "status": 200,
+    "body": {
+      "items": []
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/mcp",
+    "status": 200,
+    "body": {
+      "items": []
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/logs/{id}/llm-analyze",
+    "status": 200,
+    "body": "data: {\"error\": \"尚未配置 API key，请前往设置页保存并启用模型配置\"}\n\n"
+  }
+]
