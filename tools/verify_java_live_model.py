@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import argparse
 import os
+import hashlib
 from pathlib import Path
 import tempfile
 import time
@@ -16,6 +17,8 @@ def main() -> None:
     parser.add_argument("--dsh-volcengine",action="store_true")
     parser.add_argument("--dsh-model",default="")
     args=parser.parse_args()
+    with (ROOT/'java-app/target/opsmate-1.0.0-migration.jar').open('rb') as binary:
+        tested_jar=hashlib.file_digest(binary,'sha256').hexdigest()
     if args.dsh_volcengine:
         import yaml
         path=Path(os.environ['APPDATA'])/'dsh-desktop/harness/profiles/web/cordis.patch.yml'
@@ -71,7 +74,7 @@ def main() -> None:
                     'tools':[event['tool'] for event in generation if 'tool' in event]},ensure_ascii=False,indent=2),encoding='utf-8')
                 raise AssertionError("Live codegen failed: "+diagnostic[:500])
             assert generation[-1].get("done"),"Live codegen did not finish"
-            results.append({"scenario":"synthetic disk inspection script","model":settings['model'],"seconds":round(time.perf_counter()-started,3),
+            results.append({"scenario":"synthetic disk inspection script","model":settings['model'],"jar_sha256":tested_jar,"seconds":round(time.perf_counter()-started,3),
                             "tool_events":sum("tool" in item for item in generation),"passed":True})
             print("PASS: live synthetic script validated and saved; scripts were not executed",flush=True)
             log=client.post("/api/logs",json={"title":"J4 synthetic connection errors","content":"\n".join(
@@ -83,7 +86,7 @@ def main() -> None:
                 diagnostic=next((event.get("error") for event in analysis if event.get("error")),"missing completion")
                 raise AssertionError("Live report failed: "+str(diagnostic).replace(settings["api_key"],"[密钥已隐藏]")[:500])
             assert client.get(f"/api/logs/{log}/reports").json()["items"],"Live report missing from history"
-            results.append({"scenario":"synthetic log diagnosis","model":settings['model'],"seconds":round(time.perf_counter()-started,3),
+            results.append({"scenario":"synthetic log diagnosis","model":settings['model'],"jar_sha256":tested_jar,"seconds":round(time.perf_counter()-started,3),
                             "tool_events":sum("tool" in item for item in analysis),"passed":True})
     # Report metadata only, excluding model output and all model configuration.
     (output/("volcengine-synthetic.json" if args.dsh_volcengine else "live-synthetic.json")).write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding="utf-8")

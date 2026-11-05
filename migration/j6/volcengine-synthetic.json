@@ -2,6 +2,7 @@
   {
     "scenario": "synthetic disk inspection script",
     "model": "ark-code-latest",
+    "jar_sha256": "671cda61c2ad97ce03dc260fab9ee0ab182962af10e84e2278a5854a4ecc41ee",
     "seconds": 113.487,
     "tool_events": 4,
     "passed": true
@@ -9,6 +10,7 @@
   {
     "scenario": "synthetic log diagnosis",
     "model": "ark-code-latest",
+    "jar_sha256": "671cda61c2ad97ce03dc260fab9ee0ab182962af10e84e2278a5854a4ecc41ee",
     "seconds": 12.251,
     "tool_events": 3,
     "passed": true
