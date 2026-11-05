@@ -14,6 +14,7 @@ def main() -> None:
     parser=argparse.ArgumentParser()
     parser.add_argument("--connect-only",action="store_true")
     parser.add_argument("--dsh-volcengine",action="store_true")
+    parser.add_argument("--dsh-model",default="")
     args=parser.parse_args()
     if args.dsh_volcengine:
         import yaml
@@ -23,7 +24,8 @@ def main() -> None:
         key=os.environ.get(provider.get('apiKeyEnv',''),'')
         assert key,'DSH Volcengine key environment variable is not available'
         models=[item['id'] for item in provider.get('models',[]) if isinstance(item,dict) and item.get('id')]
-        model='ark-code-latest' if 'ark-code-latest' in models else models[0]
+        model=args.dsh_model or ('ark-code-latest' if 'ark-code-latest' in models else models[0])
+        assert model in models,'model must already exist in the DSH Volcengine configuration'
         settings={'provider':'custom','base_url':provider['baseURL'],'model':model,'api_key':key}
     else:
         settings=json.loads((ROOT/"data"/"config.json").read_text(encoding="utf-8"))
@@ -47,9 +49,12 @@ def main() -> None:
             if complete is None or complete.get("need_clarification"):
                 diagnostic=next((event.get("error") for event in generation if event.get("error")),"unexpected clarification")
                 diagnostic=str(diagnostic).replace(settings["api_key"],"[密钥已隐藏]")
+                (output/'live-failure.json').write_text(json.dumps({'stage':'codegen','model':settings['model'],'error':diagnostic[:500],
+                    'phases':[event['phase'] for event in generation if 'phase' in event],
+                    'tools':[event['tool'] for event in generation if 'tool' in event]},ensure_ascii=False,indent=2),encoding='utf-8')
                 raise AssertionError("Live codegen failed: "+diagnostic[:500])
             assert generation[-1].get("done"),"Live codegen did not finish"
-            results.append({"scenario":"synthetic disk inspection script","seconds":round(time.perf_counter()-started,3),
+            results.append({"scenario":"synthetic disk inspection script","model":settings['model'],"seconds":round(time.perf_counter()-started,3),
                             "tool_events":sum("tool" in item for item in generation),"passed":True})
             print("PASS: live synthetic script validated and saved; scripts were not executed",flush=True)
             log=client.post("/api/logs",json={"title":"J4 synthetic connection errors","content":"\n".join(
@@ -61,7 +66,7 @@ def main() -> None:
                 diagnostic=next((event.get("error") for event in analysis if event.get("error")),"missing completion")
                 raise AssertionError("Live report failed: "+str(diagnostic).replace(settings["api_key"],"[密钥已隐藏]")[:500])
             assert client.get(f"/api/logs/{log}/reports").json()["items"],"Live report missing from history"
-            results.append({"scenario":"synthetic log diagnosis","seconds":round(time.perf_counter()-started,3),
+            results.append({"scenario":"synthetic log diagnosis","model":settings['model'],"seconds":round(time.perf_counter()-started,3),
                             "tool_events":sum("tool" in item for item in analysis),"passed":True})
     # Report metadata only, excluding model output and all model configuration.
     (output/("volcengine-synthetic.json" if args.dsh_volcengine else "live-synthetic.json")).write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding="utf-8")

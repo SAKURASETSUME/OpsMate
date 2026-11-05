@@ -113,6 +113,12 @@ public final class LlmClient implements AutoCloseable {
     @SuppressWarnings("unchecked")
     public void stream(List<Map<String,Object>> messages,double temperature,int timeout,String effort,
                        BiConsumer<String,String> onDelta) {
+        stream(messages,temperature,timeout,effort,0,onDelta);
+    }
+
+    @SuppressWarnings("unchecked")
+    public void stream(List<Map<String,Object>> messages,double temperature,int timeout,String effort,
+                       int tokens,BiConsumer<String,String> onDelta) {
         Map<String,StringBuilder> pending=new HashMap<>();
         BiConsumer<String,String> filtered=(kind,text) -> {
             String secret=key();
@@ -127,7 +133,7 @@ public final class LlmClient implements AutoCloseable {
             buffer.setLength(0); buffer.append(value.substring(end));
         };
         try {
-            var response=send(requestBody(messages,true,temperature,0,effort),timeout);
+            var response=send(requestBody(messages,true,temperature,tokens,effort),timeout);
             try (var reader=new BufferedReader(new InputStreamReader(response.body(),StandardCharsets.UTF_8))) {
                 String line;
                 while ((line=reader.readLine())!=null) {

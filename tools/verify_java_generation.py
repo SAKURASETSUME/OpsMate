@@ -32,8 +32,14 @@ class Model(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type","text/event-stream; charset=utf-8")
             self.end_headers()
-            report = "broken" if model=="log-invalid" else REPORT
+            if model.startswith("log"):
+                report = "broken" if model=="log-invalid" else REPORT
+            elif model=="multi":
+                report=json.dumps({"scripts":[{"name":name,**SCRIPT} for name in ("甲脚本","乙脚本","丙脚本")]},ensure_ascii=False)
+            else:
+                report=json.dumps({**SCRIPT,"script":"broken"} if model=="invalid" else SCRIPT,ensure_ascii=False)
             try:
+                if model=="slow-final": time.sleep(5)
                 for fragment in (report[:12],report[12:]):
                     data = ("data: "+json.dumps({"choices":[{"delta":{"content":fragment}}]},ensure_ascii=False)+"\n\n").encode("utf-8")
                     # Deliberately split UTF-8 code units across writes.
@@ -143,6 +149,14 @@ def main() -> None:
                 assert len(client.get("/api/codegen/history").json()["items"])==before
                 assert client.get("/api/health").status_code==200
                 results.append({"scenario":"total deadline cancellation/no history","passed":True})
+                configure("slow-final")
+                before=len(client.get("/api/codegen/history").json()["items"])
+                started=time.perf_counter()
+                timed_out=events(client,"/api/codegen/generate",{"requirement":"synthetic final stream stall"})
+                assert "error" in timed_out[-1] and time.perf_counter()-started<10
+                assert len(client.get("/api/codegen/history").json()["items"])==before
+                assert client.get("/api/health").status_code==200
+                results.append({"scenario":"final stream body stall cancelled/no partial history","passed":True})
             with java_server(root,root/"restart.log") as client:
                 assert client.get("/api/settings").json()["api_key_set"]
                 assert len(client.get("/api/codegen/history").json()["items"])==4

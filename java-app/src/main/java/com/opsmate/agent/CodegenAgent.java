@@ -75,7 +75,14 @@ public class CodegenAgent {
 
     private Map<String,Object> finalObject(LlmClient model,List<Map<String,Object>> messages) {
         for (int attempt=0;attempt<2;attempt++) {
-            String raw=model.chat(messages,0.2,110,12000,"low");
+            StringBuilder output=new StringBuilder();
+            model.stream(messages,0.2,110,"low",12000,(kind,text) -> {
+                if (kind.equals("delta")) {
+                    output.append(text);
+                    if (output.length()>200_000) throw new IllegalStateException("脚本输出超过长度上限");
+                }
+            });
+            String raw=output.toString();
             try { return json.parse(raw); }
             catch (IllegalStateException malformed) {
                 if (attempt==1) throw malformed;

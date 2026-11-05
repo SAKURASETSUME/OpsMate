@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import uuid
 import zipfile
+import xml.etree.ElementTree as ET
 
 ROOT=Path(__file__).resolve().parents[1]
 FORBIDDEN={"config.json","model_profiles.json","opsmate.db","opsmate.db-wal","opsmate.db-shm","agent_workspace.json","mcp_servers.json"}
@@ -55,6 +56,18 @@ def main() -> None:
     parser.add_argument("--output",type=Path)
     args=parser.parse_args()
     jar=ROOT/"java-app/target/opsmate-1.0.0-migration.jar"
+    reports=ROOT/"java-app/target"
+    summary=reports/'failsafe-reports/failsafe-summary.xml'
+    assert summary.is_file() and summary.stat().st_mtime>=jar.stat().st_mtime,'run full Maven verify after building this jar'
+    integration=ET.parse(summary).getroot()
+    assert int(integration.findtext('completed','0'))>=6
+    assert all(int(integration.findtext(name,'0'))==0 for name in ('errors','failures','skipped')),'integration gate failed or skipped'
+    unit_count=0
+    for report in (reports/'surefire-reports').glob('TEST-*.xml'):
+        suite=ET.parse(report).getroot()
+        assert all(int(suite.get(name,'0'))==0 for name in ('errors','failures','skipped')),'unit gate failed or skipped'
+        unit_count+=int(suite.get('tests','0'))
+    assert unit_count>=27,'unit evidence incomplete'
     keys=local_keys()
     assets=inspect_jar(jar,keys)
     stamp=datetime.now().strftime("%Y%m%d-%H%M%S")+"-"+uuid.uuid4().hex[:6]
@@ -86,7 +99,7 @@ def main() -> None:
                 tail=raw[-overlap:] if overlap else b""
         entries.append({"path":relative,"size":path.stat().st_size,"sha256":sha256(path)})
     revision=subprocess.run(["git","rev-parse","HEAD"],cwd=ROOT,capture_output=True,check=True,encoding="utf-8").stdout.strip()
-    manifest={"candidate":True,"source_commit":revision,"jar_sha256":sha256(jar),"assets":assets,"files":entries,"private_data_included":False}
+    manifest={"candidate":True,"source_commit":revision,"jar_sha256":sha256(jar),"verified_tests":{"unit_architecture":unit_count,"integration":int(integration.findtext('completed'))},"assets":assets,"files":entries,"private_data_included":False}
     (image/"RELEASE-MANIFEST.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
     archive=destination/f"OpsMate-Java-candidate-{stamp}.zip"
     with zipfile.ZipFile(archive,"w",zipfile.ZIP_DEFLATED,compresslevel=6) as bundle:

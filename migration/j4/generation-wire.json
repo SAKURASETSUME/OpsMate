@@ -34,5 +34,9 @@
   {
     "scenario": "total deadline cancellation/no history",
     "passed": true
+  },
+  {
+    "scenario": "final stream body stall cancelled/no partial history",
+    "passed": true
   }
 ]
