@@ -1,0 +1,46 @@
+{
+  "candidate_sha256": "ba9818b3d3345d484ea00228c8fcb1272ad5d636eb94bb00d10a228c95733ff0",
+  "desktop_authorized": true,
+  "user_confirmed_desktop_unlocked_and_connected": true,
+  "status": "incomplete: desktop capture runtime unavailable",
+  "native_close_alt_f4": {
+    "passed": true,
+    "window_disappeared": true,
+    "port_released": true,
+    "launcher_exited": true,
+    "scope": "isolated diagnostic copy, writable JVM temp override"
+  },
+  "dedicated_process": {
+    "passed": true,
+    "scope": "MCP fixture created by candidate itself",
+    "fixture_configuration_removed": true
+  },
+  "scheduled_task": {
+    "candidate_call_passed": false,
+    "candidate_child_integrity": "low S-1-16-4096",
+    "direct_diagnostic_integrity": "medium S-1-16-8192",
+    "direct_create_query_delete_passed": true,
+    "direct_diagnostic_cleanup": true,
+    "residual_test_tasks": false,
+    "scope": "unique OpsMate_acceptance_ targets only"
+  },
+  "capture_failures": [
+    "window capture timed out: timed out waiting on channel",
+    "FrameArrived timed out: timed out waiting on channel"
+  ],
+  "capture_recovery_attempts": [
+    "fresh window selection",
+    "activate target window",
+    "reset JavaScript kernel and reinitialize sky",
+    "restart isolated candidate",
+    "maximize through observed system menu",
+    "independent Explorer window scoped to candidate directory"
+  ],
+  "coordinate_input_failure": "coordinate input geometry is unavailable",
+  "visual_ui_clipboard_dialogs_layout": "not accepted; no screenshots available",
+  "browser_fallback": "not executed",
+  "clean_windows_environment": "pending",
+  "original_zip_modified": false,
+  "user_data_modified": false,
+  "authorization_requires_renewal": false
+}

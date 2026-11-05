@@ -1,0 +1,12 @@
+{
+  "dedicated_process_terminated": true,
+  "task_create_list_delete": false,
+  "task_cleanup": true,
+  "task_error": "OS or tool rejected dedicated task creation; no task created",
+  "candidate_integrity": "low S-1-16-4096",
+  "direct_diagnostic_integrity": "medium S-1-16-8192",
+  "direct_schtasks_create_list_delete": true,
+  "direct_schtasks_cleanup": true,
+  "desktop_capture": "window capture timed out after fresh selection, reset and maximization",
+  "launcher_temporary_directory_override": true
+}
