@@ -1,6 +1,7 @@
 # Python
 .venv/
 java-app/target/
+java-app/target-legacy-j1/
 java-app/.maven-cache/
 java-app/data/
 __pycache__/
@@ -35,3 +36,5 @@ data/assistant_files/
 data/agent_files/
 data/agent_workspace.json
 data/mcp_servers.json
+local-java-data/
+local-java-backups/

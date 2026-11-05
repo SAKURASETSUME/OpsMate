@@ -11,6 +11,8 @@
   <version>1.0.0-migration</version>
   <properties>
     <java.version>21</java.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
     <spring-modulith.version>1.4.0</spring-modulith.version>
   </properties>
   <dependencyManagement>
@@ -37,6 +39,9 @@
     <resources>
       <resource><directory>src/main/resources</directory></resource>
       <resource><directory>../app/web</directory><targetPath>static</targetPath></resource>
+      <resource><directory>../data/commands</directory><targetPath>knowledge/commands</targetPath><includes><include>*.md</include></includes></resource>
+      <resource><directory>../data/kb</directory><targetPath>knowledge/kb</targetPath><includes><include>*.yaml</include></includes></resource>
+      <resource><directory>../data/skills</directory><targetPath>knowledge/skills</targetPath><includes><include>*.yaml</include></includes></resource>
     </resources>
     <plugins>
       <plugin>

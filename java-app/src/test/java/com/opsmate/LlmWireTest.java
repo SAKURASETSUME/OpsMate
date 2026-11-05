@@ -12,6 +12,17 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class LlmWireTest {
     @Test
+    void arkConnectivityHasRoomForReasoningWithoutChangingCustomServers() {
+        for (String base:List.of("https://ark.cn-beijing.volces.com/api/plan/v3","http://127.0.0.1:1234")) {
+            try (var model=new LlmClient(Map.of("base_url",base,"model","ark-code-latest","api_key","synthetic"),new ObjectMapper())) {
+                var body=model.requestBody(List.of(),false,0,8,"low");
+                assertEquals(base.contains("volces.com")?4096:8,body.get("max_tokens"));
+                assertFalse(body.containsKey("thinking"));
+                assertEquals(12000,model.requestBody(List.of(),false,0,12000,"low").get("max_tokens"));
+            }
+        }
+    }
+    @Test
     void requestAdapterPreservesOfficialGlmReasoningBudget() {
         try (var model=new LlmClient(Map.of("base_url","https://open.bigmodel.cn/api/paas/v4",
                 "model","GLM-5.3","api_key","synthetic"),new ObjectMapper())) {

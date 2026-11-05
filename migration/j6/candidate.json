@@ -1,0 +1,16 @@
+{
+  "archive": "E:\\Asia\\开发\\项目\\练习工程\\OpsMate\\java-app\\target\\releases\\20261105-113506-828afd\\OpsMate-Java-candidate-20261105-113506-828afd.zip",
+  "image": "E:\\Asia\\开发\\项目\\练习工程\\OpsMate\\java-app\\target\\releases\\20261105-113506-828afd\\image\\OpsMate",
+  "sha256": "abc6044a4b44e91b4e9748e628e810dd07522460ea386af7abbd71bf999c88d7",
+  "jar_sha256": "4f3873c0a6a178af7ba684170a1d8323236cdf5bd972b566fa555e44e51fcb99",
+  "size_bytes": 139797397,
+  "assets": {
+    "commands": 621,
+    "software": 15,
+    "skills": 6,
+    "private_filename_hits": 0,
+    "real_key_hits": 0
+  },
+  "bundled_runtime": true,
+  "status": "candidate pending desktop and real model"
+}

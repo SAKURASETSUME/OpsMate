@@ -87,7 +87,7 @@
   ],
   "legacy_sqlite_read": true,
   "import_seconds": {
-    "python": 1.6610238999128342,
-    "java": 2.887401800137013
+    "python": 1.6265214001759887,
+    "java": 2.824765400029719
   }
 }

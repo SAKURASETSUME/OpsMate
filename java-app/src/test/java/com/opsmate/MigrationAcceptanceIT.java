@@ -28,4 +28,5 @@ class MigrationAcceptanceIT {
     @Test void generationAndDiagnosis() throws Exception { verify("generation"); }
     @Test void modelProfiles() throws Exception { verify("settings"); }
     @Test void assistantAndMcp() throws Exception { verify("assistant"); }
+    @Test void cutoverAndRollback() throws Exception { verify("cutover"); }
 }

@@ -16,6 +16,8 @@ import org.springframework.boot.web.servlet.context.ServletWebServerApplicationC
 /** Desktop owns the embedded server lifecycle, with no separate backend process. */
 public class DesktopShell extends Application {
     private ServletWebServerApplicationContext context;
+    private static volatile ServletWebServerApplicationContext activeContext;
+    private boolean browserMode;
     private final ClipboardBridge clipboard = new ClipboardBridge();
     private NativeFilesBridge files;
 
@@ -25,11 +27,23 @@ public class DesktopShell extends Application {
         if (Boolean.getBoolean("opsmate.verifypage")) {
             app.setAdditionalProfiles("desktop-verification");
         }
-        context = (ServletWebServerApplicationContext) app.run();
+        context = (ServletWebServerApplicationContext) app.run(getParameters().getRaw().toArray(String[]::new));
+        activeContext=context;
     }
 
     @Override
     public void start(Stage stage) {
+        try { startEmbedded(stage); }
+        catch (RuntimeException|LinkageError unavailable) {
+            browserMode=true;
+            BrowserFallback.open(getParameters().getRaw().toArray(String[]::new),context);
+            Platform.exit();
+        }
+    }
+
+    static ServletWebServerApplicationContext activeContext() { return activeContext; }
+
+    private void startEmbedded(Stage stage) {
         WebView view = new WebView();
         files = new NativeFilesBridge(stage);
         stage.setTitle("OpsMate Java");
@@ -74,7 +88,7 @@ public class DesktopShell extends Application {
 
     @Override
     public void stop() {
-        if (context != null) {
+        if (context != null&&!browserMode) {
             context.close();
         }
     }

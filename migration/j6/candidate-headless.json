@@ -1,0 +1,36 @@
+{
+  "archive_sha256": "abc6044a4b44e91b4e9748e628e810dd07522460ea386af7abbd71bf999c88d7",
+  "jar_sha256": "4f3873c0a6a178af7ba684170a1d8323236cdf5bd972b566fa555e44e51fcb99",
+  "samples": [
+    {
+      "attempt": 1,
+      "cold_to_health_seconds": 4.740675100125372,
+      "idle_working_set_bytes": 293912576,
+      "import_50mib_seconds": 4.227538899984211,
+      "synthetic_first_delta_seconds": 0.06821489986032248
+    },
+    {
+      "attempt": 2,
+      "cold_to_health_seconds": 4.803068500012159,
+      "idle_working_set_bytes": 297222144,
+      "import_50mib_seconds": 5.759209600277245,
+      "synthetic_first_delta_seconds": 0.07520369999110699
+    },
+    {
+      "attempt": 3,
+      "cold_to_health_seconds": 4.8012480000033975,
+      "idle_working_set_bytes": 294002688,
+      "import_50mib_seconds": 4.115075099747628,
+      "synthetic_first_delta_seconds": 0.07087909989058971
+    }
+  ],
+  "memory_scope": "actual JVM PID parsed from Boot startup log, excludes native parent launcher",
+  "no_system_java": true,
+  "chinese_space_paths": true,
+  "first_launch_assets": true,
+  "restart_preserves_user_data": true,
+  "port_released": true,
+  "private_pristine_archive_unchanged": true,
+  "desktop_not_tested": true,
+  "real_model_not_tested": true
+}
