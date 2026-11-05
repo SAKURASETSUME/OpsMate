@@ -1,0 +1,141 @@
+[
+  {
+    "name": "initial settings",
+    "status": 200,
+    "body": {
+      "provider": "zhipu",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "model": "glm-4-flash",
+      "api_key_set": false
+    }
+  },
+  {
+    "name": "initial profiles",
+    "status": 200,
+    "body": {
+      "items": [
+        {
+          "provider": "zhipu",
+          "base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "model": "glm-4-flash",
+          "api_key_set": false,
+          "id": "current",
+          "name": "原有配置"
+        }
+      ],
+      "active_id": "current"
+    }
+  },
+  {
+    "name": "save",
+    "status": 200,
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "name": "public",
+    "status": 200,
+    "body": {
+      "provider": "custom",
+      "base_url": "https://example.invalid/v1",
+      "model": "first",
+      "api_key_set": true
+    }
+  },
+  {
+    "name": "preserve key",
+    "status": 200,
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "name": "profile create",
+    "status": 200,
+    "body": {
+      "ok": true,
+      "id": "profile-generated"
+    }
+  },
+  {
+    "name": "new not active",
+    "status": 200,
+    "body": {
+      "provider": "custom",
+      "base_url": "https://example.invalid/v1",
+      "model": "first",
+      "api_key_set": true
+    }
+  },
+  {
+    "name": "empty cannot activate",
+    "status": 400,
+    "body": {
+      "detail": "请先保存该配置的 API key"
+    }
+  },
+  {
+    "name": "profile update",
+    "status": 200,
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "name": "profile activate",
+    "status": 200,
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "name": "activated snapshot",
+    "status": 200,
+    "body": {
+      "provider": "custom",
+      "base_url": "https://example.invalid/v1",
+      "model": "second",
+      "api_key_set": true
+    }
+  },
+  {
+    "name": "profiles",
+    "status": 200,
+    "body": {
+      "items": [
+        {
+          "provider": "custom",
+          "base_url": "https://example.invalid/v1",
+          "model": "first",
+          "api_key_set": true,
+          "id": "current",
+          "name": "原有配置"
+        },
+        {
+          "provider": "custom",
+          "base_url": "https://example.invalid/v1",
+          "model": "second",
+          "api_key_set": true,
+          "id": "profile-generated",
+          "name": "独立档案"
+        }
+      ],
+      "active_id": "profile-generated"
+    }
+  },
+  {
+    "name": "bad provider",
+    "status": 400,
+    "body": {
+      "detail": "请检查预设、base_url 与模型名"
+    }
+  },
+  {
+    "name": "missing profile",
+    "status": 404,
+    "body": {
+      "detail": "本机配置不存在"
+    }
+  }
+]

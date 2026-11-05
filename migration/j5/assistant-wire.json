@@ -1,0 +1,50 @@
+[
+  {
+    "scenario": "direct zero tools/multi-turn current question",
+    "passed": true
+  },
+  {
+    "scenario": "attachment bytes/context/ownership/size/encoding",
+    "passed": true
+  },
+  {
+    "scenario": "protocol prefix/cross-chunk secret redaction",
+    "passed": true
+  },
+  {
+    "scenario": "proposal confirmation/cancel/replay/traversal",
+    "passed": true
+  },
+  {
+    "scenario": "workspace real read/write/list/command/outside denial",
+    "passed": true
+  },
+  {
+    "scenario": "actual Windows junction denial/zip-slip/zip roundtrip",
+    "passed": true
+  },
+  {
+    "scenario": "sharing revoked next request/explicit reference authorized",
+    "passed": true
+  },
+  {
+    "scenario": "skill install/match/duplicate/delete/private URL rejection",
+    "passed": true
+  },
+  {
+    "scenario": "system tools read/denied boundaries/KB installation/API failure diagnosis",
+    "passed": true
+  },
+  {
+    "scenario": "MCP stdio/HTTP/SSE/notifications/session/call/timeout/disable/rollback/no children",
+    "passed": true
+  },
+  {
+    "scenario": "long session summary preserves recent turns",
+    "passed": true
+  },
+  {
+    "scenario": "restart sessions/workspace/deleted skills/MCP",
+    "passed": true
+  }
+]

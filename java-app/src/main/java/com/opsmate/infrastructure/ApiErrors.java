@@ -8,6 +8,14 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class ApiErrors {
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    ResponseEntity<?> oversizedUpload(Exception error) {
+        return ResponseEntity.status(413).body(Map.of("detail","上传内容超过大小上限，请先裁剪"));
+    }
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    ResponseEntity<?> invalidJson(Exception error) {
+        return ResponseEntity.badRequest().body(Map.of("detail","JSON 格式无效"));
+    }
     @ExceptionHandler(ApiFailure.class)
     ResponseEntity<?> business(ApiFailure error) {
         return ResponseEntity.status(error.status()).body(Map.of("detail",error.getMessage()));

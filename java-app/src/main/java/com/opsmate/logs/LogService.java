@@ -188,4 +188,29 @@ public class LogService {
         try { Files.deleteIfExists(rawDirectory.resolve(id+".txt")); }
         catch (java.io.IOException failure) { throw new ApiFailure(500,"无法删除原始副本"); }
     }
+
+    @Transactional
+    public long saveReport(long id,String model,String content) {
+        get(id);
+        var key=new GeneratedKeyHolder();
+        db.update(connection -> {
+            var statement=connection.prepareStatement(
+                "INSERT INTO reports(log_id,kind,model,content) VALUES (?,'llm',?,?)",Statement.RETURN_GENERATED_KEYS);
+            statement.setLong(1,id); statement.setString(2,model); statement.setString(3,content);
+            return statement;
+        },key);
+        return key.getKey().longValue();
+    }
+
+    public List<Map<String,Object>> reports(long id) {
+        get(id);
+        return db.queryForList("SELECT id,model,created_at FROM reports WHERE log_id=? ORDER BY id DESC",id);
+    }
+
+    public Map<String,Object> report(long id,long report) {
+        get(id);
+        var rows=db.queryForList("SELECT content FROM reports WHERE log_id=? AND id=?",id,report);
+        if (rows.isEmpty()) throw new ApiFailure(404,"报告不存在或不属于该日志");
+        return rows.getFirst();
+    }
 }

@@ -94,4 +94,10 @@ public class WorkbenchService {
         item.put("truncated",content.length()>4000);
         return Map.of("ok",true,"result",item);
     }
+
+    /** Explicit @ reference grants access for the current turn only, independent of sharing. */
+    public Map<String,Object> referenced(String name) {
+        var rows=db.queryForList("SELECT name,format,content FROM user_configs WHERE name=? ORDER BY id DESC LIMIT 1",name);
+        return rows.isEmpty()?Map.of():rows.getFirst();
+    }
 }

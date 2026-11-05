@@ -17,6 +17,7 @@ from fastapi import Request
 
 def serve(root: Path) -> None:
     """应用导入前隔离所有运行目录，知识资产仅只读复用。"""
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
     from app import config
     config.DATA_DIR = root
     config.DB_PATH = root/"test.db"

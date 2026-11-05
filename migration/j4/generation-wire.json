@@ -1,0 +1,38 @@
+[
+  {
+    "scenario": "single",
+    "passed": true
+  },
+  {
+    "scenario": "multi",
+    "passed": true
+  },
+  {
+    "scenario": "clarify",
+    "passed": true
+  },
+  {
+    "scenario": "invalid",
+    "passed": true
+  },
+  {
+    "scenario": "network",
+    "passed": true
+  },
+  {
+    "scenario": "malformed",
+    "passed": true
+  },
+  {
+    "scenario": "budget",
+    "passed": true
+  },
+  {
+    "scenario": "log report/history/scope/invalid",
+    "passed": true
+  },
+  {
+    "scenario": "total deadline cancellation/no history",
+    "passed": true
+  }
+]

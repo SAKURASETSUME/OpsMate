@@ -67,13 +67,13 @@ def replay(client: httpx.Client) -> list[dict]:
 
 
 @contextmanager
-def java_server(root: Path,logfile: Path):
+def java_server(root: Path,logfile: Path,extra_args=()):
     """启动可重复重启的 Java 服务，日志和数据均在本次夹具目录。"""
     target = ROOT/"java-app"/"target"
     with logfile.open("w",encoding="utf-8") as log:
         proc = subprocess.Popen(["java","-Djava.io.tmpdir="+str(root),"-jar",str(target/"opsmate-1.0.0-migration.jar"),
                                  "--headless","--opsmate.data="+str(root/"java"),
-                                 "--opsmate.knowledge="+str(ROOT/"data")],stdout=log,stderr=subprocess.STDOUT,
+                                 "--opsmate.knowledge="+str(ROOT/"data"),*extra_args],stdout=log,stderr=subprocess.STDOUT,
                                 cwd=ROOT/"java-app")
         try:
             deadline = time.monotonic()+25
