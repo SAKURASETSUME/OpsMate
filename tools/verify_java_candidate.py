@@ -116,7 +116,7 @@ def main() -> None:
                         assert any(item["id"]==note["id"] for item in client.get("/api/notes").json()["items"])
                         assert client.get("/api/settings").json()["api_key_set"]
                         assert client.get("/api/kb/candidate-added").status_code==200
-            evidence={"archive_sha256":candidate["sha256"],"jar_sha256":candidate["jar_sha256"],"samples":samples,"memory_scope":"actual JVM PID parsed from Boot startup log, excludes native parent launcher","no_system_java":True,"chinese_space_paths":True,"first_launch_assets":True,"restart_preserves_user_data":True,"port_released":True,"private_pristine_archive_unchanged":sha256(archive)==candidate["sha256"],"desktop_not_tested":True,"real_model_not_tested":True}
+            evidence={"archive_sha256":candidate["sha256"],"jar_sha256":candidate["jar_sha256"],"samples":samples,"memory_scope":"actual JVM PID parsed from Boot startup log, excludes native parent launcher","no_system_java":True,"chinese_space_paths":True,"first_launch_assets":True,"restart_preserves_user_data":True,"port_released":True,"private_pristine_archive_unchanged":sha256(archive)==candidate["sha256"],"desktop_not_tested":True,"real_model_tested_in_this_run":False,"separate_real_model_evidence_bound":candidate.get("real_model_verified",False)}
             (ROOT/"migration/j6/candidate-headless.json").write_text(json.dumps(evidence,ensure_ascii=False,indent=2),encoding="utf-8")
     finally: model.shutdown(); model.server_close()
     print("PASS: candidate exe headless, bundled Java, assets, persistence, 3 performance samples")

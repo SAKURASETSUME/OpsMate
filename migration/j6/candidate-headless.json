@@ -1,27 +1,27 @@
 {
-  "archive_sha256": "5f4ae6a460b2b93234dfb6664ee34bee5351cf7886ddf06822b3ee5eb42c0930",
-  "jar_sha256": "a505d919598dfec8dfe2253106114cdeacb5a69ace00e9f0b52f242649d3a4c2",
+  "archive_sha256": "ba9818b3d3345d484ea00228c8fcb1272ad5d636eb94bb00d10a228c95733ff0",
+  "jar_sha256": "671cda61c2ad97ce03dc260fab9ee0ab182962af10e84e2278a5854a4ecc41ee",
   "samples": [
     {
       "attempt": 1,
-      "cold_to_health_seconds": 4.666592699941248,
-      "idle_working_set_bytes": 295657472,
-      "import_50mib_seconds": 3.9087487999349833,
-      "synthetic_first_delta_seconds": 0.07189320027828217
+      "cold_to_health_seconds": 4.893760399892926,
+      "idle_working_set_bytes": 293810176,
+      "import_50mib_seconds": 3.8180605000816286,
+      "synthetic_first_delta_seconds": 0.07182070007547736
     },
     {
       "attempt": 2,
-      "cold_to_health_seconds": 4.384442700073123,
-      "idle_working_set_bytes": 299864064,
-      "import_50mib_seconds": 3.864833999890834,
-      "synthetic_first_delta_seconds": 0.07383299991488457
+      "cold_to_health_seconds": 4.784952700138092,
+      "idle_working_set_bytes": 296013824,
+      "import_50mib_seconds": 4.2564477999694645,
+      "synthetic_first_delta_seconds": 0.06471109995618463
     },
     {
       "attempt": 3,
-      "cold_to_health_seconds": 4.601503500249237,
-      "idle_working_set_bytes": 296841216,
-      "import_50mib_seconds": 3.982695400249213,
-      "synthetic_first_delta_seconds": 0.06451170006766915
+      "cold_to_health_seconds": 4.479361400008202,
+      "idle_working_set_bytes": 293490688,
+      "import_50mib_seconds": 3.9794600000604987,
+      "synthetic_first_delta_seconds": 0.0742622003890574
     }
   ],
   "memory_scope": "actual JVM PID parsed from Boot startup log, excludes native parent launcher",
@@ -32,5 +32,6 @@
   "port_released": true,
   "private_pristine_archive_unchanged": true,
   "desktop_not_tested": true,
-  "real_model_not_tested": true
+  "real_model_tested_in_this_run": false,
+  "separate_real_model_evidence_bound": true
 }

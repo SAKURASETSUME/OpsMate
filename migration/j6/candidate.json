@@ -1,9 +1,9 @@
 {
-  "archive": "E:\\Asia\\开发\\项目\\练习工程\\OpsMate\\java-app\\target\\releases\\20261105-120220-59c1a4\\OpsMate-Java-candidate-20261105-120220-59c1a4.zip",
-  "image": "E:\\Asia\\开发\\项目\\练习工程\\OpsMate\\java-app\\target\\releases\\20261105-120220-59c1a4\\image\\OpsMate",
-  "sha256": "5f4ae6a460b2b93234dfb6664ee34bee5351cf7886ddf06822b3ee5eb42c0930",
-  "jar_sha256": "a505d919598dfec8dfe2253106114cdeacb5a69ace00e9f0b52f242649d3a4c2",
-  "size_bytes": 139798034,
+  "archive": "E:\\Asia\\开发\\项目\\练习工程\\OpsMate\\java-app\\target\\releases\\20261105-121548-8c1396\\OpsMate-Java-candidate-20261105-121548-8c1396.zip",
+  "image": "E:\\Asia\\开发\\项目\\练习工程\\OpsMate\\java-app\\target\\releases\\20261105-121548-8c1396\\image\\OpsMate",
+  "sha256": "ba9818b3d3345d484ea00228c8fcb1272ad5d636eb94bb00d10a228c95733ff0",
+  "jar_sha256": "671cda61c2ad97ce03dc260fab9ee0ab182962af10e84e2278a5854a4ecc41ee",
+  "size_bytes": 139798091,
   "assets": {
     "commands": 621,
     "software": 15,
@@ -12,5 +12,6 @@
     "real_key_hits": 0
   },
   "bundled_runtime": true,
-  "status": "candidate pending desktop and real model"
+  "real_model_verified": true,
+  "status": "candidate pending desktop acceptance"
 }
