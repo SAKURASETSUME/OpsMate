@@ -1,27 +1,27 @@
 {
-  "archive_sha256": "ba9818b3d3345d484ea00228c8fcb1272ad5d636eb94bb00d10a228c95733ff0",
-  "jar_sha256": "671cda61c2ad97ce03dc260fab9ee0ab182962af10e84e2278a5854a4ecc41ee",
+  "archive_sha256": "166fe491e63bd7844bf54b95661b90451acf2085797f6ce2eff97b098a23d16b",
+  "jar_sha256": "5e5a9ba4752516edb45ab37a8904c57170cbda9cb155e6388abc00f005f32a35",
   "samples": [
     {
       "attempt": 1,
-      "cold_to_health_seconds": 4.893760399892926,
-      "idle_working_set_bytes": 293810176,
-      "import_50mib_seconds": 3.8180605000816286,
-      "synthetic_first_delta_seconds": 0.07182070007547736
+      "cold_to_health_seconds": 5.476618899963796,
+      "idle_working_set_bytes": 302882816,
+      "import_50mib_seconds": 4.061914700083435,
+      "synthetic_first_delta_seconds": 0.06959539977833629
     },
     {
       "attempt": 2,
-      "cold_to_health_seconds": 4.784952700138092,
-      "idle_working_set_bytes": 296013824,
-      "import_50mib_seconds": 4.2564477999694645,
-      "synthetic_first_delta_seconds": 0.06471109995618463
+      "cold_to_health_seconds": 4.785197000019252,
+      "idle_working_set_bytes": 294318080,
+      "import_50mib_seconds": 4.192596599925309,
+      "synthetic_first_delta_seconds": 0.07404839992523193
     },
     {
       "attempt": 3,
-      "cold_to_health_seconds": 4.479361400008202,
-      "idle_working_set_bytes": 293490688,
-      "import_50mib_seconds": 3.9794600000604987,
-      "synthetic_first_delta_seconds": 0.0742622003890574
+      "cold_to_health_seconds": 4.88393530016765,
+      "idle_working_set_bytes": 294842368,
+      "import_50mib_seconds": 4.190353599842638,
+      "synthetic_first_delta_seconds": 0.07782200025394559
     }
   ],
   "memory_scope": "actual JVM PID parsed from Boot startup log, excludes native parent launcher",
@@ -33,5 +33,5 @@
   "private_pristine_archive_unchanged": true,
   "desktop_not_tested": true,
   "real_model_tested_in_this_run": false,
-  "separate_real_model_evidence_bound": true
+  "separate_real_model_evidence_bound": false
 }

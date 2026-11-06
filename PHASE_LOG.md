@@ -2039,3 +2039,5 @@
 - 用户要求启动桌面缩略图修复候选 28ccd2de… 手测。核对包散列，独立解压，以进程专属临时目录启动，健康检查通过，端口 27716，窗口留给用户。
 
 - 用户手测确认 JPEG 缩略图正常并要求推送。决策：保留迁移前 Python 提交 03b275e 于独立 backup-python 分支，Java 快进到远端 main，约 133 MiB 的 ZIP 由用户手动添加到 GitHub 预发布 Release。理由：独立回退及 GitHub 普通 Git 文件大小限制。
+
+- Python 备用分支 backup-python 已推送到 GitHub，指向 03b275e。Java 源码提交 b79474b 的发布包沿用用户手测通过的相同 JAR，ZIP SHA256 为 166fe491e63bd7844bf54b95661b90451acf2085797f6ce2eff97b098a23d16b。三次无界面 EXE 测包通过，私有文件和密钥扫描命中 0。Release 标签和 ZIP 上传留给用户手动操作。
