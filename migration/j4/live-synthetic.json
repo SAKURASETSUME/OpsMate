@@ -1,0 +1,18 @@
+[
+  {
+    "scenario": "synthetic disk inspection script",
+    "model": "GLM-5.3",
+    "jar_sha256": "b67573c58db02c6adf4e61363727f225c8c6dca85775acd5c48e3dfc86e1a5f5",
+    "seconds": 61.938,
+    "tool_events": 3,
+    "passed": true
+  },
+  {
+    "scenario": "synthetic log diagnosis",
+    "model": "GLM-5.3",
+    "jar_sha256": "b67573c58db02c6adf4e61363727f225c8c6dca85775acd5c48e3dfc86e1a5f5",
+    "seconds": 18.83,
+    "tool_events": 2,
+    "passed": true
+  }
+]

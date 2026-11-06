@@ -1,0 +1,7 @@
+{
+  "jar_sha256": "671cda61c2ad97ce03dc260fab9ee0ab182962af10e84e2278a5854a4ecc41ee",
+  "clarification_without_history": true,
+  "three_scripts_download_bytes_and_history": true,
+  "cancel_releases_submit_and_next_request_succeeds": true,
+  "browser_drop_text_image_and_original_bytes": true
+}

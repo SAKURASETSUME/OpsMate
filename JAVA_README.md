@@ -4,7 +4,7 @@ Java版使用JDK21、Spring Boot MVC、Spring JDBC/SQLite、JavaFX WebView，复
 
 ## 当前状态
 
-这是迁移候选版。接口、存储、模型模拟、MCP和切换回退已有自动验收；用户指定火山API的真实脚本/诊断链路已通过，智谱原接口仍受额度限制。最终原生交互仍待授权补验，不能把候选版描述为最终已验收exe。
+这是 Java 迁移预发布版。自动化验收已覆盖接口、存储、模型模拟、MCP 和切换回退，用户已确认桌面 JPEG 缩略图正常。真实模型和剩余桌面测试按各自候选散列记录，见 [J6 状态](migration/j6/STATUS.md)。
 
 ## 启动与本机资料
 
@@ -25,6 +25,8 @@ Java版使用JDK21、Spring Boot MVC、Spring JDBC/SQLite、JavaFX WebView，复
 工具使用SQLite备份、完整性检查和附件散列核验，复制本机模型档案、授权与MCP配置并修正附件路径。目标为私有本机副本，严禁拿来打包或分享。若放仓库内，只允许已忽略的`local-java-data`或`local-java-backups`目录（测试临时目录另行隔离），避免误提交模型档案。失败目录带`.migration-failed`，先排查，不启动该副本。
 
 Java试用指向该副本。若回退，先关闭Java，将其数据再复制到一个新的独立备份目录保留增量，再重新打开未改动的Python版。不要用旧库覆盖Java新增会话，也不要在同一目录同时运行两版。
+
+备用源码位于 `backup-python` 分支。可单独检出到另一目录，按该分支 README 启动；已有 Python 便携版也可配合原 Python 数据备份继续使用。
 
 ## 构建及验收
 

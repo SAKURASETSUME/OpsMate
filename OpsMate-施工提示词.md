@@ -375,7 +375,7 @@ CREATE TABLE IF NOT EXISTS user_configs (
 | GET | `/api/assistant/sessions` | - | `{"items":[{id,title,updated_at}]}`（倒序） |
 | GET | `/api/assistant/sessions/{id}` | - | `{"messages":[{id,role,content}]}`（tool 行 content 为 JSON 轨迹字符串） |
 | DELETE | `/api/assistant/sessions/{id}` | - | `{"ok":true}`（连带删消息） |
-| POST | `/api/assistant/files` | multipart `file` | `{"id","name","mime","kind","size_bytes"}`（≤5MB；文本 UTF-8 或 PNG/JPG/GIF/WebP/BMP；超限 413/415） |
+| POST | `/api/assistant/files` | multipart `file` | `{"id","name","mime","kind","size_bytes"}`（≤5 MiB；文本自动识别 UTF-8、GBK/GB18030、带 BOM 的 UTF-16，或 PNG/JPG/GIF/WebP/BMP；原字节保留，模型当轮读取文本前 15000 字符；超限 413，不支持的文件或编码 415） |
 | GET | `/api/assistant/files/{id}/content` | - | 附件原始内容（图片回显缩略图用） |
 | POST | `/api/assistant/files/apply` | `{"session_id","filename"}` | `{"ok":true,"outcome":"…已写入 agent_files/<name>"}`；以服务端存档内容写入 `data/agent_files/`；无待确认提案 404、文件名非法 400 |
 | POST | `/api/assistant/files/cancel` | `{"session_id","filename"}` | `{"ok":true,"outcome":"用户已取消，未写入"}` |

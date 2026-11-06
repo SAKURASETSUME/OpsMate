@@ -12,6 +12,9 @@ import org.springframework.web.multipart.MultipartFile;
 @RestController
 @RequestMapping("/api/assistant")
 class AssistantController {
+    private static final Map<String, String> PREVIEW_TYPES = Map.of(
+        "png", "image/png", "jpg", "image/jpeg", "jpeg", "image/jpeg",
+        "gif", "image/gif", "webp", "image/webp", "bmp", "image/bmp");
     private final AssistantStore store;
     private final WorkspaceService workspace;
     private final SkillsService skills;
@@ -36,12 +39,29 @@ class AssistantController {
     @PostMapping("/files") Map<String,Object> upload(@RequestParam MultipartFile file) throws java.io.IOException {
         return store.upload(Objects.requireNonNullElse(file.getOriginalFilename(),"未命名"),Objects.requireNonNullElse(file.getContentType(),""),file.getBytes());
     }
-    @GetMapping("/files/{id}/content") ResponseEntity<FileSystemResource> content(@PathVariable long id) {
+    @GetMapping("/files/{id}/content") ResponseEntity<FileSystemResource> content(
+            @PathVariable long id, @RequestParam(defaultValue = "false") boolean preview) {
         var item=store.attachment(id);
+        String name = item.get("name").toString();
         MediaType mime;
         try { mime=MediaType.parseMediaType(Objects.toString(item.get("mime"),"application/octet-stream")); }
         catch (Exception invalid) { mime=MediaType.APPLICATION_OCTET_STREAM; }
-        return ResponseEntity.ok().contentType(mime).header(HttpHeaders.CONTENT_DISPOSITION,ContentDisposition.attachment().filename(item.get("name").toString(),java.nio.charset.StandardCharsets.UTF_8).build().toString()).body(new FileSystemResource(store.attachmentPath(item)));
+        ContentDisposition.Builder disposition = ContentDisposition.attachment();
+        if (preview && "image".equals(item.get("kind"))) {
+            String type = mime.getType() + "/" + mime.getSubtype();
+            if (!PREVIEW_TYPES.containsValue(type)) {
+                int dot = name.lastIndexOf('.');
+                type = dot < 0 ? null : PREVIEW_TYPES.get(name.substring(dot + 1).toLowerCase(Locale.ROOT));
+            }
+            if (type != null) {
+                mime = MediaType.parseMediaType(type);
+                disposition = ContentDisposition.inline();
+            }
+        }
+        return ResponseEntity.ok().contentType(mime)
+            .header("X-Content-Type-Options", "nosniff")
+            .header(HttpHeaders.CONTENT_DISPOSITION, disposition.filename(name,java.nio.charset.StandardCharsets.UTF_8).build().toString())
+            .body(new FileSystemResource(store.attachmentPath(item)));
     }
     @PostMapping("/files/apply") Map<String,Object> apply(@Valid @RequestBody Proposal body) { return Map.of("ok",true,"outcome",store.resolve(body.session_id(),body.filename(),true)); }
     @PostMapping("/files/cancel") Map<String,Object> cancel(@Valid @RequestBody Proposal body) { return Map.of("ok",true,"outcome",store.resolve(body.session_id(),body.filename(),false)); }

@@ -3,7 +3,7 @@ package com.opsmate.assistant;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opsmate.infrastructure.*;
-import java.nio.charset.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.sql.Statement;
 import java.util.*;
@@ -99,10 +99,7 @@ public class AssistantStore {
         if (IMAGES.contains(suffix)||Set.of("image/png","image/jpeg","image/gif","image/webp","image/bmp").contains(mime)) kind="image";
         else if (TEXT.contains(suffix)||mime.startsWith("text/")) kind="text";
         else throw new ApiFailure(415,"仅支持文本/配置/代码文件与 PNG/JPG/GIF/WebP/BMP 图片");
-        if (kind.equals("text")) {
-            try { StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).decode(java.nio.ByteBuffer.wrap(raw)); }
-            catch (CharacterCodingException invalid) { throw new ApiFailure(415,"文本附件必须是 UTF-8 编码"); }
-        }
+        if (kind.equals("text")) AttachmentText.decode(raw);
         long id=insert("INSERT INTO assistant_attachments(name,mime,kind,size_bytes,path) VALUES (?,?,?,?,?)",name,mime,kind,raw.length,"");
         Path path=files.resolve(Long.toString(id));
         try { Files.write(path,raw,StandardOpenOption.CREATE_NEW); }
@@ -124,7 +121,7 @@ public class AssistantStore {
                 for (var item:attachments) {
                     String raw="";
                     if (item.get("kind").equals("text")) {
-                        try { raw=clip(Files.readString(attachmentPath(attachment(((Number)item.get("id")).longValue())),StandardCharsets.UTF_8),2000); }
+                        try { raw=clip(AttachmentText.decode(Files.readAllBytes(attachmentPath(attachment(((Number)item.get("id")).longValue())))),2000); }
                         catch (Exception ignored) { }
                     }
                     text+="\n\n[附件 "+item.get("name")+"（"+item.get("mime")+"，"+(item.get("kind").equals("text")?item.get("size_bytes")+" 字节":"图片，本轮未重发")+"）]\n"+raw;

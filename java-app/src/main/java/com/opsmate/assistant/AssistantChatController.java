@@ -7,7 +7,6 @@ import com.opsmate.kb.WorkbenchService;
 import com.opsmate.llm.*;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
 import org.springframework.web.bind.annotation.*;
@@ -59,7 +58,12 @@ class AssistantChatController {
                 if (item.get("kind").equals("image")) {
                     images.add("data:"+item.get("mime")+";base64,"+Base64.getEncoder().encodeToString(Files.readAllBytes(store.attachmentPath(item))));
                     message.append("图片，已随消息提供给你）]");
-                } else message.append(item.get("size_bytes")).append(" 字节）]\n").append(AssistantStore.clip(Files.readString(store.attachmentPath(item),StandardCharsets.UTF_8),15000));
+                } else {
+                    String text = AttachmentText.decode(Files.readAllBytes(store.attachmentPath(item)));
+                    String excerpt = AssistantStore.clip(text,15000);
+                    message.append(item.get("size_bytes")).append(" 字节）]\n").append(excerpt);
+                    if (excerpt.length() < text.length()) message.append("\n[附件内容已截取前 15000 字符]");
+                }
             }
             for (String name:body.config_refs) {
                 var item=configs.referenced(AssistantStore.clip(name,120));

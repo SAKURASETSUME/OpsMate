@@ -2,7 +2,9 @@
 
 Windows 单机桌面应用：本地知识 + 智能体，为管理 Linux 服务器的运维工程师提供指令/配置速查、脚本生成、日志诊断与运维问答。免安装，双击即用。
 
-Java迁移候选版的构建、试用数据迁移与回退见[Java说明](JAVA_README.md)，当前验收状态见[J6记录](migration/j6/STATUS.md)。接口累计回归和用户指定火山真实模型链路已通过，桌面验收已获授权，部分图形项目待捕获工具恢复后继续。本文下方保留Python基线的运行说明。
+Java 是当前主版本。Windows 便携包通过 [GitHub Releases](https://github.com/SAKURASETSUME/OpsMate/releases) 分发，构建、数据迁移与回退见 [Java 说明](JAVA_README.md)，验收范围见 [J6 记录](migration/j6/STATUS.md)。
+
+Python 备用版固定在 [backup-python 分支](https://github.com/SAKURASETSUME/OpsMate/tree/backup-python)。回退时使用独立目录和原 Python 数据备份。下方保留 Python 基线的功能与运行说明。
 
 ## 功能模块
 

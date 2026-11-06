@@ -45,7 +45,10 @@ public class DesktopShell extends Application {
 
     private void startEmbedded(Stage stage) {
         WebView view = new WebView();
-        files = new NativeFilesBridge(stage);
+        var store = context.getBean(com.opsmate.assistant.AssistantStore.class);
+        var json = context.getBean(com.fasterxml.jackson.databind.ObjectMapper.class);
+        NativeAssistantDrop.install(view, context.getWebServer().getPort(), store, json);
+        files = new NativeFilesBridge(stage, store, json);
         stage.setTitle("OpsMate Java");
         stage.setScene(new Scene(view, 1280, 860));
         stage.setOnCloseRequest(event -> Platform.exit());

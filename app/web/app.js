@@ -1394,7 +1394,7 @@ const App = {
       if (row.role === "user") {
         return { key: "u" + row.id, role: "user", content: row.content, summary: row.summary || "",
           attachments: (row.attachments || []).map((a) => Object.assign({}, a, {
-            url: a.kind === "image" ? "/api/assistant/files/" + a.id + "/content" : "" })) };
+            url: this.asstAttachmentPreview(a) })) };
       }
       if (row.role !== "tool") {
         return { key: row.role[0] + row.id, role: row.role, content: row.content, tools: [] };
@@ -1439,9 +1439,7 @@ const App = {
         const form = new FormData(); form.append("file", file);
         try {
           const meta = await apiFetch("/api/assistant/files", { method: "POST", body: form }, 60000);
-          this.asstDraftFiles.push(Object.assign({}, meta, {
-            url: meta.kind === "image" ? "/api/assistant/files/" + meta.id + "/content" : "" }));
-          showToast("已添加附件：" + meta.name);
+          this.addAsstAttachment(meta);
         } catch (err) { /* apiFetch 统一提示 */ }
       }
     },
@@ -1449,11 +1447,45 @@ const App = {
       this.asstDragOver = false;
       this.addAsstFiles(event.dataTransfer && event.dataTransfer.files);
     },
+    dropNativeAsstFiles(event) {
+      this.asstDragOver = false;
+      for (const entry of event.detail.entries) {
+        if (entry.error) {
+          showToast(entry.name + " " + entry.error, "err");
+          continue;
+        }
+        if (this.asstDraftFiles.length >= 5) { showToast("单轮最多 5 个附件", "err"); break; }
+        this.addAsstAttachment(entry);
+      }
+      if (event.detail.truncated) showToast("单轮最多 5 个附件", "err");
+    },
+    addAsstAttachment(meta) {
+      this.asstDraftFiles.push(Object.assign({}, meta, {
+        url: this.asstAttachmentPreview(meta) }));
+      showToast("已添加附件：" + meta.name);
+    },
+    asstAttachmentPreview(meta) {
+      if (meta.kind !== "image") return "";
+      if (window.opsmateFiles) {
+        try {
+          const thumbnail = window.opsmateFiles.assistantThumbnail(String(meta.id));
+          if (thumbnail) return thumbnail;
+        } catch (error) { /* Fall back to the original preview response. */ }
+      }
+      return "/api/assistant/files/" + meta.id + "/content?preview=true";
+    },
     pasteAsstFiles(event) {
       const files = event.clipboardData && event.clipboardData.files;
       if (files && files.length) { event.preventDefault(); this.addAsstFiles(files); }
     },
     chooseAsstFile(event) { this.addAsstFiles(event.target.files); event.target.value = ""; },
+    chooseDesktopAsstFiles(event) {
+      if (!window.opsmateFiles || !window.opsmateAssistantDrop) return;
+      event.preventDefault();
+      if (this.asstDraftFiles.length >= 5) { showToast("单轮最多 5 个附件", "err"); return; }
+      try { window.opsmateAssistantDrop.choose(); }
+      catch (error) { showToast("附件上传失败：" + String(error.message || error), "err"); }
+    },
     removeAsstDraft(index) { this.asstDraftFiles.splice(index, 1); },
     async resolveAsstProposal(proposal, accept) {
       if (!this.asstSessionId || this.asstBusy) return;
@@ -1580,7 +1612,6 @@ const App = {
       // #/commands/<name> 与 #/kb/<software>/<entry>：来源引用跳转
       const parts = location.hash.replace(/^#\/?/, "").split("/");
       if (this.page === "commands" && parts[1]) {
-        if (!this.commandItems.length) this.loadCommands();
         this.selectCommand(decodeURIComponent(parts[1]));
       } else if (this.page === "kb" && parts[1]) {
         this.kbView = "kb"; this.kbQuery = ""; this.kbSearchItems = null;
@@ -1619,7 +1650,7 @@ const App = {
         this.commandTotal = data.total;
         const selectedStillVisible = this.selectedCommand
           && data.items.some((item) => item.name === this.selectedCommand.name);
-        if (!selectedStillVisible) {
+        if (!selectedStillVisible && !this.commandDetailLoading) {
           this.selectedCommand = null;
           if (data.items.length > 0) await this.selectCommand(data.items[0].name);
         }
@@ -1700,6 +1731,7 @@ const App = {
       if (this.page === "assistant" && !this.asstWorkspaceDirs.length) this.loadAsstWorkspace();
       if (this.page === "versions") this.loadVersions();
       if (this.page === "notes") this.loadNotes();
+      this.handleDeepLink();
     });
     if (this.page === "commands") this.loadCommands();
     if (this.page === "kb") this.loadKbList();
@@ -2029,7 +2061,7 @@ const App = {
     "          </div>",
     "        </aside>",
     '        <div class="edge-handle" title="拖拽调整宽度" :style="{ left: paneWidths.asst + \'px\' }" @mousedown="startPaneDrag($event, \'asst\')"></div>',
-    '        <section class="asst-chat" aria-label="对话消息流" @dragover.prevent="asstDragOver = true" @dragleave="asstDragOver = false" @drop.prevent="dropAsstFiles">',
+    '        <section class="asst-chat" aria-label="对话消息流" @dragover.prevent="asstDragOver = true" @dragleave="asstDragOver = false" @drop.prevent="dropAsstFiles" @opsmate-native-drop="dropNativeAsstFiles">',
     '          <div v-if="asstDragOver" class="asst-drop-overlay">松开鼠标，把文件添加为附件</div>',
     '          <div class="asst-messages" ref="asstMessages" @scroll="asstMessagesScrolled">',
     '            <div v-for="m in asstMessages" :key="m.key" :data-key="m.key" :class="m.role === \'user\' ? \'asst-user\' : \'asst-item\'">',
@@ -2048,8 +2080,8 @@ const App = {
     '                <div class="asst-bubble-user">{{ m.content }}</div>',
     '                <div v-if="m.attachments && m.attachments.length" class="asst-attach-row">',
     '                  <span v-for="(a,ai) in m.attachments" :key="ai" class="asst-attach-chip" :title="a.name">',
-    '                    <img v-if="a.kind === \'image\' && a.url" :src="a.url" class="asst-attach-thumb" :alt="a.name">',
-    '                    <span v-else class="asst-attach-icon">📄</span><span class="asst-attach-name">{{ a.name }}</span>',
+    '                    <img v-if="a.kind === \'image\' && a.url" :src="a.url" class="asst-attach-thumb" alt="图片预览失败" @error="a.url = \'\'">',
+    '                    <span v-else class="asst-attach-icon">{{ a.kind === "image" ? "预览不可用" : "📄" }}</span><span class="asst-attach-name">{{ a.name }}</span>',
     "                  </span>",
     "                </div>",
     "              </div>",
@@ -2071,8 +2103,8 @@ const App = {
     "          </div>",
     '          <div v-if="asstDraftFiles.length" class="asst-attach-row asst-draft-row">',
     '            <span v-for="(f,fi) in asstDraftFiles" :key="f.id" class="asst-attach-chip">',
-    '              <img v-if="f.kind === \'image\'" :src="f.url" class="asst-attach-thumb" :alt="f.name">',
-    '              <span v-else class="asst-attach-icon">📄</span><span class="asst-attach-name">{{ f.name }}</span>',
+    '              <img v-if="f.kind === \'image\' && f.url" :src="f.url" class="asst-attach-thumb" alt="图片预览失败" @error="f.url = \'\'">',
+    '              <span v-else class="asst-attach-icon">{{ f.kind === "image" ? "预览不可用" : "📄" }}</span><span class="asst-attach-name">{{ f.name }}</span>',
     '              <button class="asst-attach-remove" type="button" title="移除附件" @click="removeAsstDraft(fi)">×</button>',
     "            </span>",
     "          </div>",
@@ -2084,14 +2116,14 @@ const App = {
     '            <div v-if="asstAtMenu.show && asstAtMatches.length" class="asst-at-menu">',
     '              <button v-for="name in asstAtMatches" :key="name" type="button" class="asst-at-item" @mousedown.prevent="pickAsstConfig(name)">@{{ name }}</button>',
     "            </div>",
-    '            <label class="copy-button asst-attach-btn" title="添加附件">📎<input type="file" multiple accept=".txt,.md,.log,.conf,.cfg,.ini,.yaml,.yml,.json,.properties,.toml,.csv,.sh,.bash,.py,.pl,.rb,.go,.js,.ts,.java,.sql,.xml,.html,.css,.env,.service,image/png,image/jpeg,image/gif,image/webp,image/bmp" @change="chooseAsstFile"></label>',
+    '            <label class="copy-button asst-attach-btn" @click="chooseDesktopAsstFiles" title="添加文本或图片。每份最多 5 MiB，模型读取文本的前 15000 字符">📎<input type="file" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.txt,.md,.log,.conf,.cfg,.ini,.yaml,.yml,.json,.properties,.toml,.csv,.sh,.bash,.py,.pl,.rb,.go,.js,.ts,.java,.sql,.xml,.html,.css,.env,.service" @change="chooseAsstFile"></label>',
     '            <textarea v-model="asstInput" ref="asstInput" rows="2" :placeholder="asstBusy ? \'回答中…可继续输入，回车加入队列\' : \'\'" @keydown.enter.exact.prevent="askKeydown" @paste="pasteAsstFiles" @input="asstInputChanged"></textarea>',
     '            <select class="asst-effort" :value="asstEffort" title="思考强度：影响质量与速度" @change="setAsstEffort($event.target.value)">',
     '              <option value="low">思考·低</option><option value="medium">思考·中</option>',
     '              <option value="high">思考·高</option><option value="max">思考·最高</option></select>',
     '            <label class="asst-tools-toggle" :title="asstUseTools ? \'本地工具：知识库检索/工作目录读写/联网\' : \'直连模式：问题直接发送给你配置的模型\'">',
     '              <input type="checkbox" :checked="asstUseTools" @change="toggleAsstTools">本地工具</label>',
-    '            <button class="copy-button" type="submit" :disabled="!asstInput.trim()">{{ asstBusy ? "排队" : "发送" }}</button>',
+    '            <button class="copy-button" type="submit" :disabled="!asstInput.trim() && !asstDraftFiles.length">{{ asstBusy ? "排队" : "发送" }}</button>',
     '            <button v-if="asstBusy" class="copy-button" type="button" @click="asstAbort.abort()">停止</button>',
     "          </form>",
     "        </section>",

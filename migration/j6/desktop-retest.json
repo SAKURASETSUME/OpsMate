@@ -1,0 +1,11 @@
+{
+  "candidate_sha256": "e42de0b1017ec58ffcdf706197e39edc4020747ca0b54f9988a8cdf869aed571",
+  "original_tool_launch": "Failed to launch JVM",
+  "direct_default_temp": "Tomcat temporary directory AccessDeniedException",
+  "isolated_writable_temp_main_window": true,
+  "screenshot_retry": "window capture timed out: timed out waiting on channel",
+  "native_exit_alt_f4": true,
+  "port_released": true,
+  "remaining_copy_processes": 0,
+  "desktop_complete": false
+}

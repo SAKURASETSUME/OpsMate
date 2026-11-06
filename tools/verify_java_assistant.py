@@ -1,6 +1,7 @@
 """J5 isolated real HTTP assistant and MCP verification; never opens desktop apps."""
 from __future__ import annotations
 
+import base64
 import ctypes
 import json
 import os
@@ -159,11 +160,32 @@ def main() -> None:
                 file=client.post("/api/assistant/files",files={"file":("中文.conf","中文附件=是".encode(),"text/plain")}).json()
                 raw=client.get(f"/api/assistant/files/{file['id']}/content")
                 assert raw.content=="中文附件=是".encode()
+                png=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWuoAAAAASUVORK5CYII=")
+                image=client.post("/api/assistant/files",files={"file":("预览.png",png,"application/octet-stream")}).json()
+                image_url=f"/api/assistant/files/{image['id']}/content"
+                preview=client.get(image_url,params={"preview":True})
+                assert preview.content==png and preview.headers["content-type"]=="image/png"
+                assert preview.headers["content-disposition"].startswith("inline")
+                assert client.get(image_url).headers["content-disposition"].startswith("attachment")
+                assert client.get(f"/api/assistant/files/{file['id']}/content",params={"preview":True}).headers["content-disposition"].startswith("attachment")
                 attachment_turn=chat("读取附件",attachments=[file["id"]],tools=False)
                 attachment_sid=attachment_turn[-1]["session_id"]
                 assert "中文附件=是" in str(Model.captures[-1])
                 assert "error" in events(client,"/api/assistant/chat",{"message":"复用","attachments":[file["id"]]})[-1]
+                for encoding in ("gbk", "gb18030", "utf-16", "utf-8-sig"):
+                    marker = "旧版编码内容：扩展字𠀀" if encoding == "gb18030" else "旧版编码内容：磁盘"
+                    text = marker + "\n" + "长" * 16000
+                    original = text.encode(encoding)
+                    uploaded = client.post("/api/assistant/files",files={"file":("旧日志.txt",original,"text/plain")}).json()
+                    assert client.get(f"/api/assistant/files/{uploaded['id']}/content").content == original
+                    turn = chat("读取长文本",attachments=[uploaded["id"]],tools=False)
+                    assert turn[-1]["done"]
+                    assert marker in str(Model.captures[-1])
+                    assert "附件内容已截取前 15000 字符" in str(Model.captures[-1])
+                    assert chat("继续查看",session_id=turn[-1]["session_id"],tools=False)[-1]["done"]
+                    assert marker in str(Model.captures[-1])
                 assert client.post("/api/assistant/files",files={"file":("bad.txt",b"\xff","text/plain")}).status_code==415
+                assert client.post("/api/assistant/files",files={"file":("binary.txt",b"plain\x00text","text/plain")}).status_code==415
                 assert client.post("/api/assistant/files",files={"file":("big.txt",b"x"*(5*1024*1024+1),"text/plain")}).status_code==413
                 results.append({"scenario":"attachment bytes/context/ownership/size/encoding","passed":True})
 

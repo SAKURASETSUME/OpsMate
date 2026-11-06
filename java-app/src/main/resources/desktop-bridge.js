@@ -20,6 +20,24 @@
       }
     }
   };
+  window.opsmateAssistantDrop = {
+    choose: function () {
+      var result = window.opsmateFiles.pickAssistantFiles();
+      if (result) this.receive(result);
+    },
+    accepts: function (x, y) {
+      var target = document.elementFromPoint(x, y);
+      return !!(target && target.closest(".asst-chat"));
+    },
+    receive: function (result) {
+      var chat = document.querySelector(".asst-chat");
+      if (chat) {
+        chat.dispatchEvent(new CustomEvent("opsmate-native-drop", {
+          detail: JSON.parse(result)
+        }));
+      }
+    }
+  };
   var originalClick = HTMLAnchorElement.prototype.click;
   HTMLAnchorElement.prototype.click = function () {
     if (!this.download || !this.href.startsWith("blob:")) {
